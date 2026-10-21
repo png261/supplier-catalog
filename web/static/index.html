@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coderpush Catalog Sync Engine</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+</head>
+<body>
+  <!-- Header & Status Bar -->
+  <header class="app-header">
+    <div class="header-brand">
+      <span class="brand-icon">⚡</span>
+      <h1 class="brand-title">Coderpush Catalog Sync Engine</h1>
+      <span class="badge badge-db">SQLite WAL Active</span>
+    </div>
+    <div class="header-status">
+      <div id="active-job-badge" class="badge badge-job status-idle">
+        <span class="status-indicator"></span>
+        <span id="active-job-text">IDLE — No active sync</span>
+      </div>
+      <div id="sse-status" class="badge badge-sse sse-connecting">
+        <span class="sse-dot"></span>
+        <span id="sse-status-text">Connecting SSE...</span>
+      </div>
+      <button id="theme-toggle" class="btn btn-icon" title="Toggle Dark/Light Mode" aria-label="Toggle theme">
+        <span id="theme-icon">🌙</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="dashboard-container">
+    <!-- Section 1: Control Plane -->
+    <section class="card control-card">
+      <div class="card-header">
+        <div class="tab-group" role="tablist">
+          <button class="tab-btn active" data-tab="tab-generator" role="tab" aria-selected="true">⚡ Mock Generator</button>
+          <button class="tab-btn" data-tab="tab-resume" role="tab" aria-selected="false">↺ Resume Interrupted</button>
+          <button class="tab-btn" data-tab="tab-manual" role="tab" aria-selected="false">📄 Custom JSON Batch</button>
+        </div>
+      </div>
+
+      <!-- Tab 1: Mock Generator -->
+      <div id="tab-generator" class="tab-content active" role="tabpanel">
+        <div class="preset-bar">
+          <span class="preset-label">Presets:</span>
+          <button class="btn btn-sm btn-outline preset-btn" data-preset="default">Default (10x100)</button>
+          <button class="btn btn-sm btn-outline preset-btn" data-preset="clean">Clean (0% Anomaly)</button>
+          <button class="btn btn-sm btn-outline preset-btn" data-preset="stress">Chaos DLQ Stress</button>
+          <button class="btn btn-sm btn-outline preset-btn" data-preset="large">Large Run (50x200)</button>
+        </div>
+
+        <form id="generator-form" class="form-grid">
+          <div class="form-group">
+            <label for="input-seed">Seed (PRNG):</label>
+            <div class="input-inline">
+              <input type="number" id="input-seed" name="seed" value="42" min="0" required>
+              <button type="button" id="btn-random-seed" class="btn btn-sm btn-secondary" title="Randomize seed">🎲</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="input-batches">Total Batches:</label>
+            <input type="number" id="input-batches" name="total_batches" value="10" min="1" max="1000" required>
+          </div>
+          <div class="form-group">
+            <label for="input-batch-size">Batch Size:</label>
+            <input type="number" id="input-batch-size" name="batch_size" value="100" min="10" max="5000" required>
+          </div>
+          <div class="form-group">
+            <label for="input-update-ratio">Update Ratio: <span id="val-update-ratio">20%</span></label>
+            <input type="range" id="input-update-ratio" min="0" max="100" value="20" step="1">
+          </div>
+          <div class="form-group">
+            <label for="input-dup-ratio">Duplicate Ratio: <span id="val-dup-ratio">5%</span></label>
+            <input type="range" id="input-dup-ratio" min="0" max="100" value="5" step="1">
+          </div>
+          <div class="form-group">
+            <label for="input-ooo-ratio">Out-of-Order Ratio: <span id="val-ooo-ratio">10%</span></label>
+            <input type="range" id="input-ooo-ratio" min="0" max="100" value="10" step="1">
+          </div>
+          <div class="form-group">
+            <label for="input-withdrawn-ratio">Withdrawn Ratio: <span id="val-withdrawn-ratio">5%</span></label>
+            <input type="range" id="input-withdrawn-ratio" min="0" max="100" value="5" step="1">
+          </div>
+          <div class="form-group">
+            <label for="input-invalid-ratio">Invalid Ratio (DLQ): <span id="val-invalid-ratio">5%</span></label>
+            <input type="range" id="input-invalid-ratio" min="0" max="100" value="5" step="1">
+          </div>
+
+          <div class="form-footer">
+            <div id="ratio-validator" class="ratio-validator valid">
+              Sum of Ratios: <span id="total-ratio-val">45%</span> (Max: 100%)
+            </div>
+            <div class="action-buttons">
+              <button type="submit" id="btn-start-job" class="btn btn-primary">
+                <span class="btn-spinner hidden"></span>
+                <span>▶ Start Synchronization</span>
+              </button>
+              <button type="button" id="btn-reset-form" class="btn btn-secondary">↺ Reset</button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <!-- Tab 2: Resume Interrupted -->
+      <div id="tab-resume" class="tab-content" role="tabpanel">
+        <div class="resume-container">
+          <p class="section-desc">Select an interrupted synchronization job to resume directly from its last uncommitted batch checkpoint.</p>
+          <div class="resume-controls">
+            <div class="form-group resume-select-group">
+              <label for="select-interrupted-job">Interrupted Jobs:</label>
+              <select id="select-interrupted-job" class="form-select">
+                <option value="">Loading interrupted jobs...</option>
+              </select>
+            </div>
+            <button type="button" id="btn-refresh-interrupted" class="btn btn-secondary" title="Refresh job list">↻</button>
+            <button type="button" id="btn-resume-job" class="btn btn-primary" disabled>
+              <span class="btn-spinner hidden"></span>
+              <span>↺ Resume Job</span>
+            </button>
+          </div>
+          <div id="resume-job-details" class="job-meta-preview hidden">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Custom JSON Batch -->
+      <div id="tab-manual" class="tab-content" role="tabpanel">
+        <div class="manual-container">
+          <p class="section-desc">Submit raw supplier JSON batch records to test custom catalog updates directly.</p>
+          <div class="textarea-actions">
+            <button type="button" id="btn-load-sample-json" class="btn btn-sm btn-outline">Load Sample JSON</button>
+            <button type="button" id="btn-clear-json" class="btn btn-sm btn-outline">Clear</button>
+          </div>
+          <textarea id="manual-json-input" class="code-editor" placeholder="[&#10;  {&#10;    &quot;sku&quot;: &quot;PROD-101&quot;,&#10;    &quot;name&quot;: &quot;Sample Widget&quot;,&#10;    &quot;price&quot;: 29.99,&#10;    &quot;status&quot;: &quot;ACTIVE&quot;,&#10;    &quot;timestamp&quot;: &quot;2026-10-21T12:00:00Z&quot;&#10;  }&#10;]"></textarea>
+          <div class="form-footer">
+            <span id="json-parse-status" class="status-msg"></span>
+            <button type="button" id="btn-submit-manual" class="btn btn-primary">Submit Batch</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 2: Live Invariant Metric Cards -->
+    <section class="metrics-grid">
+      <!-- Added -->
+      <div class="metric-card card-added">
+        <div class="metric-icon">+</div>
+        <div class="metric-body">
+          <div class="metric-label">Added</div>
+          <div id="metric-added" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-added">+0</span> in last batch</div>
+        </div>
+      </div>
+
+      <!-- Updated -->
+      <div class="metric-card card-updated">
+        <div class="metric-icon">~</div>
+        <div class="metric-body">
+          <div class="metric-label">Updated</div>
+          <div id="metric-updated" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-updated">+0</span> in last batch</div>
+        </div>
+      </div>
+
+      <!-- Withdrawn -->
+      <div class="metric-card card-withdrawn">
+        <div class="metric-icon">-</div>
+        <div class="metric-body">
+          <div class="metric-label">Withdrawn</div>
+          <div id="metric-withdrawn" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-withdrawn">+0</span> in last batch</div>
+        </div>
+      </div>
+
+      <!-- Skipped -->
+      <div class="metric-card card-skipped">
+        <div class="metric-icon">↷</div>
+        <div class="metric-body">
+          <div class="metric-label">Skipped</div>
+          <div id="metric-skipped" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-skipped">+0</span> in last batch</div>
+        </div>
+      </div>
+
+      <!-- Dead-Lettered -->
+      <div class="metric-card card-deadletter">
+        <div class="metric-icon">⚠</div>
+        <div class="metric-body">
+          <div class="metric-label">Dead-Lettered</div>
+          <div id="metric-deadletter" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-deadletter">+0</span> in last batch</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 3: Progress & Live Telemetry Stream -->
+    <section class="card progress-card">
+      <div class="progress-header">
+        <div class="progress-title">
+          <span>Batch Progress:</span>
+          <strong id="batch-progress-text">0 / 0 Batches (0.0%)</strong>
+        </div>
+        <div class="progress-telemetry">
+          <span class="telemetry-item">Speed: <strong id="telemetry-speed">0 rec/s</strong></span>
+          <span class="telemetry-item">ETA: <strong id="telemetry-eta">—</strong></span>
+          <span class="telemetry-item">Elapsed: <strong id="telemetry-runtime">00:00</strong></span>
+        </div>
+      </div>
+
+      <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="progress-bar-fill" class="progress-fill" style="width: 0%"></div>
+      </div>
+
+      <!-- Collapsible Live Event Console -->
+      <div class="event-console">
+        <div class="console-header">
+          <div class="console-title">
+            <span class="pulse-indicator"></span>
+            <span>Live Audit Event Stream (SSE)</span>
+          </div>
+          <div class="console-actions">
+            <label class="checkbox-inline">
+              <input type="checkbox" id="check-autoscroll" checked>
+              <span>Auto-scroll</span>
+            </label>
+            <button id="btn-clear-console" class="btn btn-xs btn-outline">Clear Log</button>
+          </div>
+        </div>
+        <div id="event-log-container" class="event-log-list">
+          <div class="log-entry log-system">[00:00:00] SSE Listener initialized. Waiting for events...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 4: Data Explorers (DLQ, Products, History) -->
+    <section class="card explorer-card">
+      <div class="card-header">
+        <div class="tab-group" role="tablist">
+          <button class="tab-btn active" data-tab="tab-dlq" role="tab">⚠ Dead-Letter Queue (<span id="count-dlq-badge">0</span>)</button>
+          <button class="tab-btn" data-tab="tab-catalog" role="tab">📦 Product Catalog (<span id="count-catalog-badge">0</span>)</button>
+          <button class="tab-btn" data-tab="tab-history" role="tab">📋 Sync History</button>
+        </div>
+      </div>
+
+      <!-- Explorer Tab 1: Dead Letter Queue -->
+      <div id="tab-dlq" class="tab-content active" role="tabpanel">
+        <div class="table-toolbar">
+          <div class="filter-group">
+            <label for="filter-dlq-job">Filter Job:</label>
+            <input type="text" id="filter-dlq-job" class="form-input form-sm" placeholder="Enter Job ID or leave empty for all">
+            <label for="filter-dlq-reason" style="margin-left: 0.5rem;">Reason:</label>
+            <input type="text" id="filter-dlq-reason" class="form-input form-sm" placeholder="Filter by reason keyword...">
+          </div>
+          <button id="btn-refresh-dlq" class="btn btn-sm btn-secondary">↻ Refresh DLQ</button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Issue ID</th>
+                <th>Job ID</th>
+                <th>Batch</th>
+                <th>SKU</th>
+                <th>Defect Reason</th>
+                <th>Quarantined At</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="dlq-table-body">
+              <tr><td colspan="7" class="table-empty">No corrupt records in Dead-Letter Queue.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pagination-bar">
+          <span id="dlq-pagination-info" class="pagination-info">Showing 0-0 of 0</span>
+          <div class="pagination-buttons">
+            <button id="btn-dlq-prev" class="btn btn-sm btn-outline" disabled>Previous</button>
+            <span id="dlq-page-num" class="page-indicator">Page 1</span>
+            <button id="btn-dlq-next" class="btn btn-sm btn-outline" disabled>Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Explorer Tab 2: Catalog Products -->
+      <div id="tab-catalog" class="tab-content" role="tabpanel">
+        <div class="table-toolbar">
+          <div class="filter-group">
+            <input type="text" id="filter-product-search" class="form-input form-sm" placeholder="Search SKU or Product Name...">
+          </div>
+          <div class="filter-group">
+            <select id="filter-product-status" class="form-select form-sm">
+              <option value="">All Statuses</option>
+              <option value="ACTIVE">ACTIVE Only</option>
+              <option value="WITHDRAWN">WITHDRAWN Only</option>
+            </select>
+          </div>
+          <button id="btn-refresh-catalog" class="btn btn-sm btn-secondary">↻ Refresh Catalog</button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Product Name</th>
+                <th>Price</th>
+                <th>Status</th>
+                <th>Supplier Timestamp</th>
+                <th>Local Updated At</th>
+              </tr>
+            </thead>
+            <tbody id="catalog-table-body">
+              <tr><td colspan="6" class="table-empty">Loading product catalog...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pagination-bar">
+          <span id="catalog-pagination-info" class="pagination-info">Showing 0-0 of 0</span>
+          <div class="pagination-buttons">
+            <button id="btn-catalog-prev" class="btn btn-sm btn-outline" disabled>Previous</button>
+            <span id="catalog-page-num" class="page-indicator">Page 1</span>
+            <button id="btn-catalog-next" class="btn btn-sm btn-outline" disabled>Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Explorer Tab 3: Sync History -->
+      <div id="tab-history" class="tab-content" role="tabpanel">
+        <div class="table-toolbar">
+          <button id="btn-refresh-history" class="btn btn-sm btn-secondary">↻ Refresh History</button>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Job ID</th>
+                <th>Status</th>
+                <th>Progress</th>
+                <th>Added</th>
+                <th>Updated</th>
+                <th>Withdrawn</th>
+                <th>Skipped</th>
+                <th>Dead-Letter</th>
+                <th>Created At</th>
+              </tr>
+            </thead>
+            <tbody id="history-table-body">
+              <tr><td colspan="9" class="table-empty">Loading sync history...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal: Raw Payload Inspector -->
+  <div id="payload-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="modal-title" class="modal-title">Quarantined Record Payload</h3>
+        <button id="btn-close-modal" class="btn btn-icon modal-close" aria-label="Close modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-meta">
+          <div><strong>Issue ID:</strong> <span id="modal-issue-id" class="code-tag">—</span></div>
+          <div><strong>Defect Reason:</strong> <span id="modal-defect-reason" class="defect-badge">—</span></div>
+        </div>
+        <div class="code-block-wrapper">
+          <pre id="modal-payload-code" class="code-block"></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-copy-payload" class="btn btn-outline">📋 Copy JSON</button>
+        <button id="btn-dismiss-modal" class="btn btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- Application Script -->
+  <script src="/app.js"></script>
+</body>
+</html>

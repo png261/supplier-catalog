@@ -1,0 +1,17 @@
+title = "Gitleaks Configuration for Resilient Catalog Sync Engine"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlists for build artifacts, mock data fixtures, and workspace metadata"
+paths = [
+    '''(^|/)vendor/''',
+    '''(^|/)node_modules/''',
+    '''(^|/)\.agents/''',
+    '''(^|/)mock_data/''',
+    '''(^|/)test/testutil/fixtures/''',
+    '''go\.sum$''',
+    '''coverage\.out$''',
+    '''package-lock\.json$'''
+]

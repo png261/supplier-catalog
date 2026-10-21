@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=================================================="
+echo " 🚀 Running Pre-Push Quality & Security Gates"
+echo "=================================================="
+
+# 1. Gitleaks Repository Scan
+if command -v gitleaks >/dev/null 2>&1; then
+    echo "🔍 [1/3] Running Gitleaks repository history scan..."
+    if [ -f ".gitleaks.toml" ]; then
+        gitleaks detect -v --redact --config .gitleaks.toml
+    else
+        gitleaks detect -v --redact
+    fi
+    echo "✅ Gitleaks scan passed with 0 detected secrets."
+else
+    echo "⚠️  [1/3] gitleaks not installed locally; skipping pre-push repo scan."
+fi
+
+# 2. Race condition detection and multi-iteration test execution
+echo "🧪 [2/3] Executing multi-iteration race tests (go test -race -count=5 ./...)..."
+COVERAGE_FILE="coverage.out"
+go test -race -count=5 -covermode=atomic -coverprofile="$COVERAGE_FILE" ./...
+echo "✅ All tests passed with 0 race conditions across 5 iterations."
+
+# 3. Statement coverage verification (>= 90.0%)
+echo "📊 [3/3] Enforcing statement coverage threshold (>= 90.0%)..."
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ -x "$REPO_ROOT/scripts/check-coverage.sh" ]; then
+    "$REPO_ROOT/scripts/check-coverage.sh" "$COVERAGE_FILE" 90.0
+else
+    # Inlined POSIX coverage calculation fallback
+    TOTAL_LINE=$(go tool cover -func="$COVERAGE_FILE" | grep "^total:" || true)
+    COVERAGE=$(echo "$TOTAL_LINE" | awk '{print $NF}' | tr -d '%')
+    echo "Reported Coverage: ${COVERAGE}% (Threshold: 90.0%)"
+    PASS=$(awk -v cov="$COVERAGE" -v min="90.0" 'BEGIN { if (cov + 0.0 >= min + 0.0) print 1; else print 0 }')
+    if [ "$PASS" -ne 1 ]; then
+        echo "❌ Statement coverage (${COVERAGE}%) is below required 90.0%!" >&2
+        exit 1
+    fi
+    echo "✅ Statement coverage (${COVERAGE}%) meets threshold 90.0%."
+fi
+
+echo "=================================================="
+echo "🎉 All Pre-Push gates passed successfully! Push allowed."
+echo "=================================================="
+exit 0

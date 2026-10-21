@@ -1,0 +1,40 @@
+# Binaries and executables
+/server
+/generator
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+bin/
+dist/
+
+# Test coverage profiles and reports
+*.out
+coverage.out
+coverage.html
+*.cov
+
+# SQLite database files and WAL logs
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+
+# Node.js and Husky
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.husky/_
+
+# Operating System & IDE artifacts
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

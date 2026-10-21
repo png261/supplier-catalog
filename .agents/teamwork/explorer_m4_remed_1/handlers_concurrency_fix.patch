@@ -1,0 +1,257 @@
+--- a/pkg/api/handlers.go
++++ b/pkg/api/handlers.go
+@@ -85,18 +85,7 @@
+ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
+ 	ctx := r.Context()
+ 
+-	// 1. Check if a job is already actively running
+-	active, err := h.storage.GetActiveJob(ctx)
+-	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, domain.ErrNotFound) {
+-		h.writeError(w, http.StatusInternalServerError, "failed to check active jobs: "+err.Error(), ErrCodeInternalError)
+-		return
+-	}
+-	if active != nil {
+-		h.writeError(w, http.StatusConflict, fmt.Sprintf("a synchronization job is already running: %s", active.JobID), ErrCodeJobConflict)
+-		return
+-	}
+-
+-	// 2. Parse request body
++	// 1. Parse request body and validate inputs prior to locking
+ 	var req JobStartRequest
+ 	if r.Body != nil && r.ContentLength != 0 {
+ 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+@@ -201,16 +190,38 @@
+ 		}
+ 
+ 		totalBatches = cfg.TotalBatches
+-
+-		h.mu.Lock()
+-		h.activeConfigs[jobID] = cfg
+-		h.mu.Unlock()
+ 	} else {
+ 		h.writeError(w, http.StatusBadRequest, "unsupported mode: "+req.Mode, ErrCodeInvalidRequest)
+ 		return
+ 	}
+ 
+-	// 3. Create initial job state in storage
++	// 2. Synchronized Active Job Verification, Storage Creation & State Transition
++	h.mu.Lock()
++
++	// Check 2a: In-memory active job (fast path)
++	if h.activeJobID != "" {
++		activeID := h.activeJobID
++		h.mu.Unlock()
++		h.writeError(w, http.StatusConflict, fmt.Sprintf("a synchronization job is already running: %s", activeID), ErrCodeJobConflict)
++		return
++	}
++
++	// Check 2b: Persistent storage active job
++	active, err := h.storage.GetActiveJob(ctx)
++	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, domain.ErrNotFound) {
++		h.mu.Unlock()
++		h.writeError(w, http.StatusInternalServerError, "failed to check active jobs: "+err.Error(), ErrCodeInternalError)
++		return
++	}
++	if active != nil {
++		activeID := active.JobID
++		h.activeJobID = activeID
++		h.mu.Unlock()
++		h.writeError(w, http.StatusConflict, fmt.Sprintf("a synchronization job is already running: %s", activeID), ErrCodeJobConflict)
++		return
++	}
++
++	// 3. Atomically create initial job state in storage while holding lock
+ 	now := time.Now().UTC()
+ 	job := &domain.SyncJob{
+ 		JobID:               jobID,
+@@ -223,11 +234,21 @@
+ 	}
+ 
+ 	if err := h.storage.CreateJob(ctx, job); err != nil {
++		h.mu.Unlock()
+ 		h.writeError(w, http.StatusInternalServerError, "failed to create sync job: "+err.Error(), ErrCodeInternalError)
+ 		return
+ 	}
+ 
+-	// 4. Return 202 Accepted
++	// 4. Mark job active in memory while holding lock
++	bgCtx, cancel := context.WithCancel(context.Background())
++	h.activeJobID = jobID
++	h.activeCancel = cancel
++	if req.Mode == "generator" {
++		h.activeConfigs[jobID] = cfg
++	}
++	h.mu.Unlock()
++
++	// 5. Return 202 Accepted
+ 	h.writeJSON(w, http.StatusAccepted, SyncJobResponse{
+ 		JobID:               job.JobID,
+ 		Status:              job.Status,
+@@ -238,7 +259,7 @@
+ 		UpdatedAt:           job.UpdatedAt,
+ 	})
+ 
+-	// 5. Broadcast job_started event
++	// 6. Broadcast job_started event
+ 	h.broker.Publish(Event{
+ 		Type:  "job_started",
+ 		JobID: jobID,
+@@ -250,12 +271,7 @@
+ 		},
+ 	})
+ 
+-	// 6. Spawn background job execution
+-	bgCtx, cancel := context.WithCancel(context.Background())
+-	h.mu.Lock()
+-	h.activeJobID = jobID
+-	h.activeCancel = cancel
+-	h.mu.Unlock()
++	// 7. Spawn background job execution
+ 
+ 	go func() {
+ 		defer cancel()
+@@ -330,20 +346,45 @@
+ 		return
+ 	}
+ 
+-	// 1. Check if another job is already actively running
++	// 1. Parse optional resume config BEFORE locking
++	var resumeReq JobResumeRequest
++	if r.Body != nil && r.ContentLength != 0 {
++		if err := json.NewDecoder(r.Body).Decode(&resumeReq); err != nil {
++			h.writeError(w, http.StatusBadRequest, "malformed JSON request body", ErrCodeInvalidRequest)
++			return
++		}
++	}
++
++	// 2. Synchronized Active Job Verification, State Check & Status Transition
++	h.mu.Lock()
++
++	// Check 2a: In-memory active job (fast path)
++	if h.activeJobID != "" {
++		activeID := h.activeJobID
++		h.mu.Unlock()
++		h.writeError(w, http.StatusConflict, fmt.Sprintf("job %s is already running", activeID), ErrCodeJobConflict)
++		return
++	}
++
++	// Check 2b: Persistent storage active job
+ 	active, err := h.storage.GetActiveJob(ctx)
+ 	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, domain.ErrNotFound) {
++		h.mu.Unlock()
+ 		h.writeError(w, http.StatusInternalServerError, "failed checking active jobs: "+err.Error(), ErrCodeInternalError)
+ 		return
+ 	}
+ 	if active != nil {
+-		h.writeError(w, http.StatusConflict, fmt.Sprintf("job %s is already running", active.JobID), ErrCodeJobConflict)
++		activeID := active.JobID
++		h.activeJobID = activeID
++		h.mu.Unlock()
++		h.writeError(w, http.StatusConflict, fmt.Sprintf("job %s is already running", activeID), ErrCodeJobConflict)
+ 		return
+ 	}
+ 
+-	// 2. Fetch target job
++	// Check 2c: Fetch target job
+ 	job, err := h.storage.GetJob(ctx, jobID)
+ 	if err != nil {
++		h.mu.Unlock()
+ 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
+ 			h.writeError(w, http.StatusNotFound, "sync job not found: "+jobID, ErrCodeJobNotFound)
+ 			return
+@@ -352,26 +393,19 @@
+ 		return
+ 	}
+ 
+-	// 3. Verify job state
++	// Check 2d: Verify target job state
+ 	if job.Status == domain.JobStatusCompleted {
++		h.mu.Unlock()
+ 		h.writeError(w, http.StatusConflict, "job is already completed and cannot be resumed", ErrCodeJobConflict)
+ 		return
+ 	}
+ 	if job.Status == domain.JobStatusRunning {
++		h.mu.Unlock()
+ 		h.writeError(w, http.StatusConflict, fmt.Sprintf("job %s is already running", jobID), ErrCodeJobConflict)
+ 		return
+ 	}
+ 
+-	// 4. Parse optional resume config
+-	var resumeReq JobResumeRequest
+-	if r.Body != nil && r.ContentLength != 0 {
+-		if err := json.NewDecoder(r.Body).Decode(&resumeReq); err != nil {
+-			h.writeError(w, http.StatusBadRequest, "malformed JSON request body", ErrCodeInvalidRequest)
+-			return
+-		}
+-	}
+-
+-	h.mu.Lock()
++	// 3. Resolve and validate generator config for resumption
+ 	cfg, ok := h.activeConfigs[jobID]
+ 	if !ok {
+ 		cfg = generator.DefaultConfig()
+@@ -386,15 +420,29 @@
+ 	if resumeReq.BatchSize != nil {
+ 		cfg.BatchSize = *resumeReq.BatchSize
+ 	}
+-	h.activeConfigs[jobID] = cfg
+-	h.mu.Unlock()
+ 
+ 	if err := cfg.Validate(); err != nil {
++		h.mu.Unlock()
+ 		h.writeError(w, http.StatusBadRequest, "invalid resume config: "+err.Error(), ErrCodeInvalidRequest)
+ 		return
+ 	}
+ 
+-	// 5. Respond 202 Accepted
++	// 4. CRITICAL: Atomically transition job status to RUNNING in storage while holding lock
++	if err := h.storage.UpdateJobStatus(ctx, jobID, domain.JobStatusRunning); err != nil {
++		h.mu.Unlock()
++		h.writeError(w, http.StatusInternalServerError, "failed to update job status: "+err.Error(), ErrCodeInternalError)
++		return
++	}
++
++	// 5. Mark job active in memory while holding lock
++	bgCtx, cancel := context.WithCancel(context.Background())
++	h.activeJobID = jobID
++	h.activeCancel = cancel
++	h.activeConfigs[jobID] = cfg
++	h.mu.Unlock()
++
++	// 6. Respond 202 Accepted
++	now := time.Now().UTC()
+ 	h.writeJSON(w, http.StatusAccepted, SyncJobResponse{
+ 		JobID:               job.JobID,
+ 		Status:              domain.JobStatusRunning,
+@@ -402,10 +450,10 @@
+ 		CommittedBatchIndex: job.CommittedBatchIndex,
+ 		Summary:             job.Summary,
+ 		CreatedAt:           job.CreatedAt,
+-		UpdatedAt:           time.Now().UTC(),
++		UpdatedAt:           now,
+ 	})
+ 
+-	// 6. Broadcast job_started event for resumption
++	// 7. Broadcast job_started event for resumption
+ 	h.broker.Publish(Event{
+ 		Type:  "job_started",
+ 		JobID: jobID,
+@@ -414,16 +462,11 @@
+ 			"status":             string(domain.JobStatusRunning),
+ 			"resumed_from_batch": job.CommittedBatchIndex + 1,
+ 			"total_batches":      cfg.TotalBatches,
+-			"timestamp":          time.Now().UTC(),
++			"timestamp":          now,
+ 		},
+ 	})
+ 
+-	// 7. Spawn resume in background
+-	bgCtx, cancel := context.WithCancel(context.Background())
+-	h.mu.Lock()
+-	h.activeJobID = jobID
+-	h.activeCancel = cancel
+-	h.mu.Unlock()
++	// 8. Spawn resume in background
+ 
+ 	go func() {
+ 		defer cancel()

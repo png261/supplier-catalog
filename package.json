@@ -1,0 +1,12 @@
+{
+  "name": "coderpush-catalog-sync",
+  "version": "1.0.0",
+  "description": "Resilient, Minimalist Catalog Synchronization Engine in Go",
+  "private": true,
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

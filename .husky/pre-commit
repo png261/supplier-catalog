@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=================================================="
+echo " 🔒 Running Pre-Commit Security & Quality Gates"
+echo "=================================================="
+
+# 1. Gitleaks Secret Detection on Staged Files
+if command -v gitleaks >/dev/null 2>&1; then
+    echo "🔍 [1/4] Running Gitleaks staged secret scan..."
+    if [ -f ".gitleaks.toml" ]; then
+        gitleaks protect --staged -v --redact --config .gitleaks.toml
+    else
+        gitleaks protect --staged -v --redact
+    fi
+    echo "✅ Gitleaks staged scan passed (0 secrets detected)."
+else
+    echo "⚠️  [1/4] gitleaks is not installed in PATH."
+    echo "    To install: brew install gitleaks (macOS) or visit https://github.com/gitleaks/gitleaks"
+fi
+
+# 2. Strict gofmt Verification
+echo "🎨 [2/4] Verifying Go code formatting (gofmt)..."
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=d | grep '\.go$' || true)
+if [ -n "$STAGED_GO_FILES" ]; then
+    UNFORMATTED=$(gofmt -l $STAGED_GO_FILES)
+    if [ -n "$UNFORMATTED" ]; then
+        echo "❌ ERROR: The following staged Go files are not properly formatted:" >&2
+        echo "$UNFORMATTED" >&2
+        echo "" >&2
+        echo "To remediate, run:" >&2
+        echo "  gofmt -w $UNFORMATTED" >&2
+        echo "Then stage the changes (git add) and commit again." >&2
+        exit 1
+    fi
+    echo "✅ All staged Go files are properly formatted."
+else
+    echo "ℹ️  No Go files staged for commit. Skipping gofmt."
+fi
+
+# 3. go vet Verification
+echo "🩺 [3/4] Running compiler static analysis (go vet ./...)..."
+if [ -n "$STAGED_GO_FILES" ]; then
+    go vet ./...
+    echo "✅ go vet passed with 0 issues."
+else
+    echo "ℹ️  No Go files staged for commit. Skipping go vet."
+fi
+
+# 4. golangci-lint Verification (Graceful handling)
+echo "🧹 [4/4] Checking linter (golangci-lint)..."
+if command -v golangci-lint >/dev/null 2>&1; then
+    golangci-lint run ./...
+    echo "✅ golangci-lint passed with 0 issues."
+else
+    echo "ℹ️  golangci-lint is not installed locally (skipping)."
+    echo "    Recommended: brew install golangci-lint (macOS). CI enforces strict linting."
+fi
+
+echo "=================================================="
+echo "🎉 All Pre-Commit gates passed! Proceeding with commit."
+echo "=================================================="
+exit 0

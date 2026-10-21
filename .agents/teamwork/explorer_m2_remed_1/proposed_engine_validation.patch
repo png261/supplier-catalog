@@ -1,0 +1,25 @@
+--- a/pkg/sync/engine.go
++++ b/pkg/sync/engine.go
+@@ -558,9 +558,9 @@ func priceEqual(a, b float64) bool {
+ func isInvalidRecord(r domain.SupplierUpdate) bool {
+-	if strings.TrimSpace(r.SKU) == "" {
+-		return true
+-	}
+-	if math.IsNaN(r.Price) || math.IsInf(r.Price, 0) || r.Price < 0 {
++	if err := r.Validate(); err != nil {
+ 		return true
+ 	}
+-	if !r.Status.IsValid() {
++	if math.IsNaN(r.Price) || math.IsInf(r.Price, 0) {
+ 		return true
+ 	}
+ 	return false
+@@ -583,5 +583,8 @@ func getInvalidReason(r domain.SupplierUpdate) string {
+ 	if !r.Status.IsValid() {
+ 		reasons = append(reasons, fmt.Sprintf("invalid status: %s", r.Status))
+ 	}
++	if r.Timestamp.IsZero() {
++		reasons = append(reasons, "zero or uninitialized timestamp")
++	}
+ 	return strings.Join(reasons, "; ")
+ }

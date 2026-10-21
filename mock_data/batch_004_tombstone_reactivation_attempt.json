@@ -1,0 +1,27 @@
+{
+  "job_id": "job-demo-catalog-sync",
+  "batch_index": 0,
+  "records": [
+    {
+      "sku": "SKU-COF-005",
+      "name": "Sumatra Mandheling Organic Beans 500g",
+      "price": 28.00,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T13:00:00Z"
+    },
+    {
+      "sku": "SKU-EQU-009",
+      "name": "Double-Wall Insulated French Press 800ml",
+      "price": 42.00,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T13:00:00Z"
+    },
+    {
+      "sku": "SKU-COF-003",
+      "name": "Guatemala Antigua Dark Roast 250g",
+      "price": 18.00,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T13:00:00Z"
+    }
+  ]
+}

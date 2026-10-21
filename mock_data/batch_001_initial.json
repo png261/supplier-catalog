@@ -1,0 +1,76 @@
+{
+  "job_id": "job-demo-catalog-sync",
+  "batch_index": 0,
+  "records": [
+    {
+      "sku": "SKU-COF-001",
+      "name": "Ethiopian Yirgacheffe Single Origin Beans 250g",
+      "price": 18.50,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    },
+    {
+      "sku": "SKU-COF-002",
+      "name": "Colombian Supremo Medium Roast 500g",
+      "price": 24.00,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    },
+    {
+      "sku": "SKU-COF-003",
+      "name": "Guatemala Antigua Dark Roast 250g",
+      "price": 16.75,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    },
+    {
+      "sku": "SKU-COF-004",
+      "name": "Kenya AA Washed Filter Beans 250g",
+      "price": 21.00,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    },
+    {
+      "sku": "SKU-COF-005",
+      "name": "Sumatra Mandheling Organic Beans 500g",
+      "price": 26.50,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    },
+    {
+      "sku": "SKU-EQU-006",
+      "name": "Precision Stainless Steel Burr Grinder",
+      "price": 89.99,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    },
+    {
+      "sku": "SKU-EQU-007",
+      "name": "Gooseneck Electric Temperature Kettle 1L",
+      "price": 129.50,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    },
+    {
+      "sku": "SKU-EQU-008",
+      "name": "Ceramic V60 Pour-Over Dripper Size 02",
+      "price": 22.00,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    },
+    {
+      "sku": "SKU-EQU-009",
+      "name": "Double-Wall Insulated French Press 800ml",
+      "price": 45.00,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    },
+    {
+      "sku": "SKU-ACC-010",
+      "name": "Digital Micro-Timer Scale 0.1g Precision",
+      "price": 34.95,
+      "status": "ACTIVE",
+      "timestamp": "2026-10-21T10:00:00Z"
+    }
+  ]
+}

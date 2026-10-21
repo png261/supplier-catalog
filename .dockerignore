@@ -1,0 +1,25 @@
+# VCS metadata
+.git/
+.gitignore
+
+# Teamwork and agent workspaces
+.agents/
+
+# Git hooks and development tool configs
+.husky/
+.github/
+
+# Persistent database files and host mounts
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local build artifacts and test outputs
+server
+generator
+coverage.out
+coverage.html
+*.log
+tmp/
+node_modules/

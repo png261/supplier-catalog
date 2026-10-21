@@ -1,0 +1,264 @@
+diff --git a/pkg/storage/sqlite.go b/pkg/storage/sqlite.go
+--- a/pkg/storage/sqlite.go
++++ b/pkg/storage/sqlite.go
+@@ -37,3 +37,3 @@ type Storage interface {
+ 	RecordDeadLetterTx(ctx context.Context, tx *sql.Tx, issue *domain.DeadLetterRecord) error
+-	ListDeadLetterRecords(ctx context.Context, jobID string, limit, offset int) ([]domain.DeadLetterRecord, int, error)
++	ListDeadLetterRecords(ctx context.Context, jobID string, reason string, limit, offset int) ([]domain.DeadLetterRecord, int, error)
+ 
+@@ -501,27 +501,22 @@ func (s *SQLiteStorage) RecordDeadLetterTx(ctx context.Context, tx *sql.Tx, issu
+-// ListDeadLetterRecords queries paginated dead-letter records for a specific job (or all jobs if jobID is empty).
+-func (s *SQLiteStorage) ListDeadLetterRecords(ctx context.Context, jobID string, limit, offset int) ([]domain.DeadLetterRecord, int, error) {
+-	var countQuery string
+-	var selectQuery string
+-	var countArgs []any
+-	var selectArgs []any
++// ListDeadLetterRecords queries paginated dead-letter records with optional job_id and reason filters.
++func (s *SQLiteStorage) ListDeadLetterRecords(ctx context.Context, jobID string, reason string, limit, offset int) ([]domain.DeadLetterRecord, int, error) {
++	var conditions []string
++	var args []any
+ 
+ 	if jobID != "" {
+-		countQuery = `SELECT count(*) FROM dead_letter_issues WHERE job_id = ?;`
+-		countArgs = []any{jobID}
+-
+-		selectQuery = `
+-		SELECT issue_id, job_id, batch_index, sku, raw_payload, reason, created_at
+-		FROM dead_letter_issues WHERE job_id = ?
+-		ORDER BY created_at DESC LIMIT ? OFFSET ?;
+-		`
+-		selectArgs = []any{jobID, limit, offset}
+-	} else {
+-		countQuery = `SELECT count(*) FROM dead_letter_issues;`
+-		selectQuery = `
+-		SELECT issue_id, job_id, batch_index, sku, raw_payload, reason, created_at
+-		FROM dead_letter_issues
+-		ORDER BY created_at DESC LIMIT ? OFFSET ?;
+-		`
+-		selectArgs = []any{limit, offset}
++		conditions = append(conditions, "job_id = ?")
++		args = append(args, jobID)
++	}
++	if reason != "" {
++		conditions = append(conditions, "reason LIKE '%' || ? || '%'")
++		args = append(args, reason)
+ 	}
++
++	whereClause := ""
++	if len(conditions) > 0 {
++		whereClause = "WHERE " + strings.Join(conditions, " AND ")
++	}
++
++	countQuery := fmt.Sprintf("SELECT count(*) FROM dead_letter_issues %s;", whereClause)
+ 
+ 	var totalCount int
+-	if err := s.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&totalCount); err != nil {
++	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&totalCount); err != nil {
+ 		return nil, 0, fmt.Errorf("failed to count dead letter issues: %w", err)
+ 	}
+ 
+-	rows, err := s.db.QueryContext(ctx, selectQuery, selectArgs...)
++	selectQuery := fmt.Sprintf(`
++		SELECT issue_id, job_id, batch_index, sku, raw_payload, reason, created_at
++		FROM dead_letter_issues %s
++		ORDER BY created_at DESC LIMIT ? OFFSET ?;`, whereClause)
++
++	selectArgs := append(append([]any{}, args...), limit, offset)
++	rows, err := s.db.QueryContext(ctx, selectQuery, selectArgs...)
+ 	if err != nil {
+ 		return nil, 0, fmt.Errorf("failed to query dead letter issues: %w", err)
+ 	}
+ 	defer rows.Close()
+ 
+-	var records []domain.DeadLetterRecord
++	records := make([]domain.DeadLetterRecord, 0)
+ 	for rows.Next() {
+diff --git a/pkg/api/handlers.go b/pkg/api/handlers.go
+--- a/pkg/api/handlers.go
++++ b/pkg/api/handlers.go
+@@ -610,3 +610,4 @@ func (h *Handler) handleListDeadLetter(w http.ResponseWriter, r *http.Request) {
+-	jobID := q.Get("job_id")
++	jobID := strings.TrimSpace(q.Get("job_id"))
++	reason := strings.TrimSpace(q.Get("reason"))
+ 
+-	issues, total, err := h.storage.ListDeadLetterRecords(ctx, jobID, limit, offset)
++	issues, total, err := h.storage.ListDeadLetterRecords(ctx, jobID, reason, limit, offset)
+diff --git a/pkg/sync/engine.go b/pkg/sync/engine.go
+--- a/pkg/sync/engine.go
++++ b/pkg/sync/engine.go
+@@ -46,3 +46,3 @@ type Storage interface {
+ 	RecordDeadLetterTx(ctx context.Context, tx *sql.Tx, issue *domain.DeadLetterRecord) error
+-	ListDeadLetterRecords(ctx context.Context, jobID string, limit, offset int) ([]domain.DeadLetterRecord, int, error)
++	ListDeadLetterRecords(ctx context.Context, jobID string, reason string, limit, offset int) ([]domain.DeadLetterRecord, int, error)
+ }
+diff --git a/PROJECT.md b/PROJECT.md
+--- a/PROJECT.md
++++ b/PROJECT.md
+@@ -159,3 +159,3 @@ type Storage interface {
+ 	RecordDeadLetterTx(ctx context.Context, tx *sql.Tx, issue *domain.DeadLetterRecord) error
+-	ListDeadLetterRecords(ctx context.Context, jobID string, limit, offset int) ([]domain.DeadLetterRecord, int, error)
++	ListDeadLetterRecords(ctx context.Context, jobID string, reason string, limit, offset int) ([]domain.DeadLetterRecord, int, error)
+ }
+diff --git a/pkg/storage/sqlite_test.go b/pkg/storage/sqlite_test.go
+--- a/pkg/storage/sqlite_test.go
++++ b/pkg/storage/sqlite_test.go
+@@ -361,19 +361,39 @@ func TestStorage_DeadLetterIssues(t *testing.T) {
+ 	// Query for job
+-	records, count, err := s.ListDeadLetterRecords(ctx, "job-dl-1", 10, 0)
++	records, count, err := s.ListDeadLetterRecords(ctx, "job-dl-1", "", 10, 0)
+ 	if err != nil {
+ 		t.Fatalf("failed listing dead letter records: %v", err)
+ 	}
+ 	if count != 2 || len(records) != 2 {
+ 		t.Errorf("expected 2 records, got count %d, len %d", count, len(records))
+ 	}
+ 
+ 	// Pagination: limit 1, offset 0
+-	p1, countP, err := s.ListDeadLetterRecords(ctx, "job-dl-1", 1, 0)
++	p1, countP, err := s.ListDeadLetterRecords(ctx, "job-dl-1", "", 1, 0)
+ 	if err != nil || len(p1) != 1 || countP != 2 {
+ 		t.Errorf("expected 1 record from page 1, got %d, total %d", len(p1), countP)
+ 	}
+ 
+ 	// Query across all jobs (empty jobID)
+-	allRecords, allCount, err := s.ListDeadLetterRecords(ctx, "", 10, 0)
++	allRecords, allCount, err := s.ListDeadLetterRecords(ctx, "", "", 10, 0)
+ 	if err != nil || allCount != 2 || len(allRecords) != 2 {
+ 		t.Errorf("expected 2 records for all jobs, got %d, total %d", len(allRecords), allCount)
+ 	}
++
++	// Filter by reason exact/substring
++	negRecords, negCount, err := s.ListDeadLetterRecords(ctx, "job-dl-1", "negative price", 10, 0)
++	if err != nil || negCount != 1 || len(negRecords) != 1 {
++		t.Errorf("expected 1 negative price record, got %d, total %d", len(negRecords), negCount)
++	}
++	if len(negRecords) > 0 && negRecords[0].Reason != "negative price" {
++		t.Errorf("unexpected reason: %s", negRecords[0].Reason)
++	}
++
++	// Filter by reason substring
++	priceRecords, priceCount, err := s.ListDeadLetterRecords(ctx, "", "price", 10, 0)
++	if err != nil || priceCount != 1 || len(priceRecords) != 1 {
++		t.Errorf("expected 1 price record by substring, got %d, total %d", len(priceRecords), priceCount)
++	}
++
++	// Filter by non-existent reason
++	noRecords, noCount, err := s.ListDeadLetterRecords(ctx, "", "nonexistent", 10, 0)
++	if err != nil || noCount != 0 || len(noRecords) != 0 {
++		t.Errorf("expected 0 records for nonexistent reason, got %d, total %d", len(noRecords), noCount)
++	}
+ }
+diff --git a/pkg/sync/engine_test.go b/pkg/sync/engine_test.go
+--- a/pkg/sync/engine_test.go
++++ b/pkg/sync/engine_test.go
+@@ -618,3 +618,3 @@ func TestEngine_DeadLetter_InvalidRecords(t *testing.T) {
+ 	// Verify dead letters in storage
+-	dlRecords, count, err := store.ListDeadLetterRecords(ctx, "job-dl-test", 10, 0)
++	dlRecords, count, err := store.ListDeadLetterRecords(ctx, "job-dl-test", "", 10, 0)
+ 	if err != nil {
+diff --git a/pkg/sync/resumability_test.go b/pkg/sync/resumability_test.go
+--- a/pkg/sync/resumability_test.go
++++ b/pkg/sync/resumability_test.go
+@@ -175,3 +175,3 @@ func TestAC1_CrashSafety_MidJobInterruptionRollback(t *testing.T) {
+ 	// 5. Verify uncommitted dead-letter records from Batch 2 were rolled back
+-	dlRecords, count, err := store.ListDeadLetterRecords(context.Background(), jobID, 10, 0)
++	dlRecords, count, err := store.ListDeadLetterRecords(context.Background(), jobID, "", 10, 0)
+ 	if err != nil {
+@@ -520,3 +520,3 @@ func TestAC4_DeadLetterIsolation_InvalidRecordsQuarantined(t *testing.T) {
+ 	// 3. Verify Corrupt items quarantined to dead_letter_issues
+-	dlRecords, totalCount, err := store.ListDeadLetterRecords(ctx, jobID, 20, 0)
++	dlRecords, totalCount, err := store.ListDeadLetterRecords(ctx, jobID, "", 20, 0)
+ 	if err != nil {
+diff --git a/pkg/sync/engine_ac4_stress_test.go b/pkg/sync/engine_ac4_stress_test.go
+--- a/pkg/sync/engine_ac4_stress_test.go
++++ b/pkg/sync/engine_ac4_stress_test.go
+@@ -67,3 +67,3 @@ func TestAC4_Adversarial_ZeroTimestampQuarantined(t *testing.T) {
+ 	// 3. Verify dead_letter_issues contains the zero timestamp record
+-	dlRecords, totalCount, err := store.ListDeadLetterRecords(ctx, jobID, 10, 0)
++	dlRecords, totalCount, err := store.ListDeadLetterRecords(ctx, jobID, "", 10, 0)
+ 	if err != nil {
+@@ -245,3 +245,3 @@ func TestAC4_Comprehensive_AllCorruptVariants(t *testing.T) {
+ 			// Verify dead letter log
+-			dlRecords, count, err := store.ListDeadLetterRecords(ctx, subJobID, 10, 0)
++			dlRecords, count, err := store.ListDeadLetterRecords(ctx, subJobID, "", 10, 0)
+ 			if err != nil {
+@@ -344,3 +344,3 @@ func TestAC4_Stress_MixedWorkloadIsolation(t *testing.T) {
+ 	// Verify all quarantined records are in dead_letter_issues
+-	_, dlTotal, err := store.ListDeadLetterRecords(ctx, jobID, 1, 0)
++	_, dlTotal, err := store.ListDeadLetterRecords(ctx, jobID, "", 1, 0)
+ 	if err != nil {
+diff --git a/pkg/sync/engine_deep_adversarial_test.go b/pkg/sync/engine_deep_adversarial_test.go
+--- a/pkg/sync/engine_deep_adversarial_test.go
++++ b/pkg/sync/engine_deep_adversarial_test.go
+@@ -490,3 +490,3 @@ func TestDeepAdversarial_AC1_InjectedMidBatchFailureMatrix(t *testing.T) {
+ 			// 3. No dead letters from Batch 1 should exist
+-			dlRecords, dlCount, err := fStore.ListDeadLetterRecords(ctx, jobID, 10, 0)
++			dlRecords, dlCount, err := fStore.ListDeadLetterRecords(ctx, jobID, "", 10, 0)
+ 			if err != nil || dlCount != 0 || len(dlRecords) != 0 {
+@@ -537,3 +537,3 @@ func TestDeepAdversarial_AC1_InjectedMidBatchFailureMatrix(t *testing.T) {
+ 			}
+-			_, retryDlCount, _ := fStore.ListDeadLetterRecords(ctx, jobID, 10, 0)
++			_, retryDlCount, _ := fStore.ListDeadLetterRecords(ctx, jobID, "", 10, 0)
+ 			if retryDlCount != 2 {
+@@ -700,3 +700,3 @@ func TestDeepAdversarial_AC2_CrashAtEveryBatchBoundary(t *testing.T) {
+ 
+-		dlRecords, dlCount, _ := store.ListDeadLetterRecords(context.Background(), jobID, 10, 0)
++		dlRecords, dlCount, _ := store.ListDeadLetterRecords(context.Background(), jobID, "", 10, 0)
+ 		if dlCount != 0 || len(dlRecords) != 0 {
+@@ -732,3 +732,3 @@ func TestDeepAdversarial_AC2_CrashAtEveryBatchBoundary(t *testing.T) {
+ 
+-	_, dlCount, _ := store.ListDeadLetterRecords(context.Background(), jobID, 10, 0)
++	_, dlCount, _ := store.ListDeadLetterRecords(context.Background(), jobID, "", 10, 0)
+ 	if dlCount != 1 {
+diff --git a/pkg/sync/engine_ac4_remed_challenger_test.go b/pkg/sync/engine_ac4_remed_challenger_test.go
+--- a/pkg/sync/engine_ac4_remed_challenger_test.go
++++ b/pkg/sync/engine_ac4_remed_challenger_test.go
+@@ -98,3 +98,3 @@ func TestChallenger_AC4_ZeroTimestampVariants(t *testing.T) {
+ 			// 3. Dead letter table verification
+-			dlRecords, total, err := store.ListDeadLetterRecords(ctx, jobID, 10, 0)
++			dlRecords, total, err := store.ListDeadLetterRecords(ctx, jobID, "", 10, 0)
+ 			if err != nil {
+@@ -234,3 +234,3 @@ func TestChallenger_AC4_ZeroTimestamp_DoesNotClobberExistingProduct(t *testing.T
+ 	// Verify dead letters in storage
+-	dlList, totalDL, err := store.ListDeadLetterRecords(ctx, attackJobID, 10, 0)
++	dlList, totalDL, err := store.ListDeadLetterRecords(ctx, attackJobID, "", 10, 0)
+ 	if err != nil {
+@@ -301,3 +301,3 @@ func TestChallenger_AC4_AllCorruptRecords_ZeroCommittedProducts(t *testing.T) {
+ 	// Verify dead_letter_issues row count
+-	_, totalDL, err := store.ListDeadLetterRecords(ctx, jobID, 1, 0)
++	_, totalDL, err := store.ListDeadLetterRecords(ctx, jobID, "", 1, 0)
+ 	if err != nil {
+@@ -564,3 +564,3 @@ func TestChallenger_AC4_MixedBatch_AtomicityAndSelectiveIsolation(t *testing.T)
+ 	// Verify dead letter issues total
+-	_, dlTotal, err := store.ListDeadLetterRecords(ctx, jobID, 1, 0)
++	_, dlTotal, err := store.ListDeadLetterRecords(ctx, jobID, "", 1, 0)
+ 	if err != nil {
+diff --git a/pkg/sync/engine_resumability_challenger_test.go b/pkg/sync/engine_resumability_challenger_test.go
+--- a/pkg/sync/engine_resumability_challenger_test.go
++++ b/pkg/sync/engine_resumability_challenger_test.go
+@@ -559,3 +559,3 @@ func TestResumability_AC1_MidSyncInterruption_RolledBack(t *testing.T) {
+ 	// 3. None of the 10 dead letters survived
+-	dlRecords, count, err := store.ListDeadLetterRecords(context.Background(), jobID, 50, 0)
++	dlRecords, count, err := store.ListDeadLetterRecords(context.Background(), jobID, "", 50, 0)
+ 	if err != nil {
+@@ -906,3 +906,3 @@ func TestResumability_AC3_CorruptJobState_CrashRecovery(t *testing.T) {
+ 	}
+-	dlRecords, count, err := store2.ListDeadLetterRecords(ctx, jobID, 10, 0)
++	dlRecords, count, err := store2.ListDeadLetterRecords(ctx, jobID, "", 10, 0)
+ 	if err != nil || count != 0 || len(dlRecords) != 0 {
+diff --git a/pkg/generator/generator_test.go b/pkg/generator/generator_test.go
+--- a/pkg/generator/generator_test.go
++++ b/pkg/generator/generator_test.go
+@@ -602,3 +602,3 @@ func TestGenerator_InvariantD_CorruptRecords_Quarantined(t *testing.T) {
+ 	// Verify dead_letter_issues table row count matches summary.DeadLetter
+-	dlRecords, totalDL, err := store.ListDeadLetterRecords(ctx, jobID, 10000, 0)
++	dlRecords, totalDL, err := store.ListDeadLetterRecords(ctx, jobID, "", 10000, 0)
+ 	if err != nil {
+diff --git a/pkg/generator/generator_challenger_test.go b/pkg/generator/generator_challenger_test.go
+--- a/pkg/generator/generator_challenger_test.go
++++ b/pkg/generator/generator_challenger_test.go
+@@ -388,3 +388,3 @@ func TestChallenger_Generator_Scale_ConservationInvariants(t *testing.T) {
+ 			// 2. Dead letter quarantine verification: row count in dead_letter_issues == summary.DeadLetter
+-			dlRecords, totalDL, err := store.ListDeadLetterRecords(ctx, jobID, totalExpectedRecords+100, 0)
++			dlRecords, totalDL, err := store.ListDeadLetterRecords(ctx, jobID, "", totalExpectedRecords+100, 0)
+ 			if err != nil {

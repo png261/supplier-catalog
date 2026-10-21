@@ -1,0 +1,26 @@
+# Docker Compose specification for Resilient Catalog Synchronization Engine
+# Requirement R2: Persistent volume mount, port mapping, and resilient configuration
+
+services:
+  catalog-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: coderpush-catalog-engine:latest
+    container_name: catalog-engine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DB_PATH=/app/data/catalog.db
+    command: ["-db", "/app/data/catalog.db", "-port", "8080"]
+    volumes:
+      # Persistent host directory mount for SQLite database resilience
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/jobs"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
