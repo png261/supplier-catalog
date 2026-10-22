@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# [DEPRECATED] Fly.io deployment has been superseded by Cloudflare (Pages + Worker + D1).
+# Please use scripts/deploy_cloudflare.sh or `make deploy-cloudflare`.
 set -euo pipefail
 
 # Find flyctl binary

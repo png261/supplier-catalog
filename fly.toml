@@ -1,5 +1,6 @@
-# fly.toml app configuration file for Supplier Catalog
-# See https://fly.io/docs/reference/configuration/ for reference.
+# [DEPRECATED] fly.toml app configuration file
+# This project has migrated to Cloudflare (Pages + Worker + D1 Database).
+# See wrangler.toml and scripts/deploy_cloudflare.sh.
 
 app = "supplier-catalog"
 primary_region = "sin"

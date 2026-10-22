@@ -75,7 +75,9 @@ export function saveRecentShop(shopId: string): void {
 
 export function getSSEUrl(): string {
   const shopId = getActiveShopId();
-  return shopId ? `/api/events?shop=${encodeURIComponent(shopId)}` : '/api/events';
+  const base = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  const path = shopId ? `/api/events?shop=${encodeURIComponent(shopId)}` : '/api/events';
+  return base ? `${base}${path}` : path;
 }
 
 async function shopFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -84,7 +86,12 @@ async function shopFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   if (shopId && !headers.has('X-Shop-Id')) {
     headers.set('X-Shop-Id', shopId);
   }
-  return fetch(input, {
+  const base = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  let finalInput = input;
+  if (typeof input === 'string' && input.startsWith('/api') && base) {
+    finalInput = `${base}${input}`;
+  }
+  return fetch(finalInput, {
     ...init,
     headers,
   });

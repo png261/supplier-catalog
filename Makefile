@@ -204,10 +204,27 @@ docker-down: ## Stop and remove docker compose containers and networks
 docker-logs: ## Tail docker compose container logs
 	$(COMPOSE) logs -f
 
-##@ Cloud Deployment (Fly.io)
-.PHONY: deploy-fly
-deploy-fly: ## Deploy to Fly.io with multi-tenant SQLite persistent volume
-	@./scripts/deploy_fly.sh
+##@ Cloud Deployment (Cloudflare)
+.PHONY: deploy-cloudflare cf-dev cf-d1-migrate cf-test deploy-fly
+deploy-cloudflare: ## Deploy fullstack to Cloudflare (Pages + Worker + D1 Database)
+	@./scripts/deploy_cloudflare.sh
+
+cf-dev: ## Run Cloudflare Worker backend locally with D1 emulator
+	@echo "==> Starting Cloudflare Worker with local D1..."
+	npx wrangler dev
+
+cf-d1-migrate: ## Apply D1 SQLite migrations locally
+	@echo "==> Applying Cloudflare D1 migrations locally..."
+	echo "y" | npx wrangler d1 migrations apply catalog-db --local
+
+cf-test: ## Run Cloudflare Worker unit & integration tests
+	@echo "==> Running Cloudflare Worker test suite..."
+	npm --prefix worker test
+
+deploy-fly: ## [Deprecated] Superseded by Cloudflare deployment
+	@echo "⚠️ Notice: Fly.io deployment has been superseded by Cloudflare (Pages + Worker + D1)."
+	@echo "==> Redirecting to deploy-cloudflare..."
+	@$(MAKE) deploy-cloudflare
 
 ##@ Housekeeping
 .PHONY: clean

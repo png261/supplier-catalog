@@ -24,7 +24,7 @@ go test -race -count=5 ./...
 echo "✅ All tests passed with 0 race conditions across 5 iterations."
 
 # 3. Statement coverage verification >= 90.0%
-echo "📊 [3/3] Enforcing statement coverage threshold >= 90.0%..."
+echo "📊 [3/4] Enforcing statement coverage threshold >= 90.0%..."
 COVERAGE_FILE="coverage.out"
 go test -count=1 -covermode=atomic -coverprofile="$COVERAGE_FILE" -coverpkg=./pkg/... ./...
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -42,6 +42,11 @@ else
     fi
     echo "✅ Statement coverage (${COVERAGE}%) meets threshold 90.0%."
 fi
+
+# 4. Cloudflare Worker test suite verification
+echo "⚡ [4/4] Executing Cloudflare Worker Vitest test suite..."
+npm --prefix worker test
+echo "✅ Cloudflare Worker test suite passed."
 
 echo "=================================================="
 echo "🎉 All Pre-Push gates passed successfully! Push allowed."

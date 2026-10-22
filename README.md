@@ -1,6 +1,6 @@
 # Resilient Catalog Synchronization Engine in Go
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-supplier--catalog.fly.dev-blue?style=flat&logo=fly.io)](https://supplier-catalog.fly.dev)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Cloudflare%20Pages%20%2B%20Workers-orange?style=flat&logo=cloudflare)](https://supplier-catalog-frontend.pages.dev)
 [![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![CI/CD Pipeline](https://github.com/coderpush/catalog-engine/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/coderpush/catalog-engine/actions/workflows/ci-cd.yml)
 [![Statement Coverage](https://img.shields.io/badge/Coverage-93.5%25-brightgreen?style=flat&logo=codecov)](scripts/check-coverage.sh)
@@ -204,6 +204,30 @@ docker run -d \
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
+
+---
+
+### Option 4: Cloudflare Fullstack Deployment (Pages + Worker + D1 Database)
+
+Deploy the entire stack serverlessly to Cloudflare with zero servers to manage:
+- **Frontend SPA**: Hosted globally on **Cloudflare Pages** (Vite + React)
+- **Backend API**: Running at Edge on **Cloudflare Workers** (Hono + TypeScript)
+- **Database**: Native serverless SQLite on **Cloudflare D1** with multi-tenant data isolation
+
+```bash
+# 1. Run worker locally with local D1 emulator
+make cf-dev
+
+# 2. Run automated test suite verifying all 5 invariants
+make cf-test
+
+# 3. Deploy fullstack to Cloudflare (D1 migrations + Worker + Pages)
+make deploy-cloudflare
+```
+
+Test multi-tenancy on the live deployment:
+- `https://supplier-catalog-frontend.pages.dev/?shop=shop-nike-1`
+- `https://supplier-catalog-frontend.pages.dev/?shop=shop-adidas-2`
 
 ---
 
