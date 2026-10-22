@@ -14,6 +14,16 @@ export class D1Storage {
 
   // --- Products ---
 
+  async getMaxSupplierTimestamp(shopId: string): Promise<string | null> {
+    const query = `
+      SELECT MAX(supplier_timestamp) as max_ts
+      FROM products
+      WHERE shop_id = ?;
+    `;
+    const res = await this.db.prepare(query).bind(shopId).first<{ max_ts: string | null }>();
+    return res?.max_ts || null;
+  }
+
   async getProduct(shopId: string, sku: string): Promise<Product | null> {
     const query = `
       SELECT sku, name, price, status, supplier_timestamp, updated_at

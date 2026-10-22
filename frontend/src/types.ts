@@ -100,6 +100,7 @@ export interface CatalogUpdate {
   batches: number;
   batchSize: number;
   seed: number;
+  baseTime?: string;
   updateRatio: number;
   dupRatio: number;
   oooRatio: number;
@@ -118,6 +119,7 @@ export const DEFAULT_CATALOG_UPDATES: CatalogUpdate[] = [
     batches: 10,
     batchSize: 100,
     seed: 42,
+    baseTime: '2026-01-01T00:00:00.000Z',
     updateRatio: 20,
     dupRatio: 5,
     oooRatio: 10,
@@ -133,10 +135,11 @@ export const DEFAULT_CATALOG_UPDATES: CatalogUpdate[] = [
     batches: 10,
     batchSize: 100,
     seed: 101,
-    updateRatio: 20,
-    dupRatio: 0,
-    oooRatio: 0,
-    withdrawnRatio: 0,
+    baseTime: '2026-01-02T00:00:00.000Z',
+    updateRatio: 35,
+    dupRatio: 5,
+    oooRatio: 5,
+    withdrawnRatio: 5,
     invalidRatio: 0,
   },
   {
@@ -148,7 +151,8 @@ export const DEFAULT_CATALOG_UPDATES: CatalogUpdate[] = [
     batches: 15,
     batchSize: 100,
     seed: 999,
-    updateRatio: 15,
+    baseTime: '2026-01-03T00:00:00.000Z',
+    updateRatio: 20,
     dupRatio: 10,
     oooRatio: 15,
     withdrawnRatio: 10,
@@ -163,6 +167,7 @@ export const DEFAULT_CATALOG_UPDATES: CatalogUpdate[] = [
     batches: 25,
     batchSize: 100,
     seed: 777,
+    baseTime: '2026-01-04T00:00:00.000Z',
     updateRatio: 20,
     dupRatio: 5,
     oooRatio: 10,
@@ -178,6 +183,7 @@ export const DEFAULT_CATALOG_UPDATES: CatalogUpdate[] = [
     batches: 10,
     batchSize: 100,
     seed: 555,
+    baseTime: '2026-01-05T00:00:00.000Z',
     updateRatio: 20,
     dupRatio: 5,
     oooRatio: 10,

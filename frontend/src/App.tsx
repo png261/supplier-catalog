@@ -942,6 +942,7 @@ export const AppContent: React.FC = () => {
       out_of_order_ratio: update.oooRatio / 100,
       withdrawn_ratio: update.withdrawnRatio / 100,
       invalid_ratio: update.invalidRatio / 100,
+      base_time: update.baseTime,
     };
 
     const now = Date.now();

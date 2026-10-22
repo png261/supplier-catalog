@@ -128,6 +128,18 @@ app.post('/api/jobs', async (c) => {
       return c.json({ error: 'sum of anomaly and update ratios cannot exceed 1.0', code: 'INVALID_REQUEST' }, 400);
     }
 
+    let baseTime = body.base_time;
+    const maxTs = await storage.getMaxSupplierTimestamp(shopId);
+    if (maxTs) {
+      const maxDate = new Date(maxTs).getTime();
+      const reqDate = baseTime ? new Date(baseTime).getTime() : 0;
+      if (!baseTime || isNaN(reqDate) || reqDate <= maxDate) {
+        baseTime = new Date(maxDate + 86400000).toISOString();
+      }
+    } else if (!baseTime) {
+      baseTime = '2026-01-01T00:00:00.000Z';
+    }
+
     generatorConfig = {
       seed: body.seed ?? 42,
       total_batches: totalBatches,
@@ -138,6 +150,7 @@ app.post('/api/jobs', async (c) => {
       withdrawn_ratio: body.withdrawn_ratio ?? 0.05,
       invalid_ratio: body.invalid_ratio ?? 0.05,
       reservoir_capacity: 1000,
+      base_time: baseTime,
     };
   } else {
     return c.json({ error: `unsupported mode: ${mode}`, code: 'INVALID_REQUEST' }, 400);
