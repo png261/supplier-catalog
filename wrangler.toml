@@ -9,7 +9,7 @@ ENVIRONMENT = "production"
 [[d1_databases]]
 binding = "DB"
 database_name = "catalog-db"
-database_id = "catalog-db-production"
+database_id = "8d0a4680-b1ad-4282-a1cc-0c531e779a22"
 migrations_dir = "migrations"
 
 [observability]
