@@ -42,7 +42,7 @@ interface OverviewViewProps {
   onJobSelect: (jobId: string) => void;
   onRefreshAnalytics: () => void;
   onMetricCardClick: (category: 'added' | 'updated' | 'withdrawn' | 'skipped' | 'dead_letter') => void;
-  onNavigateToTab: (tab: 'catalog' | 'attention' | 'history' | 'scenarios') => void;
+  onNavigateToTab: (tab: 'catalog' | 'attention' | 'history') => void;
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({

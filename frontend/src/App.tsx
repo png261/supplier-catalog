@@ -6,7 +6,6 @@ import { OverviewView } from './components/views/OverviewView';
 import { CatalogView } from './components/views/CatalogView';
 import { AttentionView } from './components/views/AttentionView';
 import { HistoryView } from './components/views/HistoryView';
-import { ScenariosView } from './components/views/ScenariosView';
 import { DemoModal, SCENARIOS } from './components/DemoModal';
 import { RemediationModal } from './components/RemediationModal';
 import { MetricDrilldownModal } from './components/MetricDrilldownModal';
@@ -50,7 +49,7 @@ export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavItemKey>(() => {
     const params = new URLSearchParams(window.location.search);
     const p = params.get('page');
-    if (p && ['overview', 'catalog', 'attention', 'history', 'scenarios'].includes(p)) {
+    if (p && ['overview', 'catalog', 'attention', 'history'].includes(p)) {
       return p as NavItemKey;
     }
     return 'overview';
@@ -73,7 +72,7 @@ export const AppContent: React.FC = () => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
       const p = params.get('page');
-      if (p && ['overview', 'catalog', 'attention', 'history', 'scenarios'].includes(p)) {
+      if (p && ['overview', 'catalog', 'attention', 'history'].includes(p)) {
         setActiveTab(p as NavItemKey);
       } else {
         setActiveTab('overview');
@@ -688,14 +687,12 @@ export const AppContent: React.FC = () => {
                 {activeTab === 'catalog' && 'Live Catalog Management'}
                 {activeTab === 'attention' && 'Quarantined Attention (DLQ)'}
                 {activeTab === 'history' && 'Sync Run Audit Trail'}
-                {activeTab === 'scenarios' && 'Supplier Workload Scenarios'}
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
                 {activeTab === 'overview' && 'Comprehensive operations metrics, live ingestion telemetry, and SQLite WAL health.'}
                 {activeTab === 'catalog' && 'Search, filter, and inspect product catalog state synchronized from supplier feeds.'}
                 {activeTab === 'attention' && 'Invariant D dead-letter isolation: review and remediate defective supplier records.'}
                 {activeTab === 'history' && 'Immutable audit log of historical sync sessions and batch transaction checkpoints.'}
-                {activeTab === 'scenarios' && 'Select, configure, and benchmark synthetic workloads on SQLite WAL concurrency.'}
               </p>
             </div>
 
@@ -797,20 +794,6 @@ export const AppContent: React.FC = () => {
                 page={historyPage}
                 limit={historyLimit}
                 onPageChange={setHistoryPage}
-              />
-            )}
-
-            {/* 5. DEDICATED SUPPLIER WORKLOAD SCENARIOS VIEW */}
-            {activeTab === 'scenarios' && (
-              <ScenariosView
-                stagedScenario={stagedScenario}
-                isSyncing={isSyncing}
-                isInterrupted={isInterrupted}
-                onStartSync={handleStartSync}
-                onCancelSync={handleCancelSync}
-                onSelectScenario={handleSelectScenario}
-                onStartImmediately={handleStartImmediately}
-                onOpenScenarioModal={(key) => setIsScenarioModalOpen(true)}
               />
             )}
           </div>

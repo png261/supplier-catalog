@@ -5,7 +5,6 @@ import {
   Package,
   AlertTriangle,
   History,
-  PlayCircle,
   Layers,
   ChevronLeft,
   ChevronRight,
@@ -16,12 +15,12 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 
-export type NavItemKey = "overview" | "catalog" | "attention" | "history" | "scenarios";
+export type NavItemKey = "overview" | "catalog" | "attention" | "history";
 
 interface AppSidebarProps {
   activeTab: NavItemKey;
   onSelectTab: (tab: NavItemKey) => void;
-  openScenarioModal: (preselectedScenario?: string) => void;
+  openScenarioModal?: (preselectedScenario?: string) => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   isMobileOpen: boolean;
@@ -36,7 +35,6 @@ interface AppSidebarProps {
 export const AppSidebar: React.FC<AppSidebarProps> = ({
   activeTab,
   onSelectTab,
-  openScenarioModal,
   isCollapsed,
   onToggleCollapse,
   isMobileOpen,
@@ -56,13 +54,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           label: "Dashboard",
           icon: LayoutDashboard,
           badge: null,
-        },
-        {
-          key: "scenarios" as NavItemKey,
-          label: "Supplier Scenarios",
-          icon: PlayCircle,
-          badge: "5 tests",
-          badgeVariant: "outline" as const,
         },
       ],
     },
