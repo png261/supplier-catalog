@@ -683,96 +683,12 @@ export const AppContent: React.FC = () => {
     toast.success(`Switched to shop: ${newShopId}`);
   };
 
-  const handleStartSync = async () => {
-    if (interruptedJob) {
-      handleResumeInterrupted(interruptedJob.job_id);
-      return;
+  const handleOpenScenarioModal = (preselectedScenario?: string) => {
+    if (preselectedScenario) {
+      const match = SCENARIOS.find((s) => s.key === preselectedScenario);
+      if (match) setStagedScenario(match);
     }
-
-    let payload: any;
-    if (stagedScenario.key === 'interrupted') {
-      autoHaltBatchRef.current = 5;
-    } else {
-      autoHaltBatchRef.current = null;
-    }
-
-    payload = {
-      mode: 'generator',
-      seed: stagedScenario.seed,
-      total_batches: stagedScenario.batches,
-      batch_size: stagedScenario.size,
-      update_ratio: stagedScenario.updateRatio / 100,
-      duplicate_ratio: stagedScenario.dupRatio / 100,
-      out_of_order_ratio: stagedScenario.oooRatio / 100,
-      withdrawn_ratio: stagedScenario.withdrawnRatio / 100,
-      invalid_ratio: stagedScenario.invalidRatio / 100,
-    };
-
-    setCurrentBatch(0);
-    setTotalBatches(stagedScenario.batches || 10);
-    setEta('Estimating...');
-    jobStartTimeRef.current = Date.now();
-    startRuntimeTimer();
-    setSmartStatusText(`Starting sync (${stagedScenario.name})...`);
-    setSmartStatusType('running');
-    setActiveJob({
-      job_id: 'pending',
-      status: 'RUNNING',
-    });
-
-    try {
-      const res = await startJob(payload);
-      setActiveJob({
-        job_id: res.job_id,
-        status: 'RUNNING',
-      });
-      toast.success(`Synchronization started: ${res.job_id}`);
-
-      // Immediate check in case execution finishes in WAL before next render tick
-      try {
-        const jobRes = await fetchJob(res.job_id);
-        if (jobRes?.job?.status === 'COMPLETED') {
-          setActiveJob(null);
-          stopRuntimeTimer();
-          setEta('Done');
-          setCurrentBatch(jobRes.job.total_batches || stagedScenario.batches || 10);
-          if (jobRes.job.summary) {
-            setMetrics({
-              added: jobRes.job.summary.added || 0,
-              updated: jobRes.job.summary.updated || 0,
-              withdrawn: jobRes.job.summary.withdrawn || 0,
-              skipped: jobRes.job.summary.skipped || 0,
-              dead_letter: jobRes.job.summary.dead_letter || 0,
-            });
-          }
-          setSmartStatusText(`Sync job ${res.job_id} successfully completed. Catalog fully updated!`);
-          setSmartStatusType('success');
-          loadAllData();
-          loadAnalytics();
-        }
-      } catch (_) {}
-    } catch (err: any) {
-      setActiveJob(null);
-      stopRuntimeTimer();
-      setSmartStatusText(`Failed to start sync: ${err.message || 'Unknown error'}`);
-      setSmartStatusType('warning');
-      toast.error(err.message || 'Failed to start job');
-    }
-  };
-
-  const handleCancelSync = async () => {
-    if (!activeJob) return;
-    try {
-      await cancelJob(activeJob.job_id);
-      toast.info('Cancellation signal sent to engine.');
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to cancel job');
-    }
-  };
-
-  const handleSelectScenario = (scenario: TestScenario) => {
-    setStagedScenario(scenario);
-    toast.success(`Staged scenario: ${scenario.name}`);
+    setIsScenarioModalOpen(true);
   };
 
   const handleStartImmediately = async (scenario: TestScenario) => {
@@ -845,6 +761,29 @@ export const AppContent: React.FC = () => {
       setSmartStatusType('warning');
       toast.error(err.message || 'Failed to start job');
     }
+  };
+
+  const handleStartSync = async () => {
+    if (interruptedJob) {
+      handleResumeInterrupted(interruptedJob.job_id);
+      return;
+    }
+    await handleStartImmediately(stagedScenario);
+  };
+
+  const handleCancelSync = async () => {
+    if (!activeJob) return;
+    try {
+      await cancelJob(activeJob.job_id);
+      toast.info('Cancellation signal sent to engine.');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to cancel job');
+    }
+  };
+
+  const handleSelectScenario = (scenario: TestScenario) => {
+    setStagedScenario(scenario);
+    toast.success(`Staged scenario: ${scenario.name}`);
   };
 
   const handleResumeInterrupted = async (jobId: string) => {
@@ -955,9 +894,12 @@ export const AppContent: React.FC = () => {
         <AppHeader
           activeTab={activeTab}
           onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
-          openScenarioModal={() => setIsScenarioModalOpen(true)}
+          openScenarioModal={handleOpenScenarioModal}
           onResetDatabase={handleResetDb}
           activeJobId={activeJob ? activeJob.job_id : null}
+          stagedScenario={stagedScenario}
+          onStartSync={handleStartSync}
+          isRunning={Boolean(activeJob)}
         />
 
         {/* Content Body */}

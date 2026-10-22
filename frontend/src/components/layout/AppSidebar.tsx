@@ -107,14 +107,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             <div className="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm flex-shrink-0">
               <Layers className="h-5 w-5" />
             </div>
-            <div className="flex flex-col min-w-0">
-              <span className="font-bold text-sm text-slate-900 dark:text-slate-100 tracking-tight truncate">
-                Coderpush Engine
-              </span>
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-mono truncate">
-                WAL Resilient Sync
-              </span>
-            </div>
           </div>
 
           {/* Collapse button on desktop */}
@@ -145,10 +137,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
                   {activeShopId === "default" ? "Default Production Shop" : `Shop: ${activeShopId}`}
-                </p>
-                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-                  SQLite WAL Active
                 </p>
               </div>
             </div>
