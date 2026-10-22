@@ -1,7 +1,8 @@
 # Tài Liệu Kịch Bản & Thuyết Minh Video Demo (Tiếng Việt)
 ## Assessment 1: Supplier Catalog Updates (Hệ Thống Đồng Bộ Danh Mục Bền Bỉ Bằng Go)
 
-> **Tệp Video Demo Hoàn Chỉnh**: [`demo_walkthrough_vi.mp4`](file:///Users/png/01.%20Project/coderpush/demo_walkthrough_vi.mp4) *(Độ phân giải 1080p, chuẩn H.264 / AAC, dung lượng: ~4.2 MB)*  
+> **Tệp Video Demo Hoàn Chỉnh**: [`demo_walkthrough_vi.mp4`](file:///Users/png/01.%20Project/coderpush/demo_walkthrough_vi.mp4) *(Độ phân giải 1080p, chuẩn H.264 / AAC, dung lượng: ~4.6 MB)*  
+> **Bộ Giọng Đọc AI**: [**VieNeu-TTS (v3 Turbo)**](https://github.com/pnnbao97/VieNeu-TTS) *(Preset Voice: "Hải Đăng" - Nam · Bắc · Phong cách tự nhiên)*  
 > **Kho lưu trữ GitHub**: [https://github.com/png261/supplier-catalog](https://github.com/png261/supplier-catalog)  
 > **Gói Docker Container (GHCR)**: `ghcr.io/png261/supplier-catalog:latest`
 
@@ -80,8 +81,8 @@
 open "/Users/png/01. Project/coderpush/demo_walkthrough_vi.mp4"
 ```
 
-#### 2. Tự động sinh lại video bất kỳ lúc nào:
+#### 2. Tự động sinh lại video với VieNeu-TTS:
 ```bash
-python3 scripts/generate_demo_vi.py
+/tmp/vieneu-venv/bin/python scripts/generate_demo_vi.py
 ```
-*(Hỗ trợ VieNeu-TTS Cloud API nếu cấu hình biến môi trường `VIENEU_API_KEY`, tự động fallback sang giọng đọc tiếng Việt bản địa trên máy Mac mà không cần tải thêm mô hình nặng).*
+*(Chạy trực tiếp với mô hình VieNeu-TTS v3 Turbo ONNX Lite engine, giọng đọc mẫu "Hải Đăng" cực kỳ tự nhiên, hỗ trợ chuyển đổi mã song ngữ Việt - Anh mượt mà).*

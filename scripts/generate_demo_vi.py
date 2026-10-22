@@ -1,7 +1,8 @@
-#!/usr/bin/env python3
+#!/tmp/vieneu-venv/bin/python
 """
 Comprehensive Vietnamese Demo Video Generator for Supplier Catalog Updates
-Supports VieNeu-TTS Cloud API (via VIENEU_API_KEY) with automatic fallback to macOS native Linh (vi_VN) TTS.
+Uses open-source VieNeu-TTS (https://github.com/pnnbao97/VieNeu-TTS) v3 Turbo ONNX engine
+with curated preset voice (Hải Đăng) and automatic fallback to macOS Linh (vi_VN) TTS.
 Renders all 8 comprehensive feature scenes in Dieter Rams / Swiss minimalist style (1080p).
 """
 
@@ -450,53 +451,57 @@ VI_NARRATION_SCRIPTS = [
     ),
 ]
 
+# Global VieNeu-TTS Engine instance (loaded once for fast batch inference)
+VIENEU_ENGINE = None
+
+def get_vieneu_engine():
+    global VIENEU_ENGINE
+    if VIENEU_ENGINE is None:
+        try:
+            print("⏳ Initializing open-source VieNeu-TTS v3 Turbo (ONNX Lite engine)...")
+            from vieneu.v3turbo import V3TurboVieNeuTTS
+            VIENEU_ENGINE = V3TurboVieNeuTTS(
+                onnx_dir='/tmp/vieneu_onnx_dir',
+                codec_dir='/tmp/vieneu_codec_dir'
+            )
+            print("✅ VieNeu-TTS engine successfully loaded into memory!")
+        except Exception as e:
+            print(f"⚠️ Failed to load local VieNeu-TTS engine ({e}). Will use macOS Linh fallback.")
+            VIENEU_ENGINE = False
+    return VIENEU_ENGINE if VIENEU_ENGINE is not False else None
+
 def generate_vietnamese_audio(scene_id, script_text):
     """
-    Tries VieNeu Cloud API if VIENEU_API_KEY is present;
-    Otherwise falls back seamlessly to macOS Linh (vi_VN) TTS.
+    Synthesizes speech using open-source VieNeu-TTS (voice: Hải Đăng / v3 Turbo ONNX).
+    Falls back gracefully to native macOS Linh TTS if needed.
     """
-    api_key = os.getenv("VIENEU_API_KEY", "").strip()
     m4a_path = os.path.join(OUTPUT_DIR, f"{scene_id}_vi.m4a")
-    mp3_path = os.path.join(OUTPUT_DIR, f"{scene_id}_vi.mp3")
-    
+    wav_path = os.path.join(OUTPUT_DIR, f"{scene_id}_vi.wav")
     used_engine = "macOS Linh (vi_VN)"
     
-    if api_key:
-        print(f"[{scene_id}] Attempting VieNeu Cloud API synthesis...")
+    tts = get_vieneu_engine()
+    if tts:
+        print(f"[{scene_id}] Synthesizing with VieNeu-TTS v3 Turbo (Hải Đăng)...")
         try:
-            req_data = json.dumps({
-                "model": "vieneu-tts",
-                "input": script_text,
-                "voice": "default"
-            }).encode("utf-8")
-            
-            http_req = urllib.request.Request(
-                "https://api.vieneu.io/api/v1/audio/speech",
-                data=req_data,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                },
-                method="POST"
-            )
-            with urllib.request.urlopen(http_req, timeout=15) as resp:
-                if resp.status == 200:
-                    with open(mp3_path, "wb") as f:
-                        f.write(resp.read())
-                    # Convert to m4a
-                    subprocess.run(["ffmpeg", "-y", "-i", mp3_path, "-acodec", "aac", m4a_path],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                    os.remove(mp3_path)
-                    used_engine = "VieNeu-TTS (Cloud API)"
+            wav = tts.infer(script_text, voice="Hải Đăng")
+            tts.save(wav, wav_path)
+            # Convert to standard AAC m4a
+            subprocess.run(["ffmpeg", "-y", "-i", wav_path, "-acodec", "aac", "-b:a", "192k", m4a_path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
+            used_engine = "VieNeu-TTS (Hải Đăng / v3 Turbo)"
         except Exception as ex:
-            print(f"[{scene_id}] VieNeu API unavailable ({ex}), falling back to native Linh TTS...")
+            print(f"[{scene_id}] VieNeu-TTS error ({ex}), falling back to native Linh TTS...")
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
 
     if not os.path.exists(m4a_path):
         # Native macOS Vietnamese voice Linh
-        print(f"[{scene_id}] Synthesizing with {used_engine}...")
+        print(f"[{scene_id}] Synthesizing with native Linh TTS...")
         aiff_path = os.path.join(OUTPUT_DIR, f"{scene_id}_vi.aiff")
         subprocess.run(["say", "-v", "Linh", "-r", "165", "-o", aiff_path, script_text], check=True)
-        subprocess.run(["ffmpeg", "-y", "-i", aiff_path, "-acodec", "aac", m4a_path],
+        subprocess.run(["ffmpeg", "-y", "-i", aiff_path, "-acodec", "aac", "-b:a", "192k", m4a_path],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         if os.path.exists(aiff_path):
             os.remove(aiff_path)
