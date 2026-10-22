@@ -1,5 +1,4 @@
 import React from 'react';
-import { ProgressBanner } from '../ProgressBanner';
 import { UpdatesList } from '../UpdatesList';
 import { AnalyticsFilterBar } from '../AnalyticsFilterBar';
 import { MetricsGrid } from '../MetricsGrid';
@@ -80,8 +79,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 }) => {
   return (
     <div className="space-y-5">
-      {/* Feed Ingestion Progress Strip */}
-      <ProgressBanner
+      {/* Available Catalog Updates with Inlined Live Progress */}
+      <UpdatesList
+        updates={updates}
+        syncedIds={syncedUpdateIds}
+        activeSyncingId={activeSyncingUpdateId}
+        isAnySyncing={Boolean(isSyncing)}
+        onSync={onSyncUpdate}
         currentBatch={currentBatch}
         totalBatches={totalBatches}
         throughput={throughput}
@@ -89,18 +93,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         elapsedTime={elapsedTime}
         smartStatusText={smartStatusText}
         smartStatusType={smartStatusType}
-        isSyncing={isSyncing}
-        isInterrupted={isInterrupted}
         onCancelSync={onCancelSync}
-      />
-
-      {/* Available Catalog Updates for Staff */}
-      <UpdatesList
-        updates={updates}
-        syncedIds={syncedUpdateIds}
-        activeSyncingId={activeSyncingUpdateId}
-        isAnySyncing={Boolean(isSyncing)}
-        onSync={onSyncUpdate}
+        isInterrupted={isInterrupted}
       />
 
       {/* Operations Analytics Filter Bar */}
