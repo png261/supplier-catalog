@@ -18,6 +18,7 @@ import {
   fetchHistory,
   fetchInterruptedJobs,
   fetchAnalytics,
+  fetchJob,
   startJob,
   resumeJob,
   cancelJob,
@@ -207,15 +208,39 @@ export const AppContent: React.FC = () => {
       setSseConnected(false);
     };
 
-    es.onmessage = (event) => {
+    const eventNames = [
+      'message',
+      'job_started',
+      'JOB_STARTED',
+      'progress',
+      'BATCH_COMMITTED',
+      'job_completed',
+      'JOB_COMPLETED',
+      'job_interrupted',
+      'JOB_INTERRUPTED',
+      'dead_letter',
+      'DEAD_LETTER',
+      'job_failed',
+      'JOB_FAILED',
+    ];
+
+    const onEventHandler = (evtName: string) => (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data);
+        const parsed = JSON.parse(event.data);
         setSseEventCount((prev) => prev + 1);
-        handleSSEEvent(data);
+        handleSSEEvent(evtName === 'message' ? (parsed.type || 'message') : evtName, parsed);
       } catch (err) {
-        console.error('Failed to parse SSE message:', err);
+        console.error(`Failed to parse SSE event [${evtName}]:`, err);
       }
     };
+
+    eventNames.forEach((evtName) => {
+      if (evtName === 'message') {
+        es.onmessage = onEventHandler('message');
+      } else {
+        es.addEventListener(evtName, onEventHandler(evtName));
+      }
+    });
 
     return () => {
       es.close();
@@ -223,57 +248,65 @@ export const AppContent: React.FC = () => {
   }, [shopId]);
 
   // --- SSE Event Dispatcher ---
-  const handleSSEEvent = (data: any) => {
-    switch (data.type) {
+  const handleSSEEvent = (rawType: string, payload: any) => {
+    const type = (payload.type || rawType || '').toUpperCase();
+    const data = { ...payload, type };
+
+    switch (type) {
       case 'JOB_STARTED':
+      case 'STARTED':
         setActiveJob({ job_id: data.job_id, status: 'RUNNING' });
         setCurrentBatch(0);
-        setTotalBatches(data.total_batches || 10);
+        setTotalBatches(data.total_batches || totalBatches || 10);
         setDeltas({ added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 });
-        setAnalyticsData((prev) => ({ ...prev, time_series: [] }));
         jobStartTimeRef.current = Date.now();
         startRuntimeTimer();
-        setSmartStatusText(`Sync job ${data.job_id} started. Streaming batches from supplier...`);
+        setSmartStatusText(`Sync job ${data.job_id} running. Streaming supplier batches...`);
         setSmartStatusType('running');
         break;
 
-      case 'BATCH_COMMITTED':
-        setCurrentBatch(data.batch_index + 1);
-        setTotalBatches(data.total_batches || totalBatches);
+      case 'PROGRESS':
+      case 'BATCH_COMMITTED': {
+        const batchIndex = typeof data.batch_index === 'number' ? data.batch_index : 0;
+        const total = data.total_batches || totalBatches || 10;
+        setCurrentBatch(batchIndex + 1);
+        setTotalBatches(total);
 
-        if (data.cumulative_summary) {
+        const cumulative = data.cumulative_summary || data.summary;
+        if (cumulative) {
           setMetrics({
-            added: data.cumulative_summary.added || 0,
-            updated: data.cumulative_summary.updated || 0,
-            withdrawn: data.cumulative_summary.withdrawn || 0,
-            skipped: data.cumulative_summary.skipped || 0,
-            dead_letter: data.cumulative_summary.dead_letter || 0,
+            added: cumulative.added || 0,
+            updated: cumulative.updated || 0,
+            withdrawn: cumulative.withdrawn || 0,
+            skipped: cumulative.skipped || 0,
+            dead_letter: cumulative.dead_letter || 0,
           });
         }
 
-        if (data.batch_summary) {
+        const delta = data.batch_delta || data.batch_summary;
+        if (delta) {
           setDeltas({
-            added: data.batch_summary.added || 0,
-            updated: data.batch_summary.updated || 0,
-            withdrawn: data.batch_summary.withdrawn || 0,
-            skipped: data.batch_summary.skipped || 0,
-            dead_letter: data.batch_summary.dead_letter || 0,
+            added: delta.added || 0,
+            updated: delta.updated || 0,
+            withdrawn: delta.withdrawn || 0,
+            skipped: delta.skipped || 0,
+            dead_letter: delta.dead_letter || 0,
           });
 
           // Append batch product metrics to time_series for real-time chart progression
           const pt: TimeSeriesPoint = {
             timestamp: new Date().toISOString(),
-            batch_index: data.batch_index,
-            added: data.batch_summary.added || 0,
-            updated: data.batch_summary.updated || 0,
-            withdrawn: data.batch_summary.withdrawn || 0,
-            skipped: data.batch_summary.skipped || 0,
-            dead_letter: data.batch_summary.dead_letter || 0,
+            batch_index: batchIndex,
+            added: delta.added || 0,
+            updated: delta.updated || 0,
+            withdrawn: delta.withdrawn || 0,
+            skipped: delta.skipped || 0,
+            dead_letter: delta.dead_letter || 0,
             processing_speed: 0,
           };
           setAnalyticsData((prev) => {
             const series = [...prev.time_series];
-            const idx = series.findIndex((p) => p.batch_index === data.batch_index);
+            const idx = series.findIndex((p) => p.batch_index === batchIndex);
             if (idx >= 0) {
               series[idx] = pt;
             } else {
@@ -285,18 +318,18 @@ export const AppContent: React.FC = () => {
 
         // Calculate throughput & ETA
         if (jobStartTimeRef.current) {
-          const elapsedSec = Math.max(1, (Date.now() - jobStartTimeRef.current) / 1000);
+          const elapsedSec = Math.max(0.1, (Date.now() - jobStartTimeRef.current) / 1000);
           const totalProcessed =
-            (data.cumulative_summary?.added || 0) +
-            (data.cumulative_summary?.updated || 0) +
-            (data.cumulative_summary?.withdrawn || 0) +
-            (data.cumulative_summary?.skipped || 0) +
-            (data.cumulative_summary?.dead_letter || 0);
+            (cumulative?.added || 0) +
+            (cumulative?.updated || 0) +
+            (cumulative?.withdrawn || 0) +
+            (cumulative?.skipped || 0) +
+            (cumulative?.dead_letter || 0);
 
           const speed = Math.round(totalProcessed / elapsedSec);
           setThroughput(speed);
 
-          const remainingBatches = Math.max(0, (data.total_batches || totalBatches) - (data.batch_index + 1));
+          const remainingBatches = Math.max(0, total - (batchIndex + 1));
           if (speed > 0 && remainingBatches > 0) {
             const avgBatchSize = stagedScenario.size || 100;
             const remainingRecords = remainingBatches * avgBatchSize;
@@ -308,14 +341,14 @@ export const AppContent: React.FC = () => {
         }
 
         setSmartStatusText(
-          `Batch ${data.batch_index + 1}/${data.total_batches || totalBatches} committed atomically into SQLite WAL.`
+          `Batch ${batchIndex + 1}/${total} committed atomically into SQLite WAL.`
         );
         setSmartStatusType('running');
 
         // Mid-Feed Crash Simulation Check
         if (
           autoHaltBatchRef.current !== null &&
-          data.batch_index + 1 >= autoHaltBatchRef.current &&
+          batchIndex + 1 >= autoHaltBatchRef.current &&
           activeJob &&
           activeJob.status === 'RUNNING'
         ) {
@@ -327,8 +360,21 @@ export const AppContent: React.FC = () => {
           });
         }
         break;
+      }
 
       case 'JOB_COMPLETED':
+      case 'COMPLETED': {
+        const total = data.total_batches || totalBatches || 10;
+        setCurrentBatch(total);
+        if (data.summary) {
+          setMetrics({
+            added: data.summary.added || 0,
+            updated: data.summary.updated || 0,
+            withdrawn: data.summary.withdrawn || 0,
+            skipped: data.summary.skipped || 0,
+            dead_letter: data.summary.dead_letter || 0,
+          });
+        }
         setActiveJob(null);
         stopRuntimeTimer();
         setEta('Done');
@@ -338,8 +384,19 @@ export const AppContent: React.FC = () => {
         loadAllData();
         loadAnalytics();
         break;
+      }
 
       case 'JOB_INTERRUPTED':
+      case 'INTERRUPTED':
+        if (data.summary) {
+          setMetrics({
+            added: data.summary.added || 0,
+            updated: data.summary.updated || 0,
+            withdrawn: data.summary.withdrawn || 0,
+            skipped: data.summary.skipped || 0,
+            dead_letter: data.summary.dead_letter || 0,
+          });
+        }
         setActiveJob(null);
         stopRuntimeTimer();
         setSmartStatusText(`Job ${data.job_id} was interrupted. Checkpoint preserved for resumption.`);
@@ -351,6 +408,7 @@ export const AppContent: React.FC = () => {
         break;
 
       case 'JOB_FAILED':
+      case 'FAILED':
         setActiveJob(null);
         stopRuntimeTimer();
         setSmartStatusText(`Job ${data.job_id} failed: ${data.error || 'Unknown error'}`);
@@ -364,6 +422,60 @@ export const AppContent: React.FC = () => {
         break;
     }
   };
+
+  // --- Active Job Polling Fallback (ensures progress & metrics stay 100% in sync) ---
+  useEffect(() => {
+    if (!activeJob || activeJob.status !== 'RUNNING' || activeJob.job_id === 'pending') {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetchJob(activeJob.job_id);
+        const job = res?.job;
+        if (!job) return;
+
+        if (typeof job.committed_batch_index === 'number' && job.committed_batch_index >= 0) {
+          setCurrentBatch(job.committed_batch_index + 1);
+        }
+        if (job.total_batches) {
+          setTotalBatches(job.total_batches);
+        }
+        if (job.summary) {
+          setMetrics({
+            added: job.summary.added || 0,
+            updated: job.summary.updated || 0,
+            withdrawn: job.summary.withdrawn || 0,
+            skipped: job.summary.skipped || 0,
+            dead_letter: job.summary.dead_letter || 0,
+          });
+        }
+
+        if (job.status === 'COMPLETED') {
+          setActiveJob(null);
+          stopRuntimeTimer();
+          setEta('Done');
+          setCurrentBatch(job.total_batches || totalBatches || 10);
+          setSmartStatusText(`Sync job ${job.job_id} successfully completed. Catalog fully updated!`);
+          setSmartStatusType('success');
+          loadAllData();
+          loadAnalytics();
+        } else if (job.status === 'INTERRUPTED') {
+          setActiveJob(null);
+          stopRuntimeTimer();
+          setSmartStatusText(`Job ${job.job_id} was interrupted. Checkpoint preserved for resumption.`);
+          setSmartStatusType('warning');
+          loadInterruptedJob();
+          loadAllData();
+          loadAnalytics();
+        }
+      } catch (err) {
+        // silent fallback
+      }
+    }, 400);
+
+    return () => clearInterval(interval);
+  }, [activeJob?.job_id, activeJob?.status, totalBatches]);
 
   // --- Runtime Timer ---
   const startRuntimeTimer = () => {
@@ -555,10 +667,54 @@ export const AppContent: React.FC = () => {
       invalid_ratio: stagedScenario.invalidRatio / 100,
     };
 
+    setCurrentBatch(0);
+    setTotalBatches(stagedScenario.batches || 10);
+    setEta('Estimating...');
+    jobStartTimeRef.current = Date.now();
+    startRuntimeTimer();
+    setSmartStatusText(`Starting sync (${stagedScenario.name})...`);
+    setSmartStatusType('running');
+    setActiveJob({
+      job_id: 'pending',
+      status: 'RUNNING',
+    });
+
     try {
       const res = await startJob(payload);
+      setActiveJob({
+        job_id: res.job_id,
+        status: 'RUNNING',
+      });
       toast.success(`Synchronization started: ${res.job_id}`);
+
+      // Immediate check in case execution finishes in WAL before next render tick
+      try {
+        const jobRes = await fetchJob(res.job_id);
+        if (jobRes?.job?.status === 'COMPLETED') {
+          setActiveJob(null);
+          stopRuntimeTimer();
+          setEta('Done');
+          setCurrentBatch(jobRes.job.total_batches || stagedScenario.batches || 10);
+          if (jobRes.job.summary) {
+            setMetrics({
+              added: jobRes.job.summary.added || 0,
+              updated: jobRes.job.summary.updated || 0,
+              withdrawn: jobRes.job.summary.withdrawn || 0,
+              skipped: jobRes.job.summary.skipped || 0,
+              dead_letter: jobRes.job.summary.dead_letter || 0,
+            });
+          }
+          setSmartStatusText(`Sync job ${res.job_id} successfully completed. Catalog fully updated!`);
+          setSmartStatusType('success');
+          loadAllData();
+          loadAnalytics();
+        }
+      } catch (_) {}
     } catch (err: any) {
+      setActiveJob(null);
+      stopRuntimeTimer();
+      setSmartStatusText(`Failed to start sync: ${err.message || 'Unknown error'}`);
+      setSmartStatusType('warning');
       toast.error(err.message || 'Failed to start job');
     }
   };
@@ -599,20 +755,75 @@ export const AppContent: React.FC = () => {
       invalid_ratio: scenario.invalidRatio / 100,
     };
 
+    setCurrentBatch(0);
+    setTotalBatches(scenario.batches || 10);
+    setEta('Estimating...');
+    jobStartTimeRef.current = Date.now();
+    startRuntimeTimer();
+    setSmartStatusText(`Starting sync (${scenario.name})...`);
+    setSmartStatusType('running');
+    setActiveJob({
+      job_id: 'pending',
+      status: 'RUNNING',
+    });
+
     try {
       const res = await startJob(payload);
+      setActiveJob({
+        job_id: res.job_id,
+        status: 'RUNNING',
+      });
       toast.success(`Synchronization started: ${res.job_id}`);
+
+      try {
+        const jobRes = await fetchJob(res.job_id);
+        if (jobRes?.job?.status === 'COMPLETED') {
+          setActiveJob(null);
+          stopRuntimeTimer();
+          setEta('Done');
+          setCurrentBatch(jobRes.job.total_batches || scenario.batches || 10);
+          if (jobRes.job.summary) {
+            setMetrics({
+              added: jobRes.job.summary.added || 0,
+              updated: jobRes.job.summary.updated || 0,
+              withdrawn: jobRes.job.summary.withdrawn || 0,
+              skipped: jobRes.job.summary.skipped || 0,
+              dead_letter: jobRes.job.summary.dead_letter || 0,
+            });
+          }
+          setSmartStatusText(`Sync job ${res.job_id} successfully completed. Catalog fully updated!`);
+          setSmartStatusType('success');
+          loadAllData();
+          loadAnalytics();
+        }
+      } catch (_) {}
     } catch (err: any) {
+      setActiveJob(null);
+      stopRuntimeTimer();
+      setSmartStatusText(`Failed to start sync: ${err.message || 'Unknown error'}`);
+      setSmartStatusType('warning');
       toast.error(err.message || 'Failed to start job');
     }
   };
 
   const handleResumeInterrupted = async (jobId: string) => {
+    jobStartTimeRef.current = Date.now();
+    startRuntimeTimer();
+    setSmartStatusText(`Resuming interrupted sync ${jobId}...`);
+    setSmartStatusType('running');
+    setActiveJob({
+      job_id: jobId,
+      status: 'RUNNING',
+    });
     try {
       await resumeJob(jobId);
       toast.success(`Resumed job ${jobId}`);
       setInterruptedJob(null);
     } catch (err: any) {
+      setActiveJob(null);
+      stopRuntimeTimer();
+      setSmartStatusText(`Failed to resume job: ${err.message || 'Unknown error'}`);
+      setSmartStatusType('warning');
       toast.error(err.message || 'Failed to resume job');
     }
   };
