@@ -40,7 +40,7 @@ if ! $FLY_CMD auth whoami &>/dev/null; then
   fi
 fi
 
-APP_NAME=$(grep '^app = ' fly.toml | cut -d '"' -f2 || echo "coderpush-catalog-sync")
+APP_NAME=$(grep '^app = ' fly.toml | cut -d '"' -f2 || echo "supplier-catalog")
 REGION=$(grep '^primary_region = ' fly.toml | cut -d '"' -f2 || echo "sin")
 
 echo "📦 Target App: $APP_NAME"

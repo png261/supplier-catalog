@@ -396,23 +396,35 @@ streamCompleted:
 	return job, nil
 }
 
-// markInterrupted transitions job to INTERRUPTED using a background context with timeout.
+// markInterrupted transitions job to INTERRUPTED using a background context with timeout and retry.
 func (e *SyncEngine) markInterrupted(job *domain.SyncJob) {
 	if e.storage != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = e.storage.UpdateJobStatus(cleanupCtx, job.JobID, domain.JobStatusInterrupted)
+		for attempt := 0; attempt < 10; attempt++ {
+			err := e.storage.UpdateJobStatus(cleanupCtx, job.JobID, domain.JobStatusInterrupted)
+			if err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 	}
 	job.Status = domain.JobStatusInterrupted
 	job.UpdatedAt = e.now()
 }
 
-// markFailed transitions job to FAILED using a background context with timeout.
+// markFailed transitions job to FAILED using a background context with timeout and retry.
 func (e *SyncEngine) markFailed(job *domain.SyncJob) {
 	if e.storage != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = e.storage.UpdateJobStatus(cleanupCtx, job.JobID, domain.JobStatusFailed)
+		for attempt := 0; attempt < 10; attempt++ {
+			err := e.storage.UpdateJobStatus(cleanupCtx, job.JobID, domain.JobStatusFailed)
+			if err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 	}
 	job.Status = domain.JobStatusFailed
 	job.UpdatedAt = e.now()

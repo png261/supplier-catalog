@@ -22,7 +22,7 @@ export function getActiveShopId(): string {
     if (saved && saved.trim()) {
       const clean = saved.trim().toLowerCase();
       saveRecentShop(clean);
-      // Sync URL silently
+      // Sync URL
       const url = new URL(window.location.href);
       if (!url.searchParams.has('shop')) {
         url.searchParams.set('shop', clean);
@@ -30,17 +30,10 @@ export function getActiveShopId(): string {
       }
       return clean;
     }
-    // Auto-generate unique shop
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    const generated = `shop-demo-${randomSuffix}`;
-    localStorage.setItem(SHOP_STORAGE_KEY, generated);
-    saveRecentShop(generated);
-    const url = new URL(window.location.href);
-    url.searchParams.set('shop', generated);
-    window.history.replaceState(null, '', url.toString());
-    return generated;
+    // No shop selected yet
+    return '';
   }
-  return 'default';
+  return '';
 }
 
 export function setActiveShopId(shopId: string): void {
@@ -50,6 +43,16 @@ export function setActiveShopId(shopId: string): void {
   const url = new URL(window.location.href);
   url.searchParams.set('shop', clean);
   window.history.pushState(null, '', url.toString());
+}
+
+export function clearActiveShopId(): void {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(SHOP_STORAGE_KEY);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('shop');
+    url.searchParams.delete('shop_id');
+    window.history.pushState(null, '', url.pathname + (url.search ? url.search : ''));
+  }
 }
 
 export function getRecentShops(): string[] {

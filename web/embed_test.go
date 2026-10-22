@@ -25,7 +25,7 @@ func TestAssetHandler_Embedded(t *testing.T) {
 			t.Errorf("expected text/html Content-Type, got %s", ct)
 		}
 		body := rec.Body.String()
-		if !strings.Contains(body, "Coderpush Catalog Sync Engine") {
+		if !strings.Contains(body, "Supplier Catalog") {
 			t.Errorf("expected dashboard title in index.html, got: %s", body)
 		}
 		cc := rec.Header().Get("Cache-Control")
@@ -42,7 +42,7 @@ func TestAssetHandler_Embedded(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 OK, got %d", rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), "Coderpush Catalog Sync Engine") {
+		if !strings.Contains(rec.Body.String(), "Supplier Catalog") {
 			t.Errorf("expected dashboard content")
 		}
 	})
@@ -89,7 +89,7 @@ func TestAssetHandler_Embedded(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 OK fallback, got %d", rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), "Coderpush Catalog Sync Engine") {
+		if !strings.Contains(rec.Body.String(), "Supplier Catalog") {
 			t.Errorf("expected fallback to index.html")
 		}
 	})

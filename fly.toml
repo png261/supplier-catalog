@@ -1,7 +1,7 @@
-# fly.toml app configuration file for Coderpush Catalog Sync Engine
+# fly.toml app configuration file for Supplier Catalog
 # See https://fly.io/docs/reference/configuration/ for reference.
 
-app = "coderpush-catalog-sync"
+app = "supplier-catalog"
 primary_region = "sin"
 
 [build]

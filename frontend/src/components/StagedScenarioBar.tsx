@@ -48,38 +48,52 @@ export const StagedScenarioBar: React.FC<StagedScenarioBarProps> = ({
   };
 
   return (
-    <Card className="p-4 sm:p-5 border-slate-200 bg-white shadow-sm overflow-hidden">
+    <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden transition-colors">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         {/* Left: Scenario Info */}
         <div className="flex-1 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Active Workload Scenario:
             </span>
-            <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
               {scenario.name}
             </h2>
-            <Badge variant="outline" className="font-mono text-xs bg-slate-50">
-              {scenario.batches} Batches • {scenario.volume.toLocaleString()} Records
-            </Badge>
             {getStatusBadge()}
           </div>
-          <p className="text-xs text-slate-600 line-clamp-2 max-w-3xl leading-relaxed">
+
+          <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 max-w-3xl leading-relaxed">
             {scenario.desc}
           </p>
+
+          <div className="flex flex-wrap items-center gap-4 pt-1 text-xs text-slate-500 dark:text-slate-400">
+            <span className="flex items-center gap-1.5 font-mono">
+              <span className="font-semibold text-slate-700 dark:text-slate-300">Batches:</span> {scenario.batches}
+            </span>
+            <span className="flex items-center gap-1.5 font-mono">
+              <span className="font-semibold text-slate-700 dark:text-slate-300">Volume:</span> ~{scenario.volume} records
+            </span>
+            <span className="flex items-center gap-1.5 font-mono">
+              <span className="font-semibold text-slate-700 dark:text-slate-300">Defect Ratio:</span> {scenario.invalidRatio}%
+            </span>
+            {scenario.key === 'interrupted' && (
+              <span className="flex items-center gap-1.5 font-mono text-amber-600 dark:text-amber-400 font-semibold">
+                Crash Simulation: Auto-halts at Batch 5/10
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center gap-2.5 shrink-0 self-start lg:self-center">
+        <div className="flex flex-wrap items-center gap-2.5 sm:self-end lg:self-center">
           <Button
             variant="outline"
             size="sm"
             onClick={onOpenScenarioModal}
-            disabled={isSyncing}
-            className="flex items-center gap-1.5 text-xs text-slate-700"
+            className="h-9 px-3.5 text-xs font-semibold border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200"
           >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            <span>Select Scenario</span>
+            <SlidersHorizontal className="h-3.5 w-3.5 mr-1.5 text-slate-500 dark:text-slate-400" />
+            Select Scenario
           </Button>
 
           {isSyncing ? (
@@ -87,53 +101,32 @@ export const StagedScenarioBar: React.FC<StagedScenarioBarProps> = ({
               variant="destructive"
               size="sm"
               onClick={onCancelSync}
-              className="flex items-center gap-1.5 font-semibold text-xs"
+              className="h-9 px-4 text-xs font-semibold shadow-xs"
             >
-              <Square className="h-3 w-3 fill-current" />
-              <span>Stop Sync</span>
+              <Square className="h-3.5 w-3.5 mr-1.5 fill-current" />
+              Stop Sync
+            </Button>
+          ) : isInterrupted ? (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={onStartSync}
+              className="h-9 px-4 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
+            >
+              <RotateCw className="h-3.5 w-3.5 mr-1.5" />
+              Resume Sync
             </Button>
           ) : (
             <Button
-              variant="primary"
+              variant="default"
               size="sm"
               onClick={onStartSync}
-              className={`flex items-center gap-1.5 font-semibold text-xs shadow-sm ${
-                isInterrupted ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'
-              }`}
+              className="h-9 px-4 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs"
             >
-              {isInterrupted ? (
-                <>
-                  <RotateCw className="h-3.5 w-3.5" />
-                  <span>Resume Sync</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-3.5 w-3.5 fill-current" />
-                  <span>Start Sync</span>
-                </>
-              )}
+              <Play className="h-3.5 w-3.5 mr-1.5 fill-current" />
+              Start Sync
             </Button>
           )}
-        </div>
-      </div>
-
-      {/* Mini Details Strip */}
-      <div className="mt-3.5 pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-        <div>
-          <span className="text-slate-400">Total Volume: </span>
-          <strong className="text-slate-700 font-semibold">{scenario.volume.toLocaleString()} items</strong>
-        </div>
-        <div>
-          <span className="text-slate-400">Batch Structure: </span>
-          <strong className="text-slate-700 font-semibold">{scenario.batches} batches ({scenario.size}/batch)</strong>
-        </div>
-        <div>
-          <span className="text-slate-400">Feed Quality: </span>
-          <strong className="text-slate-700 font-semibold">{scenario.quality}</strong>
-        </div>
-        <div>
-          <span className="text-slate-400">Storage Mode: </span>
-          <strong className="text-slate-700 font-semibold font-mono text-[11px]">SQLite WAL Atomic</strong>
         </div>
       </div>
     </Card>

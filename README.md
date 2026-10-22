@@ -1,5 +1,6 @@
 # Resilient Catalog Synchronization Engine in Go
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-supplier--catalog.fly.dev-blue?style=flat&logo=fly.io)](https://supplier-catalog.fly.dev)
 [![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![CI/CD Pipeline](https://github.com/coderpush/catalog-engine/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/coderpush/catalog-engine/actions/workflows/ci-cd.yml)
 [![Statement Coverage](https://img.shields.io/badge/Coverage-93.5%25-brightgreen?style=flat&logo=codecov)](scripts/check-coverage.sh)
