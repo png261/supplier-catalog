@@ -30,6 +30,16 @@
     dlq: { items: [], total: 0, limit: 10, offset: 0, filterReason: '' },
     catalog: { items: [], total: 0, limit: 10, offset: 0, search: '', status: '' },
     history: { jobs: [] },
+
+    // Metric Drill-Down Modal
+    metricModal: {
+      type: null,
+      search: '',
+      limit: 10,
+      offset: 0,
+      total: 0,
+      searchTimer: null,
+    },
   };
 
   // --- Workload Presets ---
@@ -162,6 +172,23 @@
     btnCloseModal: document.getElementById('btn-close-modal'),
     btnDismissModal: document.getElementById('btn-dismiss-modal'),
     btnCopyPayload: document.getElementById('btn-copy-payload'),
+
+    // Metric Drill-Down Modal
+    metricCards: document.querySelectorAll('.metric-card[data-metric]'),
+    metricDetailModal: document.getElementById('metric-detail-modal'),
+    metricModalTitle: document.getElementById('metric-modal-title'),
+    metricModalSubtitle: document.getElementById('metric-modal-subtitle'),
+    metricModalSearch: document.getElementById('metric-modal-search'),
+    metricModalCountBadge: document.getElementById('metric-modal-count-badge'),
+    metricModalThead: document.getElementById('metric-modal-thead'),
+    metricModalTbody: document.getElementById('metric-modal-tbody'),
+    metricModalPagination: document.getElementById('metric-modal-pagination'),
+    metricModalPaginationInfo: document.getElementById('metric-modal-pagination-info'),
+    metricModalPageNum: document.getElementById('metric-modal-page-num'),
+    btnMetricModalPrev: document.getElementById('btn-metric-modal-prev'),
+    btnMetricModalNext: document.getElementById('btn-metric-modal-next'),
+    btnCloseMetricModal: document.getElementById('btn-close-metric-modal'),
+    btnDismissMetricModal: document.getElementById('btn-dismiss-metric-modal'),
 
     // Toasts
     toastContainer: document.getElementById('toast-container'),
@@ -1105,11 +1132,17 @@
   }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (el.metricDetailModal && !el.metricDetailModal.classList.contains('hidden')) {
+        closeMetricModal();
+        return;
+      }
       if (el.payloadModal && !el.payloadModal.classList.contains('hidden')) {
         closePayloadModal();
+        return;
       }
       if (el.demoModal && !el.demoModal.classList.contains('hidden')) {
         closeDemoModal();
+        return;
       }
     }
   });
@@ -1120,6 +1153,253 @@
       navigator.clipboard.writeText(code).then(() => {
         showToast('JSON payload copied to clipboard', 'info');
       });
+    });
+  }
+
+  // --- Helper: Safe HTML Escaping ---
+  function escapeHTML(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  // --- Metric Drill-Down Modal Configuration & Handlers ---
+  const METRIC_CONFIG = {
+    added: {
+      title: 'New Products Added',
+      subtitle: 'Products currently active in the store catalog.',
+      searchPlaceholder: 'Filter active products by SKU or name...',
+      emptyMessage: 'No products currently recorded.',
+      columns: ['SKU', 'Product Name', 'Price', 'Status', 'Supplier Timestamp', 'Last Updated'],
+    },
+    updated: {
+      title: 'Price & Info Updates',
+      subtitle: 'Catalog products that have received price or specification updates.',
+      searchPlaceholder: 'Filter updated products by SKU or name...',
+      emptyMessage: 'No products currently recorded.',
+      columns: ['SKU', 'Product Name', 'Price', 'Status', 'Supplier Timestamp', 'Last Updated'],
+    },
+    withdrawn: {
+      title: 'Discontinued / Withdrawn Products',
+      subtitle: 'Products marked as WITHDRAWN (Tombstoned in accordance with Invariant B).',
+      searchPlaceholder: 'Filter withdrawn products by SKU or name...',
+      emptyMessage: 'Zero products withdrawn. All catalog items active.',
+      columns: ['SKU', 'Product Name', 'Price', 'Status', 'Supplier Timestamp', 'Last Updated'],
+    },
+    skipped: {
+      title: 'Duplicates Preserved (Unchanged)',
+      subtitle: 'Products where redundant duplicate records or older timestamps were safely ignored to preserve catalog integrity.',
+      searchPlaceholder: 'Filter preserved products by SKU or name...',
+      emptyMessage: 'No duplicate records processed.',
+      columns: ['SKU', 'Product Name', 'Price', 'Status', 'Supplier Timestamp', 'Last Updated'],
+    },
+    deadletter: {
+      title: 'Needs Attention — Dead Letter Queue (DLQ)',
+      subtitle: 'Corrupt, malformed, or invariant-violating records quarantined for review.',
+      searchPlaceholder: 'Filter quarantined records by defect reason...',
+      emptyMessage: 'Zero quarantined records. Ingestion is clean.',
+      columns: ['Issue ID', 'Batch', 'SKU', 'Rejection Reason', 'Quarantined At', 'Action'],
+    },
+  };
+
+  function openMetricModal(type) {
+    if (!METRIC_CONFIG[type] || !el.metricDetailModal) return;
+    const cfg = METRIC_CONFIG[type];
+    state.metricModal.type = type;
+    state.metricModal.search = '';
+    state.metricModal.offset = 0;
+
+    if (el.metricModalTitle) el.metricModalTitle.textContent = cfg.title;
+    if (el.metricModalSubtitle) el.metricModalSubtitle.textContent = cfg.subtitle;
+    if (el.metricModalSearch) {
+      el.metricModalSearch.value = '';
+      el.metricModalSearch.placeholder = cfg.searchPlaceholder;
+    }
+
+    if (el.metricModalThead) {
+      el.metricModalThead.innerHTML = `<tr>${cfg.columns.map((col) => `<th>${col}</th>`).join('')}</tr>`;
+    }
+
+    loadMetricModalData();
+    el.metricDetailModal.classList.remove('hidden');
+  }
+
+  function closeMetricModal() {
+    if (el.metricDetailModal) {
+      el.metricDetailModal.classList.add('hidden');
+    }
+  }
+
+  async function loadMetricModalData() {
+    const { type, search, limit, offset } = state.metricModal;
+    const cfg = METRIC_CONFIG[type];
+    if (!cfg || !el.metricModalTbody) return;
+
+    el.metricModalTbody.innerHTML = `<tr><td colspan="${cfg.columns.length}" class="table-empty">Loading records...</td></tr>`;
+
+    try {
+      if (type === 'deadletter') {
+        const url = `/api/dead-letter?reason=${encodeURIComponent(search)}&limit=${limit}&offset=${offset}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const issues = data.issues || [];
+        state.metricModal.total = data.total || 0;
+
+        if (issues.length === 0) {
+          el.metricModalTbody.innerHTML = `<tr><td colspan="${cfg.columns.length}" class="table-empty">${cfg.emptyMessage}</td></tr>`;
+        } else {
+          el.metricModalTbody.innerHTML = '';
+          issues.forEach((issue) => {
+            const tr = document.createElement('tr');
+            const timeStr = issue.created_at ? new Date(issue.created_at).toLocaleTimeString() : '—';
+            tr.innerHTML = `
+              <td><span class="code-badge">${escapeHTML((issue.issue_id || '').slice(0, 16))}</span></td>
+              <td>Batch #${issue.batch_index + 1}</td>
+              <td class="sku-cell">${escapeHTML(issue.sku || '[EMPTY]')}</td>
+              <td><span class="defect-badge">${escapeHTML(issue.reason)}</span></td>
+              <td>${timeStr}</td>
+              <td>
+                <button class="btn btn-xs btn-outline btn-inspect" data-issue="${escapeHTML(JSON.stringify(issue))}">Inspect</button>
+              </td>
+            `;
+            el.metricModalTbody.appendChild(tr);
+          });
+        }
+      } else {
+        let statusParam = '';
+        if (type === 'added') statusParam = 'ACTIVE';
+        if (type === 'withdrawn') statusParam = 'WITHDRAWN';
+
+        let url = `/api/products?limit=${limit}&offset=${offset}`;
+        if (statusParam) url += `&status=${encodeURIComponent(statusParam)}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const products = data.products || [];
+        state.metricModal.total = data.total || 0;
+
+        if (products.length === 0) {
+          el.metricModalTbody.innerHTML = `<tr><td colspan="${cfg.columns.length}" class="table-empty">${cfg.emptyMessage}</td></tr>`;
+        } else {
+          el.metricModalTbody.innerHTML = '';
+          products.forEach((p) => {
+            const tr = document.createElement('tr');
+            const priceStr = `$${Number(p.price).toFixed(2)}`;
+            const supTime = p.supplier_timestamp ? new Date(p.supplier_timestamp).toLocaleTimeString() : '—';
+            const updTime = p.updated_at ? new Date(p.updated_at).toLocaleTimeString() : '—';
+            tr.innerHTML = `
+              <td class="sku-cell">${escapeHTML(p.sku)}</td>
+              <td>${escapeHTML(p.name)}</td>
+              <td><strong>${priceStr}</strong></td>
+              <td><span class="status-badge ${p.status}">${p.status}</span></td>
+              <td>${supTime}</td>
+              <td>${updTime}</td>
+            `;
+            el.metricModalTbody.appendChild(tr);
+          });
+        }
+      }
+
+      // Pagination
+      const total = state.metricModal.total;
+      const start = total === 0 ? 0 : offset + 1;
+      const end = Math.min(offset + limit, total);
+      const currentPage = Math.floor(offset / limit) + 1;
+      const maxPages = Math.max(1, Math.ceil(total / limit));
+
+      if (el.metricModalCountBadge) {
+        el.metricModalCountBadge.textContent = `${total.toLocaleString()} total items`;
+      }
+      if (el.metricModalPaginationInfo) {
+        el.metricModalPaginationInfo.textContent = `Showing ${start}-${end} of ${total.toLocaleString()}`;
+      }
+      if (el.metricModalPageNum) {
+        el.metricModalPageNum.textContent = `Page ${currentPage} of ${maxPages}`;
+      }
+      if (el.btnMetricModalPrev) {
+        el.btnMetricModalPrev.disabled = offset <= 0;
+      }
+      if (el.btnMetricModalNext) {
+        el.btnMetricModalNext.disabled = offset + limit >= total;
+      }
+    } catch (err) {
+      console.error('Failed to load metric modal records', err);
+      el.metricModalTbody.innerHTML = `<tr><td colspan="${cfg.columns.length}" class="table-empty text-danger">Failed to load records: ${escapeHTML(err.message)}</td></tr>`;
+    }
+  }
+
+  // Wire Metric Cards Clicks
+  document.querySelectorAll('.metric-card[data-metric]').forEach((card) => {
+    card.addEventListener('click', () => {
+      const type = card.getAttribute('data-metric');
+      openMetricModal(type);
+    });
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        const type = card.getAttribute('data-metric');
+        openMetricModal(type);
+      }
+    });
+  });
+
+  // Metric Modal Controls
+  if (el.btnCloseMetricModal) el.btnCloseMetricModal.addEventListener('click', closeMetricModal);
+  if (el.btnDismissMetricModal) el.btnDismissMetricModal.addEventListener('click', closeMetricModal);
+  if (el.metricDetailModal) {
+    el.metricDetailModal.addEventListener('click', (e) => {
+      if (e.target === el.metricDetailModal) closeMetricModal();
+    });
+  }
+
+  // Metric Modal Search (Debounced 250ms)
+  if (el.metricModalSearch) {
+    el.metricModalSearch.addEventListener('input', () => {
+      clearTimeout(state.metricModal.searchTimer);
+      state.metricModal.searchTimer = setTimeout(() => {
+        state.metricModal.search = el.metricModalSearch.value.trim();
+        state.metricModal.offset = 0;
+        loadMetricModalData();
+      }, 250);
+    });
+  }
+
+  // Metric Modal Pagination
+  if (el.btnMetricModalPrev) {
+    el.btnMetricModalPrev.addEventListener('click', () => {
+      if (state.metricModal.offset >= state.metricModal.limit) {
+        state.metricModal.offset -= state.metricModal.limit;
+        loadMetricModalData();
+      }
+    });
+  }
+  if (el.btnMetricModalNext) {
+    el.btnMetricModalNext.addEventListener('click', () => {
+      if (state.metricModal.offset + state.metricModal.limit < state.metricModal.total) {
+        state.metricModal.offset += state.metricModal.limit;
+        loadMetricModalData();
+      }
+    });
+  }
+
+  // Metric Modal Table DLQ Inspect Delegate
+  if (el.metricModalTbody) {
+    el.metricModalTbody.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-inspect');
+      if (!btn) return;
+      try {
+        const issue = JSON.parse(btn.getAttribute('data-issue'));
+        openPayloadModal(issue);
+      } catch (err) {
+        console.error('Failed to parse DLQ issue for inspection', err);
+      }
     });
   }
 

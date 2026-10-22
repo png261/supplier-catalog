@@ -560,12 +560,24 @@ input[type="range"] {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  transition: transform var(--transition-fast), border-color var(--transition-fast);
+  cursor: pointer;
+  user-select: none;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .metric-card:hover {
   transform: translateY(-2px);
   border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.metric-card:active {
+  transform: translateY(0);
+}
+
+.metric-card:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 
 .card-added { border-top: 3px solid var(--color-added); }
@@ -1103,6 +1115,16 @@ input[type="range"] {
 
 .modal-card-large {
   max-width: 880px !important;
+}
+
+.modal-card-xl {
+  max-width: 980px !important;
+}
+
+.metric-modal-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .modal-subtitle {

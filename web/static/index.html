@@ -54,7 +54,7 @@
     <!-- Operational Metrics -->
     <section class="metrics-grid">
       <!-- Added -->
-      <div class="metric-card card-added">
+      <div class="metric-card card-added" data-metric="added" role="button" tabindex="0" title="Click to inspect new products added">
         <div class="metric-body">
           <div class="metric-label">New Products Added</div>
           <div id="metric-added" class="metric-value">0</div>
@@ -63,7 +63,7 @@
       </div>
 
       <!-- Updated -->
-      <div class="metric-card card-updated">
+      <div class="metric-card card-updated" data-metric="updated" role="button" tabindex="0" title="Click to inspect price & info updates">
         <div class="metric-body">
           <div class="metric-label">Price & Info Updates</div>
           <div id="metric-updated" class="metric-value">0</div>
@@ -72,7 +72,7 @@
       </div>
 
       <!-- Withdrawn -->
-      <div class="metric-card card-withdrawn">
+      <div class="metric-card card-withdrawn" data-metric="withdrawn" role="button" tabindex="0" title="Click to inspect discontinued / withdrawn products">
         <div class="metric-body">
           <div class="metric-label">Discontinued / Withdrawn</div>
           <div id="metric-withdrawn" class="metric-value">0</div>
@@ -81,7 +81,7 @@
       </div>
 
       <!-- Skipped -->
-      <div class="metric-card card-skipped">
+      <div class="metric-card card-skipped" data-metric="skipped" role="button" tabindex="0" title="Click to inspect duplicates preserved">
         <div class="metric-body">
           <div class="metric-label">Duplicates Preserved</div>
           <div id="metric-skipped" class="metric-value">0</div>
@@ -90,7 +90,7 @@
       </div>
 
       <!-- Dead-Lettered -->
-      <div class="metric-card card-deadletter">
+      <div class="metric-card card-deadletter" data-metric="deadletter" role="button" tabindex="0" title="Click to inspect quarantined DLQ items">
         <div class="metric-body">
           <div class="metric-label">Needs Attention (DLQ)</div>
           <div id="metric-deadletter" class="metric-value">0</div>
@@ -455,6 +455,52 @@
       <div class="modal-footer">
         <button id="btn-copy-payload" class="btn btn-secondary">Copy JSON</button>
         <button id="btn-dismiss-modal" class="btn btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Metric Items Inspection -->
+  <div id="metric-detail-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card modal-card-xl">
+      <div class="modal-header">
+        <div>
+          <h3 id="metric-modal-title" class="modal-title">Category Products</h3>
+          <p id="metric-modal-subtitle" class="modal-subtitle">Displaying products matching this category.</p>
+        </div>
+        <button id="btn-close-metric-modal" class="btn btn-sm btn-outline" aria-label="Close modal">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-toolbar">
+          <div class="filter-group">
+            <input type="text" id="metric-modal-search" class="form-input form-sm" placeholder="Filter records by SKU or name...">
+          </div>
+          <div class="metric-modal-summary">
+            <span id="metric-modal-count-badge" class="pagination-info">0 records</span>
+          </div>
+        </div>
+
+        <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+          <table class="data-table">
+            <thead id="metric-modal-thead">
+              <!-- Dynamically populated -->
+            </thead>
+            <tbody id="metric-modal-tbody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pagination-bar" id="metric-modal-pagination">
+          <span id="metric-modal-pagination-info" class="pagination-info">Showing 0-0 of 0</span>
+          <div class="pagination-buttons">
+            <button id="btn-metric-modal-prev" class="btn btn-sm btn-outline" disabled>Previous</button>
+            <span id="metric-modal-page-num" class="page-indicator">Page 1</span>
+            <button id="btn-metric-modal-next" class="btn btn-sm btn-outline" disabled>Next</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-dismiss-metric-modal" class="btn btn-secondary">Close</button>
       </div>
     </div>
   </div>
