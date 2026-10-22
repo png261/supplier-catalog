@@ -1299,6 +1299,63 @@ input[type="range"] {
   max-height: 250px;
 }
 
+/* ==========================================================================
+   Quarantined Product Remediation Modal
+   ========================================================================== */
+.remediation-alert {
+  background-color: var(--color-deadletter-bg);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.remediation-alert-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.remediation-meta {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.form-row {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.required {
+  color: var(--color-deadletter);
+  font-weight: bold;
+}
+
+.raw-payload-toggle-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 0.25rem;
+}
+
+.btn-text-link {
+  background: none;
+  border: none;
+  color: var(--border-focus);
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.btn-text-link:hover {
+  color: #1d4ed8;
+}
+
 .modal-header {
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border-subtle);

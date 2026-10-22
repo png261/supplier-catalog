@@ -52,6 +52,9 @@
       quality: '5% anomalies (DLQ test)',
       status: 'Ready to Sync',
     },
+
+    // Active Remediation Issue
+    currentRemedyIssue: null,
   };
 
   // --- Workload Presets ---
@@ -191,14 +194,24 @@
     btnRefreshHistory: document.getElementById('btn-refresh-history'),
     historyTableBody: document.getElementById('history-table-body'),
 
-    // Modal
+    // Remediation Modal Elements
     payloadModal: document.getElementById('payload-modal'),
     modalIssueId: document.getElementById('modal-issue-id'),
+    modalIssueBatch: document.getElementById('modal-issue-batch'),
     modalDefectReason: document.getElementById('modal-defect-reason'),
+    remedySku: document.getElementById('remedy-sku'),
+    remedyName: document.getElementById('remedy-name'),
+    remedyPrice: document.getElementById('remedy-price'),
+    remedyStatus: document.getElementById('remedy-status'),
+    remedyTimestamp: document.getElementById('remedy-timestamp'),
+    btnToggleRawPayload: document.getElementById('btn-toggle-raw-payload'),
     modalPayloadCode: document.getElementById('modal-payload-code'),
     btnCloseModal: document.getElementById('btn-close-modal'),
     btnDismissModal: document.getElementById('btn-dismiss-modal'),
-    btnCopyPayload: document.getElementById('btn-copy-payload'),
+    btnResolveAndImport: document.getElementById('btn-resolve-and-import'),
+    resolveSpinner: document.getElementById('resolve-spinner'),
+    btnResolveText: document.getElementById('btn-resolve-text'),
+    formRemediateProduct: document.getElementById('form-remediate-product'),
 
     // Metric Drill-Down Modal
     metricCards: document.querySelectorAll('.metric-card[data-metric]'),
@@ -1271,14 +1284,47 @@
 
   function openPayloadModal(issue) {
     if (!el.payloadModal) return;
-    el.modalIssueId.textContent = issue.issue_id;
-    el.modalDefectReason.textContent = issue.reason;
+    state.currentRemedyIssue = issue;
+
+    if (el.modalIssueId) el.modalIssueId.textContent = issue.issue_id || '—';
+    if (el.modalIssueBatch) el.modalIssueBatch.textContent = `Batch #${(issue.batch_index ?? 0) + 1}`;
+    if (el.modalDefectReason) el.modalDefectReason.textContent = issue.reason || 'Schema or invariant violation';
+
+    let parsed = {};
     try {
-      const parsed = JSON.parse(issue.raw_payload);
-      el.modalPayloadCode.textContent = JSON.stringify(parsed, null, 2);
+      parsed = JSON.parse(issue.raw_payload || '{}');
+      if (el.modalPayloadCode) el.modalPayloadCode.textContent = JSON.stringify(parsed, null, 2);
     } catch (_) {
-      el.modalPayloadCode.textContent = issue.raw_payload;
+      parsed = {};
+      if (el.modalPayloadCode) el.modalPayloadCode.textContent = issue.raw_payload || '';
     }
+
+    // Populate form fields with intelligent remediation defaults
+    const sku = issue.sku || parsed.sku || '';
+    if (el.remedySku) el.remedySku.value = sku;
+    if (el.remedyName) el.remedyName.value = parsed.name || 'Corrected Item';
+
+    let price = parsed.price;
+    if (price === undefined || price === null || isNaN(price) || price < 0 || !isFinite(price)) {
+      price = 49.99;
+    }
+    if (el.remedyPrice) el.remedyPrice.value = Number(price).toFixed(2);
+
+    let status = parsed.status || 'ACTIVE';
+    if (status !== 'ACTIVE' && status !== 'WITHDRAWN') {
+      status = 'ACTIVE';
+    }
+    if (el.remedyStatus) el.remedyStatus.value = status;
+
+    let ts = parsed.timestamp;
+    if (!ts || ts.startsWith('0001-01-01')) {
+      ts = new Date().toISOString();
+    }
+    if (el.remedyTimestamp) el.remedyTimestamp.value = ts;
+
+    if (el.modalPayloadCode) el.modalPayloadCode.classList.add('hidden');
+    if (el.btnToggleRawPayload) el.btnToggleRawPayload.textContent = 'Show raw supplier payload JSON';
+
     el.payloadModal.classList.remove('hidden');
   }
 
@@ -1286,6 +1332,112 @@
     if (el.payloadModal) {
       el.payloadModal.classList.add('hidden');
     }
+    state.currentRemedyIssue = null;
+  }
+
+  // Toggle raw payload JSON preview
+  if (el.btnToggleRawPayload && el.modalPayloadCode) {
+    el.btnToggleRawPayload.addEventListener('click', () => {
+      const isHidden = el.modalPayloadCode.classList.toggle('hidden');
+      el.btnToggleRawPayload.textContent = isHidden ? 'Show raw supplier payload JSON' : 'Hide raw supplier payload JSON';
+    });
+  }
+
+  // Resolve and import product into catalog
+  async function resolveAndImportProduct() {
+    if (!state.currentRemedyIssue || !el.btnResolveAndImport) return;
+
+    const issueId = state.currentRemedyIssue.issue_id;
+    const sku = el.remedySku ? el.remedySku.value.trim() : '';
+    const name = el.remedyName ? el.remedyName.value.trim() : '';
+    const price = el.remedyPrice ? parseFloat(el.remedyPrice.value) : NaN;
+    const status = el.remedyStatus ? el.remedyStatus.value : 'ACTIVE';
+    let timestamp = el.remedyTimestamp ? el.remedyTimestamp.value.trim() : '';
+
+    if (!sku) {
+      showToast('Product SKU cannot be empty', 'error');
+      if (el.remedySku) el.remedySku.focus();
+      return;
+    }
+    if (!name) {
+      showToast('Product name cannot be empty', 'error');
+      if (el.remedyName) el.remedyName.focus();
+      return;
+    }
+    if (isNaN(price) || price < 0 || !isFinite(price)) {
+      showToast('Please enter a valid non-negative price', 'error');
+      if (el.remedyPrice) el.remedyPrice.focus();
+      return;
+    }
+
+    if (!timestamp) {
+      timestamp = new Date().toISOString();
+    }
+
+    el.btnResolveAndImport.disabled = true;
+    if (el.resolveSpinner) el.resolveSpinner.classList.remove('hidden');
+    if (el.btnResolveText) el.btnResolveText.textContent = 'Importing...';
+
+    try {
+      const res = await fetch(`/api/dead-letter/${encodeURIComponent(issueId)}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sku,
+          name,
+          price,
+          status,
+          timestamp,
+        }),
+      });
+
+      const body = await res.json();
+      if (res.ok) {
+        closePayloadModal();
+        showToast(`Product "${sku}" resolved and imported to catalog!`, 'success');
+        updateSmartStatus(`Remediated product ${sku} imported into catalog. Quarantined defect cleared.`, 'success');
+
+        // Optimistically update counts & charts
+        state.metrics.deadLetter = Math.max(0, state.metrics.deadLetter - 1);
+        if (status === 'ACTIVE') {
+          state.metrics.added += 1;
+        } else {
+          state.metrics.withdrawn += 1;
+        }
+        updateMetricCards();
+        renderDonutChart();
+        updateHealthGauge();
+
+        // Refresh data tables
+        loadDLQ();
+        loadCatalog();
+        loadHistory();
+
+        // Refresh metric modal if open
+        if (state.metricModal && state.metricModal.type) {
+          loadMetricModalData();
+        }
+      } else {
+        showToast(body.error || 'Failed to remediate product', 'error');
+      }
+    } catch (err) {
+      showToast(`Network error: ${err.message}`, 'error');
+    } finally {
+      el.btnResolveAndImport.disabled = false;
+      if (el.resolveSpinner) el.resolveSpinner.classList.add('hidden');
+      if (el.btnResolveText) el.btnResolveText.textContent = 'Save & Import to Catalog';
+    }
+  }
+
+  if (el.btnResolveAndImport) {
+    el.btnResolveAndImport.addEventListener('click', resolveAndImportProduct);
+  }
+
+  if (el.formRemediateProduct) {
+    el.formRemediateProduct.addEventListener('submit', (e) => {
+      e.preventDefault();
+      resolveAndImportProduct();
+    });
   }
 
   if (el.btnCloseModal) el.btnCloseModal.addEventListener('click', closePayloadModal);
@@ -1311,15 +1463,6 @@
       }
     }
   });
-
-  if (el.btnCopyPayload) {
-    el.btnCopyPayload.addEventListener('click', () => {
-      const code = el.modalPayloadCode.textContent;
-      navigator.clipboard.writeText(code).then(() => {
-        showToast('JSON payload copied to clipboard', 'info');
-      });
-    });
-  }
 
   // --- Helper: Safe HTML Escaping ---
   function escapeHTML(str) {

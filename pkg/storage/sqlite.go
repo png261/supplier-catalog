@@ -36,6 +36,7 @@ type Storage interface {
 	// Dead Letter
 	RecordDeadLetterTx(ctx context.Context, tx *sql.Tx, issue *domain.DeadLetterRecord) error
 	ListDeadLetterRecords(ctx context.Context, jobID string, reason string, limit, offset int) ([]domain.DeadLetterRecord, int, error)
+	ResolveDeadLetter(ctx context.Context, issueID string, p *domain.Product) error
 
 	// Catalog & Audit Queries
 	ListJobs(ctx context.Context, limit, offset int) ([]domain.SyncJob, int, error)
@@ -558,6 +559,44 @@ func (s *SQLiteStorage) ListDeadLetterRecords(ctx context.Context, jobID string,
 	}
 
 	return records, totalCount, nil
+}
+
+// ResolveDeadLetter atomically upserts a corrected product into catalog and deletes the quarantined dead-letter issue.
+func (s *SQLiteStorage) ResolveDeadLetter(ctx context.Context, issueID string, p *domain.Product) error {
+	if s.db == nil {
+		return errors.New("database connection is closed")
+	}
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	var exists int
+	err = tx.QueryRowContext(ctx, "SELECT 1 FROM dead_letter_issues WHERE issue_id = ?;", issueID).Scan(&exists)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("failed to query dead letter issue: %w", err)
+	}
+
+	if err := s.UpsertProductTx(ctx, tx, p); err != nil {
+		return fmt.Errorf("failed to upsert corrected product: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, "DELETE FROM dead_letter_issues WHERE issue_id = ?;", issueID)
+	if err != nil {
+		return fmt.Errorf("failed to remove dead letter issue: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit resolution: %w", err)
+	}
+	return nil
 }
 
 // ListJobs retrieves a paginated list of sync jobs ordered by creation timestamp descending.

@@ -11,6 +11,7 @@ type ErrorCode string
 const (
 	ErrCodeInvalidRequest ErrorCode = "INVALID_REQUEST"
 	ErrCodeJobNotFound    ErrorCode = "JOB_NOT_FOUND"
+	ErrCodeNotFound       ErrorCode = "NOT_FOUND"
 	ErrCodeJobConflict    ErrorCode = "JOB_CONFLICT"
 	ErrCodeInternalError  ErrorCode = "INTERNAL_ERROR"
 )

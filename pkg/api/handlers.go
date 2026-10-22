@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,6 +49,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/jobs", h.handleListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", h.handleGetJob)
 	mux.HandleFunc("GET /api/dead-letter", h.handleListDeadLetter)
+	mux.HandleFunc("POST /api/dead-letter/{id}/resolve", h.handleResolveDeadLetter)
 	mux.HandleFunc("GET /api/products", h.handleListProducts)
 	mux.HandleFunc("GET /api/events", h.broker.ServeHTTP)
 }
@@ -714,6 +716,92 @@ func (h *Handler) handleListDeadLetter(w http.ResponseWriter, r *http.Request) {
 		Total:  total,
 		Limit:  limit,
 		Offset: offset,
+	})
+}
+
+// ResolveDeadLetterRequest defines the payload for correcting a quarantined dead-letter product.
+type ResolveDeadLetterRequest struct {
+	SKU       string  `json:"sku"`
+	Name      string  `json:"name"`
+	Price     float64 `json:"price"`
+	Status    string  `json:"status"`
+	Timestamp string  `json:"timestamp"`
+}
+
+// handleResolveDeadLetter handles POST /api/dead-letter/{id}/resolve.
+func (h *Handler) handleResolveDeadLetter(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	issueID := r.PathValue("id")
+	if strings.TrimSpace(issueID) == "" {
+		h.writeError(w, http.StatusBadRequest, "issue ID is required in URL path", ErrCodeInvalidRequest)
+		return
+	}
+
+	var req ResolveDeadLetterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "malformed JSON request body", ErrCodeInvalidRequest)
+		return
+	}
+
+	sku := strings.TrimSpace(req.SKU)
+	if sku == "" {
+		h.writeError(w, http.StatusBadRequest, "sku cannot be empty", ErrCodeInvalidRequest)
+		return
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "Remediated Product"
+	}
+
+	if req.Price < 0 || math.IsNaN(req.Price) || math.IsInf(req.Price, 0) {
+		h.writeError(w, http.StatusBadRequest, "price must be a finite non-negative number", ErrCodeInvalidRequest)
+		return
+	}
+
+	status := domain.ProductStatus(strings.TrimSpace(req.Status))
+	if !status.IsValid() {
+		h.writeError(w, http.StatusBadRequest, "status must be ACTIVE or WITHDRAWN", ErrCodeInvalidRequest)
+		return
+	}
+
+	var ts time.Time
+	if strings.TrimSpace(req.Timestamp) != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, req.Timestamp)
+		if err != nil {
+			parsed, err = time.Parse(time.RFC3339, req.Timestamp)
+		}
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid timestamp format: "+err.Error(), ErrCodeInvalidRequest)
+			return
+		}
+		ts = parsed.UTC()
+	} else {
+		ts = time.Now().UTC()
+	}
+
+	prod := &domain.Product{
+		SKU:               sku,
+		Name:              name,
+		Price:             req.Price,
+		Status:            status,
+		SupplierTimestamp: ts,
+		UpdatedAt:         time.Now().UTC(),
+	}
+
+	if err := h.storage.ResolveDeadLetter(ctx, issueID, prod); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, "dead letter issue not found", ErrCodeNotFound)
+			return
+		}
+		h.writeError(w, http.StatusInternalServerError, "failed to resolve dead letter record: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "success",
+		"message": "product resolved and imported to catalog",
+		"product": prod,
 	})
 }
 

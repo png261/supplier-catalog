@@ -1080,3 +1080,85 @@ func TestStorage_Reset(t *testing.T) {
 		t.Error("expected error on Reset with closed DB")
 	}
 }
+
+func TestStorage_ResolveDeadLetter(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.OpenInMemory()
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	jobID := "job-resolve-1"
+	if err := s.CreateJob(ctx, &domain.SyncJob{
+		JobID:        jobID,
+		Status:       domain.JobStatusRunning,
+		TotalBatches: 1,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("failed to begin tx: %v", err)
+	}
+	issue := &domain.DeadLetterRecord{
+		IssueID:    "issue-test-123",
+		JobID:      jobID,
+		BatchIndex: 0,
+		SKU:        "SKU-CORRUPT",
+		RawPayload: `{"sku":"","name":"Broken","price":-5.0}`,
+		Reason:     "empty SKU",
+		CreatedAt:  now,
+	}
+	if err := s.RecordDeadLetterTx(ctx, tx, issue); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("failed to record dead letter: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// 1. Resolve successfully
+	corrected := &domain.Product{
+		SKU:               "SKU-FIXED",
+		Name:              "Fixed Product",
+		Price:             49.99,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now,
+		UpdatedAt:         now,
+	}
+	if err := s.ResolveDeadLetter(ctx, "issue-test-123", corrected); err != nil {
+		t.Fatalf("ResolveDeadLetter failed: %v", err)
+	}
+
+	// Verify product exists in catalog
+	p, err := s.GetProduct(ctx, "SKU-FIXED")
+	if err != nil || p == nil {
+		t.Fatalf("expected product to exist after resolution: %v", err)
+	}
+	if p.Price != 49.99 || p.Name != "Fixed Product" {
+		t.Errorf("unexpected product data: %+v", p)
+	}
+
+	// Verify issue was deleted
+	records, count, err := s.ListDeadLetterRecords(ctx, jobID, "", 10, 0)
+	if err != nil || count != 0 || len(records) != 0 {
+		t.Errorf("expected 0 dead letter records after resolution, got count=%d", count)
+	}
+
+	// 2. Resolve non-existent issue
+	if err := s.ResolveDeadLetter(ctx, "non-existent-issue", corrected); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound for non-existent issue, got %v", err)
+	}
+
+	// 3. Resolve with closed DB
+	sClosed, _ := storage.OpenInMemory()
+	_ = sClosed.Close()
+	if err := sClosed.ResolveDeadLetter(ctx, "issue-x", corrected); err == nil {
+		t.Error("expected error on closed DB")
+	}
+}

@@ -481,30 +481,74 @@
     </div>
   </div>
 
-  <!-- Modal: Dead-Letter Issue Inspection -->
+  <!-- Modal: Quarantined Product Review & Remediation -->
   <div id="payload-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
     <div class="modal-card">
       <div class="modal-header">
-        <h3 class="modal-title">Quarantined Record Inspection</h3>
+        <div>
+          <h3 class="modal-title">Review & Remediate Quarantined Product</h3>
+          <p class="modal-subtitle">Correct invalid supplier fields and import the product into the catalog.</p>
+        </div>
         <button id="btn-close-modal" class="btn btn-sm btn-outline" aria-label="Close">Close</button>
       </div>
       <div class="modal-body">
-        <div class="modal-info-row">
-          <span class="modal-label">Issue ID:</span>
-          <strong id="modal-issue-id" class="code-badge">—</strong>
+        <!-- Rejection Warning Banner -->
+        <div class="remediation-alert">
+          <div class="remediation-alert-header">
+            <span class="modal-label">Defect Detected:</span>
+            <span id="modal-defect-reason" class="text-danger">—</span>
+          </div>
+          <div class="remediation-meta">
+            <span>Issue ID: <strong id="modal-issue-id" class="code-badge">—</strong></span>
+            <span id="modal-issue-batch">Batch: —</span>
+          </div>
         </div>
-        <div class="modal-info-row">
-          <span class="modal-label">Rejection Reason:</span>
-          <span id="modal-defect-reason" class="text-danger">—</span>
-        </div>
-        <div class="modal-payload-box">
-          <label class="modal-label">Original Supplier Payload:</label>
-          <pre id="modal-payload-code" class="code-preview"></pre>
-        </div>
+
+        <!-- Product Remediation Form -->
+        <form id="form-remediate-product" class="form-grid">
+          <div class="form-group">
+            <label for="remedy-sku">Product SKU: <span class="required">*</span></label>
+            <input type="text" id="remedy-sku" class="form-input form-sm" placeholder="e.g. SKU-00012345" required>
+          </div>
+
+          <div class="form-group">
+            <label for="remedy-name">Product Name: <span class="required">*</span></label>
+            <input type="text" id="remedy-name" class="form-input form-sm" placeholder="e.g. Ergonomic Office Desk" required>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group" style="flex:1;">
+              <label for="remedy-price">Unit Price ($): <span class="required">*</span></label>
+              <input type="number" id="remedy-price" class="form-input form-sm" step="0.01" min="0" placeholder="0.00" required>
+            </div>
+            <div class="form-group" style="flex:1;">
+              <label for="remedy-status">Catalog Status:</label>
+              <select id="remedy-status" class="form-select form-sm">
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="WITHDRAWN">WITHDRAWN</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="remedy-timestamp">Supplier Timestamp:</label>
+            <input type="text" id="remedy-timestamp" class="form-input form-sm" placeholder="YYYY-MM-DDTHH:MM:SSZ">
+          </div>
+
+          <div class="form-group">
+            <div class="raw-payload-toggle-row">
+              <button type="button" id="btn-toggle-raw-payload" class="btn-text-link">Show raw supplier payload JSON</button>
+            </div>
+            <pre id="modal-payload-code" class="code-preview hidden"></pre>
+          </div>
+        </form>
       </div>
       <div class="modal-footer">
-        <button id="btn-copy-payload" class="btn btn-secondary">Copy JSON</button>
-        <button id="btn-dismiss-modal" class="btn btn-primary">Done</button>
+        <button type="button" id="btn-dismiss-modal" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="btn-resolve-and-import" class="btn btn-primary">
+          <span class="btn-spinner hidden" id="resolve-spinner"></span>
+          <span id="btn-resolve-text">Save & Import to Catalog</span>
+        </button>
       </div>
     </div>
   </div>

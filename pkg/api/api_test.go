@@ -1136,3 +1136,128 @@ func TestHandler_CancelJob(t *testing.T) {
 		t.Fatal("expected cancel callback to be invoked")
 	}
 }
+
+func TestHandler_ResolveDeadLetter(t *testing.T) {
+	store, _ := storage.OpenInMemory()
+	defer store.Close()
+	eng := catalogSync.NewEngine(store)
+	broker := NewBroker()
+	handler := NewHandler(store, eng, broker)
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	jobID := "job-resolve-api"
+	_ = store.CreateJob(ctx, &domain.SyncJob{
+		JobID: jobID, Status: domain.JobStatusRunning, TotalBatches: 1, CreatedAt: now, UpdatedAt: now,
+	})
+	tx, _ := store.BeginTx(ctx)
+	_ = store.RecordDeadLetterTx(ctx, tx, &domain.DeadLetterRecord{
+		IssueID:    "issue-api-1",
+		JobID:      jobID,
+		BatchIndex: 0,
+		SKU:        "",
+		RawPayload: `{"sku":"","name":"Broken","price":-10}`,
+		Reason:     "empty SKU",
+		CreatedAt:  now,
+	})
+	_ = tx.Commit()
+
+	// 1. Successful resolution
+	validBody := `{
+		"sku": "SKU-RESOLVED-01",
+		"name": "Fixed Desk",
+		"price": 99.99,
+		"status": "ACTIVE",
+		"timestamp": "2026-10-22T10:00:00Z"
+	}`
+	reqValid := httptest.NewRequest(http.MethodPost, "/api/dead-letter/issue-api-1/resolve", bytes.NewBufferString(validBody))
+	reqValid.SetPathValue("id", "issue-api-1")
+	recValid := httptest.NewRecorder()
+	handler.handleResolveDeadLetter(recValid, reqValid)
+	if recValid.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", recValid.Code, recValid.Body.String())
+	}
+
+	// Verify product exists in storage
+	p, err := store.GetProduct(ctx, "SKU-RESOLVED-01")
+	if err != nil || p == nil {
+		t.Fatalf("expected product to be imported: %v", err)
+	}
+	if p.Price != 99.99 {
+		t.Errorf("expected price 99.99, got %f", p.Price)
+	}
+
+	// 2. Missing ID
+	reqNoID := httptest.NewRequest(http.MethodPost, "/api/dead-letter//resolve", bytes.NewBufferString(validBody))
+	recNoID := httptest.NewRecorder()
+	handler.handleResolveDeadLetter(recNoID, reqNoID)
+	if recNoID.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty id, got %d", recNoID.Code)
+	}
+
+	// 3. Malformed JSON
+	reqBadJSON := httptest.NewRequest(http.MethodPost, "/api/dead-letter/issue-x/resolve", bytes.NewBufferString("{bad"))
+	reqBadJSON.SetPathValue("id", "issue-x")
+	recBadJSON := httptest.NewRecorder()
+	handler.handleResolveDeadLetter(recBadJSON, reqBadJSON)
+	if recBadJSON.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad json, got %d", recBadJSON.Code)
+	}
+
+	// 4. Empty SKU
+	reqEmptySKU := httptest.NewRequest(http.MethodPost, "/api/dead-letter/issue-x/resolve", bytes.NewBufferString(`{"sku":"  ","name":"Test","price":10,"status":"ACTIVE"}`))
+	reqEmptySKU.SetPathValue("id", "issue-x")
+	recEmptySKU := httptest.NewRecorder()
+	handler.handleResolveDeadLetter(recEmptySKU, reqEmptySKU)
+	if recEmptySKU.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty SKU, got %d", recEmptySKU.Code)
+	}
+
+	// 5. Negative price
+	reqNegPrice := httptest.NewRequest(http.MethodPost, "/api/dead-letter/issue-x/resolve", bytes.NewBufferString(`{"sku":"SKU-X","name":"Test","price":-5,"status":"ACTIVE"}`))
+	reqNegPrice.SetPathValue("id", "issue-x")
+	recNegPrice := httptest.NewRecorder()
+	handler.handleResolveDeadLetter(recNegPrice, reqNegPrice)
+	if recNegPrice.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for negative price, got %d", recNegPrice.Code)
+	}
+
+	// 6. Invalid status
+	reqBadStatus := httptest.NewRequest(http.MethodPost, "/api/dead-letter/issue-x/resolve", bytes.NewBufferString(`{"sku":"SKU-X","name":"Test","price":10,"status":"DISCONTINUED"}`))
+	reqBadStatus.SetPathValue("id", "issue-x")
+	recBadStatus := httptest.NewRecorder()
+	handler.handleResolveDeadLetter(recBadStatus, reqBadStatus)
+	if recBadStatus.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid status, got %d", recBadStatus.Code)
+	}
+
+	// 7. Invalid timestamp
+	reqBadTS := httptest.NewRequest(http.MethodPost, "/api/dead-letter/issue-x/resolve", bytes.NewBufferString(`{"sku":"SKU-X","name":"Test","price":10,"status":"ACTIVE","timestamp":"not-a-date"}`))
+	reqBadTS.SetPathValue("id", "issue-x")
+	recBadTS := httptest.NewRecorder()
+	handler.handleResolveDeadLetter(recBadTS, reqBadTS)
+	if recBadTS.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid timestamp, got %d", recBadTS.Code)
+	}
+
+	// 8. Issue not found
+	reqNotFound := httptest.NewRequest(http.MethodPost, "/api/dead-letter/issue-unknown/resolve", bytes.NewBufferString(validBody))
+	reqNotFound.SetPathValue("id", "issue-unknown")
+	recNotFound := httptest.NewRecorder()
+	handler.handleResolveDeadLetter(recNotFound, reqNotFound)
+	if recNotFound.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for not found issue, got %d", recNotFound.Code)
+	}
+
+	// 9. Closed DB error
+	storeClosed, _ := storage.OpenInMemory()
+	_ = storeClosed.Close()
+	handlerClosed := NewHandler(storeClosed, eng, broker)
+	reqClosed := httptest.NewRequest(http.MethodPost, "/api/dead-letter/issue-x/resolve", bytes.NewBufferString(validBody))
+	reqClosed.SetPathValue("id", "issue-x")
+	recClosed := httptest.NewRecorder()
+	handlerClosed.handleResolveDeadLetter(recClosed, reqClosed)
+	if recClosed.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on closed db, got %d", recClosed.Code)
+	}
+}
