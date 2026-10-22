@@ -131,7 +131,7 @@ test-race: ## Execute 5-iteration race stress tests (go test -race -count=5 ./..
 
 coverage: ## Execute coverage gate (scripts/check-coverage.sh >= 90%) and generate HTML report
 	@echo "==> Generating coverage profile (mode=atomic)..."
-	$(GO) test -coverprofile=$(COVERAGE_FILE) -covermode=atomic ./...
+	$(GO) test -coverprofile=$(COVERAGE_FILE) -covermode=atomic -coverpkg=./pkg/... ./...
 	@echo "==> Verifying statement coverage threshold (>= $(COVERAGE_THRESHOLD)%)..."
 	@if [ -x "./scripts/check-coverage.sh" ]; then \
 		./scripts/check-coverage.sh $(COVERAGE_FILE) $(COVERAGE_THRESHOLD); \
