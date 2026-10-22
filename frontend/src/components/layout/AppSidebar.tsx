@@ -88,12 +88,25 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   const sidebarContent = (
     <div className="flex flex-col h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-all duration-300">
       {/* Brand Header */}
-      <div className="h-16 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
-        <div className="flex items-center gap-3 overflow-hidden">
-          <div className="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm flex-shrink-0">
-            <Layers className="h-5 w-5" />
-          </div>
-          {!isCollapsed && (
+      {isCollapsed ? (
+        <div className="h-16 flex items-center justify-center border-b border-slate-200 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="h-9 w-9 rounded-lg bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center text-white shadow-sm transition-all relative group cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            title="Expand sidebar"
+            aria-label="Expand sidebar"
+          >
+            <Layers className="h-5 w-5 transition-transform group-hover:scale-75 group-hover:opacity-0 absolute" />
+            <ChevronRight className="h-5 w-5 transition-transform opacity-0 group-hover:opacity-100 group-hover:scale-100 absolute" />
+          </button>
+        </div>
+      ) : (
+        <div className="h-16 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm flex-shrink-0">
+              <Layers className="h-5 w-5" />
+            </div>
             <div className="flex flex-col min-w-0">
               <span className="font-bold text-sm text-slate-900 dark:text-slate-100 tracking-tight truncate">
                 Coderpush Engine
@@ -102,20 +115,21 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                 WAL Resilient Sync
               </span>
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Collapse button on desktop */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onToggleCollapse}
-          className="hidden lg:flex h-7 w-7 p-0 rounded-md text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
-          title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-        </Button>
-      </div>
+          {/* Collapse button on desktop */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onToggleCollapse}
+            className="hidden lg:flex h-7 w-7 p-0 rounded-md text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {/* Shop Switcher / Multi-Tenant Widget */}
       {!isCollapsed ? (
