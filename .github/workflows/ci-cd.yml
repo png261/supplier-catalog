@@ -82,7 +82,7 @@ jobs:
       - name: Generate Coverage Profile & Enforce Threshold (>= 90.0%)
         run: |
           echo "Generating statement coverage profile across all packages..."
-          go test -v -coverprofile=coverage.out -covermode=atomic ./...
+          go test -v -coverprofile=coverage.out -covermode=atomic -coverpkg=./pkg/... ./...
           go tool cover -func=coverage.out
           
           # Extract total statement coverage percentage
