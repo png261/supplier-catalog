@@ -39,52 +39,36 @@ export const AttentionView: React.FC<AttentionViewProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* View Header & Guidance Banner */}
-      <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <ShieldAlert className="h-5 w-5 text-red-600 dark:text-red-400" />
-              <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-                Quarantined Attention (Dead-Letter Queue)
-              </h2>
-              {total > 0 ? (
-                <Badge variant="destructive" className="font-mono text-xs font-bold">
-                  {formatNumber(total)} defects require staff remediation
-                </Badge>
-              ) : (
-                <Badge variant="success" className="font-mono text-xs font-bold">
-                  Zero defects detected
-                </Badge>
-              )}
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Invariant D enforces dead-letter isolation. Defective records are quarantined to prevent catalog corruption.
-            </p>
+      {/* View Header */}
+      <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <ShieldAlert className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+              Quarantine
+            </h2>
+            <Badge
+              variant={total > 0 ? 'destructive' : 'secondary'}
+              className="font-mono text-xs font-semibold"
+            >
+              {formatNumber(total)}
+            </Badge>
           </div>
 
           {/* Reason Filter */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Defect Type:</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Type:</span>
             <select
               value={reason}
               onChange={(e) => onReasonChange(e.target.value)}
-              className="h-9 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-700 dark:text-slate-300 font-medium shadow-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300 font-medium shadow-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
-              <option value="">All Defect Reasons</option>
+              <option value="">All Reasons</option>
               <option value="NEGATIVE_OR_ZERO_PRICE">Invalid Price (≤ 0)</option>
               <option value="EMPTY_SKU">Empty / Missing SKU</option>
               <option value="ZERO_OR_MISSING_TIMESTAMP">Missing Timestamp</option>
               <option value="CORRUPTED_JSON">Malformed Schema</option>
             </select>
-          </div>
-        </div>
-
-        {/* Informational Strip */}
-        <div className="p-3 rounded-lg bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
-          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-          <div className="leading-relaxed">
-            Staff can inspect the raw supplier payload, rectify defective pricing or missing identifiers, and click <strong>Save & Import to Catalog</strong> to safely remediate the item without restarting the feed.
           </div>
         </div>
       </Card>

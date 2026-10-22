@@ -47,7 +47,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 }) => {
   const navItems = [
     {
-      group: "Overview",
+      group: "Operations",
       items: [
         {
           key: "overview" as NavItemKey,
@@ -55,28 +55,23 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           icon: LayoutDashboard,
           badge: null,
         },
-      ],
-    },
-    {
-      group: "Catalog Management",
-      items: [
         {
           key: "catalog" as NavItemKey,
-          label: "Live Catalog",
+          label: "Catalog",
           icon: Package,
           badge: catalogCount > 0 ? catalogCount.toLocaleString() : null,
           badgeVariant: "secondary" as const,
         },
         {
           key: "attention" as NavItemKey,
-          label: "Attention / DLQ",
+          label: "Quarantine",
           icon: AlertTriangle,
           badge: quarantinedCount > 0 ? quarantinedCount : null,
           badgeVariant: quarantinedCount > 0 ? ("destructive" as const) : ("secondary" as const),
         },
         {
           key: "history" as NavItemKey,
-          label: "Sync Run History",
+          label: "History",
           icon: History,
           badge: historyCount > 0 ? historyCount : null,
           badgeVariant: "secondary" as const,

@@ -46,20 +46,15 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     <div className="space-y-4">
       {/* View Header & Toolbar */}
       <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Package className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-              <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-                Live Products Catalog
-              </h2>
-              <Badge variant="secondary" className="font-mono text-xs font-bold">
-                {formatNumber(total)} records
-              </Badge>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Active and withdrawn products synchronized into SQLite catalog storage.
-            </p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <Package className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+              Catalog
+            </h2>
+            <Badge variant="secondary" className="font-mono text-xs font-semibold">
+              {formatNumber(total)}
+            </Badge>
           </div>
 
           {/* Search & Status Filters */}

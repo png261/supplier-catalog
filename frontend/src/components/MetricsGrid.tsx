@@ -1,7 +1,7 @@
 import React from 'react';
 import { Card } from './ui/card';
 import { formatNumber } from '../lib/utils';
-import { PackagePlus, RefreshCw, PackageX, CopyCheck, AlertOctagon, ArrowUpRight } from 'lucide-react';
+import { PackagePlus, RefreshCw, PackageX, CopyCheck, AlertOctagon } from 'lucide-react';
 
 interface MetricsGridProps {
   metrics: {
@@ -103,7 +103,7 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({
               </div>
             </div>
 
-            <div className="flex items-baseline justify-between gap-1 mb-1.5">
+            <div className="flex items-baseline justify-between gap-1">
               <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight font-mono">
                 {formatNumber(c.value)}
               </span>
@@ -112,15 +112,6 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({
                   +{formatNumber(c.delta)}
                 </span>
               )}
-            </div>
-
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 mb-2">
-              {c.desc}
-            </p>
-
-            <div className="flex items-center justify-end text-[11px] font-medium text-slate-400 dark:text-slate-500 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-              <span>View records</span>
-              <ArrowUpRight className="h-3 w-3 ml-0.5" />
             </div>
           </Card>
         );
