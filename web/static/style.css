@@ -202,6 +202,30 @@ body {
   overflow: hidden;
 }
 
+.card-header-simple {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 1.25rem 1.5rem;
+  background-color: rgba(0, 0, 0, 0.03);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.section-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.section-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
 .card-header {
   border-bottom: 1px solid var(--border-subtle);
   padding: 0.75rem 1.25rem;
@@ -248,6 +272,116 @@ body {
 /* ==========================================================================
    Control Plane Form
    ========================================================================== */
+/* ==========================================================================
+   Non-Tech Control Center & 1-Touch Preset Cards
+   ========================================================================== */
+.quick-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.preset-card {
+  background-color: var(--bg-surface);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1.15rem 1rem;
+  cursor: pointer;
+  position: relative;
+  transition: all var(--transition-fast);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  user-select: none;
+}
+
+.preset-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+
+.preset-card.active {
+  border-color: var(--border-focus);
+  background-color: var(--bg-card-hover);
+  box-shadow: 0 0 0 1px var(--border-focus), var(--shadow-md);
+}
+
+.preset-card-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+  margin-bottom: 0.25rem;
+}
+
+.preset-card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.preset-card-desc {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.preset-card-badge {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.15);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.btn-large {
+  padding: 0.65rem 1.35rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.btn-danger {
+  background-color: var(--color-deadletter);
+  color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #dc2626;
+}
+
+.advanced-panel {
+  margin-top: 1.25rem;
+  padding: 1.25rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  animation: modalIn 200ms ease;
+}
+
+.advanced-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 1rem;
+}
+
 .preset-bar {
   display: flex;
   align-items: center;
@@ -569,68 +703,304 @@ input[type="range"] {
   transition: width 300ms ease;
 }
 
-/* Event Console */
-.event-console {
-  background-color: var(--bg-input);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.console-header {
-  background-color: rgba(0, 0, 0, 0.2);
-  padding: 0.5rem 0.85rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 0.75rem;
-}
-
-.console-title {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.console-actions {
+/* ==========================================================================
+   Smart Status Banner (Replaces technical raw logs)
+   ========================================================================== */
+.smart-status-banner {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  margin-top: 0.25rem;
 }
 
-.checkbox-inline {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  color: var(--text-muted);
-  cursor: pointer;
+.pulse-indicator {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background-color: var(--color-added);
+  flex-shrink: 0;
+  box-shadow: 0 0 8px var(--color-added);
+  animation: pulse 2s infinite;
 }
 
-.event-log-list {
-  height: 140px;
-  overflow-y: auto;
-  padding: 0.65rem 0.85rem;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  line-height: 1.6;
+/* ==========================================================================
+   Visual Charts & Data Health (Non-Tech Business Friendly)
+   ========================================================================== */
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+}
+
+.chart-card {
+  padding: 1.25rem;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 1rem;
 }
 
-.log-entry {
-  word-break: break-all;
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
 }
 
-.log-system { color: var(--text-muted); }
-.log-start { color: var(--color-running); }
-.log-progress { color: var(--text-primary); }
-.log-deadletter { color: var(--color-deadletter); font-weight: 600; }
-.log-completed { color: var(--color-added); font-weight: 700; }
-.log-interrupted { color: var(--color-withdrawn); font-weight: 700; }
+.chart-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.2rem;
+}
+
+.chart-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.donut-layout {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+}
+
+.donut-container {
+  position: relative;
+  width: 170px;
+  height: 170px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.donut-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.donut-slice {
+  fill: none;
+  stroke-width: 26;
+  transition: stroke-dasharray 400ms ease, stroke-dashoffset 400ms ease;
+}
+
+.donut-slice-added { stroke: var(--color-added); }
+.donut-slice-updated { stroke: var(--color-updated); }
+.donut-slice-withdrawn { stroke: var(--color-withdrawn); }
+.donut-slice-skipped { stroke: var(--color-skipped); }
+.donut-slice-deadletter { stroke: var(--color-deadletter); }
+.donut-slice-empty { stroke: var(--border-subtle); stroke-dasharray: 439.82 0; }
+
+.donut-center-text {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.donut-total {
+  font-size: 1.45rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+
+.donut-total-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.chart-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  flex: 1;
+  min-width: 200px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.legend-item strong {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 0.6rem;
+  flex-shrink: 0;
+}
+
+.dot-added { background-color: var(--color-added); }
+.dot-updated { background-color: var(--color-updated); }
+.dot-withdrawn { background-color: var(--color-withdrawn); }
+.dot-skipped { background-color: var(--color-skipped); }
+.dot-deadletter { background-color: var(--color-deadletter); }
+
+.health-layout {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+}
+
+.health-gauge-box {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.health-circle {
+  position: relative;
+  width: 130px;
+  height: 130px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gauge-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.gauge-track {
+  fill: none;
+  stroke: var(--bg-input);
+  stroke-width: 10;
+}
+
+.gauge-value {
+  fill: none;
+  stroke: var(--color-added);
+  stroke-width: 10;
+  stroke-linecap: round;
+  stroke-dasharray: 314.16;
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 400ms ease, stroke 300ms ease;
+}
+
+.gauge-text {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.gauge-text strong {
+  font-size: 1.35rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+
+.gauge-text span {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.health-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 220px;
+}
+
+.health-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 700;
+  width: fit-content;
+}
+
+.badge-success {
+  background-color: var(--color-added-bg);
+  color: var(--color-added);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.badge-warning {
+  background-color: var(--color-withdrawn-bg);
+  color: var(--color-withdrawn);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.badge-danger {
+  background-color: var(--color-deadletter-bg);
+  color: var(--color-deadletter);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.health-desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.health-stat-row {
+  display: flex;
+  gap: 1.25rem;
+  margin-top: 0.25rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.mini-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.mini-stat-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.mini-stat strong {
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
 
 /* ==========================================================================
    Data Tables & Explorers
@@ -771,7 +1141,8 @@ input[type="range"] {
   display: none;
 }
 
-.modal-dialog {
+.modal-dialog,
+.modal-card {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
@@ -782,6 +1153,56 @@ input[type="range"] {
   flex-direction: column;
   box-shadow: var(--shadow-lg);
   animation: modalIn 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-info-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.modal-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.code-badge {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  padding: 0.15rem 0.4rem;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+.text-danger {
+  color: var(--color-deadletter);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.modal-payload-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.code-preview {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #38bdf8;
+  overflow-x: auto;
+  max-height: 250px;
 }
 
 .modal-header {

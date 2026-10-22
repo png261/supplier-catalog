@@ -1,212 +1,245 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="vi" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Coderpush Catalog Sync Engine</title>
+  <title>Coderpush Catalog Sync Engine — Quản Lý Đồng Bộ Danh Mục Sản Phẩm</title>
   <link rel="stylesheet" href="/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
 </head>
 <body>
   <!-- Header & Status Bar -->
   <header class="app-header">
     <div class="header-brand">
-      <span class="brand-icon">⚡</span>
-      <h1 class="brand-title">Coderpush Catalog Sync Engine</h1>
-      <span class="badge badge-db">SQLite WAL Active</span>
+      <span class="brand-icon">📦</span>
+      <div class="brand-text">
+        <h1 class="brand-title">Coderpush Catalog Sync Engine</h1>
+        <span class="brand-subtitle">Hệ Thống Quản Lý & Đồng Bộ Danh Mục Sản Phẩm Tự Động</span>
+      </div>
+      <span class="badge badge-db">Cơ sở dữ liệu SQLite WAL an toàn</span>
     </div>
     <div class="header-status">
       <div id="active-job-badge" class="badge badge-job status-idle">
         <span class="status-indicator"></span>
-        <span id="active-job-text">IDLE — No active sync</span>
+        <span id="active-job-text">Sẵn sàng nhận dữ liệu</span>
       </div>
       <div id="sse-status" class="badge badge-sse sse-connecting">
         <span class="sse-dot"></span>
-        <span id="sse-status-text">Connecting SSE...</span>
+        <span id="sse-status-text">Đang kết nối thời gian thực...</span>
       </div>
-      <button id="theme-toggle" class="btn btn-icon" title="Toggle Dark/Light Mode" aria-label="Toggle theme">
+      <button id="theme-toggle" class="btn btn-icon" title="Chuyển chế độ Sáng / Tối" aria-label="Toggle theme">
         <span id="theme-icon">🌙</span>
       </button>
     </div>
   </header>
 
   <main class="dashboard-container">
-    <!-- Section 1: Control Plane -->
+    <!-- Section 1: Non-Tech Friendly Control Center -->
     <section class="card control-card">
-      <div class="card-header">
+      <div class="card-header-simple">
+        <div>
+          <h2 class="section-title">Trung Tâm Điều Khiển Đồng Bộ</h2>
+          <p class="section-subtitle">Chọn gói đồng bộ phù hợp để hệ thống tự động tải và cập nhật danh mục sản phẩm từ nhà cung cấp.</p>
+        </div>
         <div class="tab-group" role="tablist">
-          <button class="tab-btn active" data-tab="tab-generator" role="tab" aria-selected="true">⚡ Mock Generator</button>
-          <button class="tab-btn" data-tab="tab-resume" role="tab" aria-selected="false">↺ Resume Interrupted</button>
-          <button class="tab-btn" data-tab="tab-manual" role="tab" aria-selected="false">📄 Custom JSON Batch</button>
+          <button class="tab-btn active" data-tab="tab-generator" role="tab" aria-selected="true">⚡ Đồng Bộ Nhanh</button>
+          <button class="tab-btn" data-tab="tab-resume" role="tab" aria-selected="false">↺ Phục Hồi Đợt Gián Đoạn</button>
+          <button class="tab-btn" data-tab="tab-manual" role="tab" aria-selected="false">📄 Tải Lô Hàng Tùy Chỉnh</button>
         </div>
       </div>
 
-      <!-- Tab 1: Mock Generator -->
+      <!-- Tab 1: Non-Tech Quick Presets & Generator -->
       <div id="tab-generator" class="tab-content active" role="tabpanel">
-        <div class="preset-bar">
-          <span class="preset-label">Presets:</span>
-          <button class="btn btn-sm btn-outline preset-btn" data-preset="default">Default (10x100)</button>
-          <button class="btn btn-sm btn-outline preset-btn" data-preset="clean">Clean (0% Anomaly)</button>
-          <button class="btn btn-sm btn-outline preset-btn" data-preset="stress">Chaos DLQ Stress</button>
-          <button class="btn btn-sm btn-outline preset-btn" data-preset="large">Large Run (50x200)</button>
+        <div class="quick-cards-grid">
+          <div class="preset-card active" data-preset="default">
+            <div class="preset-card-icon">🚀</div>
+            <div class="preset-card-title">Đồng Bộ Tiêu Chuẩn</div>
+            <div class="preset-card-desc">10 đợt hàng (1.000 sản phẩm). Thích hợp cho việc vận hành hàng ngày.</div>
+            <div class="preset-card-badge">Khuyên Dùng</div>
+          </div>
+          <div class="preset-card" data-preset="clean">
+            <div class="preset-card-icon">🛡️</div>
+            <div class="preset-card-title">Dữ Liệu Chuẩn 100%</div>
+            <div class="preset-card-desc">10 đợt hàng sạch hoàn toàn. Không có lỗi giá hay trùng lặp.</div>
+          </div>
+          <div class="preset-card" data-preset="stress">
+            <div class="preset-card-icon">🧪</div>
+            <div class="preset-card-title">Kiểm Thử Bất Thường</div>
+            <div class="preset-card-desc">15 đợt hàng có chứa sản phẩm sai giá, trùng lặp để kiểm tra cách ly lỗi.</div>
+          </div>
+          <div class="preset-card" data-preset="large">
+            <div class="preset-card-icon">⚡</div>
+            <div class="preset-card-title">Đồng Bộ Khối Lượng Lớn</div>
+            <div class="preset-card-desc">50 đợt hàng (10.000 sản phẩm). Kiểm tra tốc độ xử lý luồng cao.</div>
+          </div>
         </div>
 
-        <form id="generator-form" class="form-grid">
-          <div class="form-group">
-            <label for="input-seed">Seed (PRNG):</label>
-            <div class="input-inline">
-              <input type="number" id="input-seed" name="seed" value="42" min="0" required>
-              <button type="button" id="btn-random-seed" class="btn btn-sm btn-secondary" title="Randomize seed">🎲</button>
-            </div>
-          </div>
-          <div class="form-group">
-            <label for="input-batches">Total Batches:</label>
-            <input type="number" id="input-batches" name="total_batches" value="10" min="1" max="1000" required>
-          </div>
-          <div class="form-group">
-            <label for="input-batch-size">Batch Size:</label>
-            <input type="number" id="input-batch-size" name="batch_size" value="100" min="10" max="5000" required>
-          </div>
-          <div class="form-group">
-            <label for="input-update-ratio">Update Ratio: <span id="val-update-ratio">20%</span></label>
-            <input type="range" id="input-update-ratio" min="0" max="100" value="20" step="1">
-          </div>
-          <div class="form-group">
-            <label for="input-dup-ratio">Duplicate Ratio: <span id="val-dup-ratio">5%</span></label>
-            <input type="range" id="input-dup-ratio" min="0" max="100" value="5" step="1">
-          </div>
-          <div class="form-group">
-            <label for="input-ooo-ratio">Out-of-Order Ratio: <span id="val-ooo-ratio">10%</span></label>
-            <input type="range" id="input-ooo-ratio" min="0" max="100" value="10" step="1">
-          </div>
-          <div class="form-group">
-            <label for="input-withdrawn-ratio">Withdrawn Ratio: <span id="val-withdrawn-ratio">5%</span></label>
-            <input type="range" id="input-withdrawn-ratio" min="0" max="100" value="5" step="1">
-          </div>
-          <div class="form-group">
-            <label for="input-invalid-ratio">Invalid Ratio (DLQ): <span id="val-invalid-ratio">5%</span></label>
-            <input type="range" id="input-invalid-ratio" min="0" max="100" value="5" step="1">
-          </div>
+        <div class="action-bar">
+          <button type="button" id="btn-start-job" class="btn btn-primary btn-large">
+            <span class="btn-spinner hidden"></span>
+            <span>▶ Bắt Đầu Đồng Bộ Ngay</span>
+          </button>
+          <button type="button" id="btn-toggle-advanced" class="btn btn-outline">
+            <span>⚙️ Tùy Chỉnh Nâng Cao</span>
+            <span id="advanced-toggle-icon">▼</span>
+          </button>
+          <button type="button" id="btn-cancel-job" class="btn btn-danger hidden">
+            <span>⏹ Dừng Tiến Trình</span>
+          </button>
+        </div>
 
-          <div class="form-footer">
-            <div id="ratio-validator" class="ratio-validator valid">
-              Sum of Ratios: <span id="total-ratio-val">45%</span> (Max: 100%)
+        <!-- Collapsible Advanced Settings for Tech Users -->
+        <div id="advanced-settings-panel" class="advanced-panel hidden">
+          <h3 class="advanced-title">Cấu hình thông số chi tiết (Dành cho Kỹ thuật viên)</h3>
+          <form id="generator-form" class="form-grid">
+            <div class="form-group">
+              <label for="input-seed">Mã Hạt Giống (Seed PRNG):</label>
+              <div class="input-inline">
+                <input type="number" id="input-seed" name="seed" value="42" min="0" required>
+                <button type="button" id="btn-random-seed" class="btn btn-sm btn-secondary" title="Đổi ngẫu nhiên">🎲 Đổi mã</button>
+              </div>
             </div>
-            <div class="action-buttons">
-              <button type="submit" id="btn-start-job" class="btn btn-primary">
-                <span class="btn-spinner hidden"></span>
-                <span>▶ Start Synchronization</span>
-              </button>
-              <button type="button" id="btn-reset-form" class="btn btn-secondary">↺ Reset</button>
+            <div class="form-group">
+              <label for="input-batches">Số Đợt Hàng (Batches):</label>
+              <input type="number" id="input-batches" name="total_batches" value="10" min="1" max="1000" required>
             </div>
-          </div>
-        </form>
+            <div class="form-group">
+              <label for="input-batch-size">Sản Phẩm Mỗi Đợt:</label>
+              <input type="number" id="input-batch-size" name="batch_size" value="100" min="10" max="5000" required>
+            </div>
+            <div class="form-group">
+              <label for="input-update-ratio">Tỷ Lệ Cập Nhật: <span id="val-update-ratio">20%</span></label>
+              <input type="range" id="input-update-ratio" min="0" max="100" value="20" step="1">
+            </div>
+            <div class="form-group">
+              <label for="input-dup-ratio">Tỷ Lệ Trùng Lặp: <span id="val-dup-ratio">5%</span></label>
+              <input type="range" id="input-dup-ratio" min="0" max="100" value="5" step="1">
+            </div>
+            <div class="form-group">
+              <label for="input-ooo-ratio">Tỷ Lệ Đến Muộn: <span id="val-ooo-ratio">10%</span></label>
+              <input type="range" id="input-ooo-ratio" min="0" max="100" value="10" step="1">
+            </div>
+            <div class="form-group">
+              <label for="input-withdrawn-ratio">Tỷ Lệ Ngừng Bán: <span id="val-withdrawn-ratio">5%</span></label>
+              <input type="range" id="input-withdrawn-ratio" min="0" max="100" value="5" step="1">
+            </div>
+            <div class="form-group">
+              <label for="input-invalid-ratio">Tỷ Lệ Lỗi Schema: <span id="val-invalid-ratio">5%</span></label>
+              <input type="range" id="input-invalid-ratio" min="0" max="100" value="5" step="1">
+            </div>
+
+            <div class="form-footer">
+              <div id="ratio-validator" class="ratio-validator valid">
+                Tổng Tỷ Lệ: <span id="total-ratio-val">45%</span> (Tối đa 100%)
+              </div>
+              <button type="button" id="btn-reset-form" class="btn btn-secondary">↺ Trở Về Mặc Định</button>
+            </div>
+          </form>
+        </div>
       </div>
 
       <!-- Tab 2: Resume Interrupted -->
       <div id="tab-resume" class="tab-content" role="tabpanel">
         <div class="resume-container">
-          <p class="section-desc">Select an interrupted synchronization job to resume directly from its last uncommitted batch checkpoint.</p>
+          <p class="section-desc">Nếu máy chủ từng bị ngắt điện hoặc tắt ngang, bạn có thể chọn đợt đồng bộ dở dang bên dưới để chạy tiếp từ đúng điểm dừng mà không bị ghi đúp dữ liệu.</p>
           <div class="resume-controls">
             <div class="form-group resume-select-group">
-              <label for="select-interrupted-job">Interrupted Jobs:</label>
+              <label for="select-interrupted-job">Chọn đợt đồng bộ chưa hoàn thành:</label>
               <select id="select-interrupted-job" class="form-select">
-                <option value="">Loading interrupted jobs...</option>
+                <option value="">Đang tìm các đợt bị gián đoạn...</option>
               </select>
             </div>
-            <button type="button" id="btn-refresh-interrupted" class="btn btn-secondary" title="Refresh job list">↻</button>
+            <button type="button" id="btn-refresh-interrupted" class="btn btn-secondary" title="Tải lại danh sách">↻ Tải Lại</button>
             <button type="button" id="btn-resume-job" class="btn btn-primary" disabled>
               <span class="btn-spinner hidden"></span>
-              <span>↺ Resume Job</span>
+              <span>↺ Chạy Tiếp Tục</span>
             </button>
           </div>
-          <div id="resume-job-details" class="job-meta-preview hidden">
-            <!-- Rendered by JS -->
-          </div>
+          <div id="resume-job-details" class="job-meta-preview hidden"></div>
         </div>
       </div>
 
       <!-- Tab 3: Custom JSON Batch -->
       <div id="tab-manual" class="tab-content" role="tabpanel">
         <div class="manual-container">
-          <p class="section-desc">Submit raw supplier JSON batch records to test custom catalog updates directly.</p>
+          <p class="section-desc">Nhập trực tiếp danh sách sản phẩm theo định dạng JSON để cập nhật tức thời vào kho dữ liệu.</p>
           <div class="textarea-actions">
-            <button type="button" id="btn-load-sample-json" class="btn btn-sm btn-outline">Load Sample JSON</button>
-            <button type="button" id="btn-clear-json" class="btn btn-sm btn-outline">Clear</button>
+            <button type="button" id="btn-load-sample-json" class="btn btn-sm btn-outline">Nạp Dữ Liệu Mẫu</button>
+            <button type="button" id="btn-clear-json" class="btn btn-sm btn-outline">Xóa Trắng</button>
           </div>
-          <textarea id="manual-json-input" class="code-editor" placeholder="[&#10;  {&#10;    &quot;sku&quot;: &quot;PROD-101&quot;,&#10;    &quot;name&quot;: &quot;Sample Widget&quot;,&#10;    &quot;price&quot;: 29.99,&#10;    &quot;status&quot;: &quot;ACTIVE&quot;,&#10;    &quot;timestamp&quot;: &quot;2026-10-21T12:00:00Z&quot;&#10;  }&#10;]"></textarea>
+          <textarea id="manual-json-input" class="code-editor" placeholder="[&#10;  {&#10;    &quot;sku&quot;: &quot;PROD-101&quot;,&#10;    &quot;name&quot;: &quot;Bàn làm việc tối giản&quot;,&#10;    &quot;price&quot;: 149.99,&#10;    &quot;status&quot;: &quot;ACTIVE&quot;,&#10;    &quot;timestamp&quot;: &quot;2026-10-22T10:00:00Z&quot;&#10;  }&#10;]"></textarea>
           <div class="form-footer">
             <span id="json-parse-status" class="status-msg"></span>
-            <button type="button" id="btn-submit-manual" class="btn btn-primary">Submit Batch</button>
+            <button type="button" id="btn-submit-manual" class="btn btn-primary">Gửi Lô Hàng Này</button>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Section 2: Live Invariant Metric Cards -->
+    <!-- Section 2: Non-Tech KPI Cards -->
     <section class="metrics-grid">
       <!-- Added -->
       <div class="metric-card card-added">
-        <div class="metric-icon">+</div>
+        <div class="metric-icon">🟢</div>
         <div class="metric-body">
-          <div class="metric-label">Added</div>
+          <div class="metric-label">Sản Phẩm Mới</div>
           <div id="metric-added" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-added">+0</span> in last batch</div>
+          <div class="metric-sub"><span id="delta-added">+0</span> trong đợt vừa nhận</div>
         </div>
       </div>
 
       <!-- Updated -->
       <div class="metric-card card-updated">
-        <div class="metric-icon">~</div>
+        <div class="metric-icon">🔵</div>
         <div class="metric-body">
-          <div class="metric-label">Updated</div>
+          <div class="metric-label">Cập Nhật Giá & Tên</div>
           <div id="metric-updated" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-updated">+0</span> in last batch</div>
+          <div class="metric-sub"><span id="delta-updated">+0</span> trong đợt vừa nhận</div>
         </div>
       </div>
 
       <!-- Withdrawn -->
       <div class="metric-card card-withdrawn">
-        <div class="metric-icon">-</div>
+        <div class="metric-icon">🟠</div>
         <div class="metric-body">
-          <div class="metric-label">Withdrawn</div>
+          <div class="metric-label">Ngừng Kinh Doanh</div>
           <div id="metric-withdrawn" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-withdrawn">+0</span> in last batch</div>
+          <div class="metric-sub"><span id="delta-withdrawn">+0</span> trong đợt vừa nhận</div>
         </div>
       </div>
 
       <!-- Skipped -->
       <div class="metric-card card-skipped">
-        <div class="metric-icon">↷</div>
+        <div class="metric-icon">🟣</div>
         <div class="metric-body">
-          <div class="metric-label">Skipped</div>
+          <div class="metric-label">Dữ Liệu Trùng Lặp</div>
           <div id="metric-skipped" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-skipped">+0</span> in last batch</div>
+          <div class="metric-sub"><span id="delta-skipped">+0</span> đã được bảo toàn</div>
         </div>
       </div>
 
       <!-- Dead-Lettered -->
       <div class="metric-card card-deadletter">
-        <div class="metric-icon">⚠</div>
+        <div class="metric-icon">🔴</div>
         <div class="metric-body">
-          <div class="metric-label">Dead-Lettered</div>
+          <div class="metric-label">Cần Kiểm Tra Lại</div>
           <div id="metric-deadletter" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-deadletter">+0</span> in last batch</div>
+          <div class="metric-sub"><span id="delta-deadletter">+0</span> lỗi cách ly</div>
         </div>
       </div>
     </section>
 
-    <!-- Section 3: Progress & Live Telemetry Stream -->
+    <!-- Section 3: Visual Progress Bar & Smart Status Banner -->
     <section class="card progress-card">
       <div class="progress-header">
         <div class="progress-title">
-          <span>Batch Progress:</span>
-          <strong id="batch-progress-text">0 / 0 Batches (0.0%)</strong>
+          <span>Tiến Độ Đồng Bộ:</span>
+          <strong id="batch-progress-text">0 / 0 Đợt hàng (0.0%)</strong>
         </div>
         <div class="progress-telemetry">
-          <span class="telemetry-item">Speed: <strong id="telemetry-speed">0 rec/s</strong></span>
-          <span class="telemetry-item">ETA: <strong id="telemetry-eta">—</strong></span>
-          <span class="telemetry-item">Elapsed: <strong id="telemetry-runtime">00:00</strong></span>
+          <span class="telemetry-item">Tốc độ: <strong id="telemetry-speed">0 bản ghi/giây</strong></span>
+          <span class="telemetry-item">Thời gian còn lại: <strong id="telemetry-eta">—</strong></span>
+          <span class="telemetry-item">Đã chạy: <strong id="telemetry-runtime">00:00</strong></span>
         </div>
       </div>
 
@@ -214,118 +247,171 @@
         <div id="progress-bar-fill" class="progress-fill" style="width: 0%"></div>
       </div>
 
-      <!-- Collapsible Live Event Console -->
-      <div class="event-console">
-        <div class="console-header">
-          <div class="console-title">
-            <span class="pulse-indicator"></span>
-            <span>Live Audit Event Stream (SSE)</span>
-          </div>
-          <div class="console-actions">
-            <label class="checkbox-inline">
-              <input type="checkbox" id="check-autoscroll" checked>
-              <span>Auto-scroll</span>
-            </label>
-            <button id="btn-clear-console" class="btn btn-xs btn-outline">Clear Log</button>
+      <!-- Non-tech Smart Status Banner (Replaces technical raw logs) -->
+      <div class="smart-status-banner">
+        <span class="pulse-indicator"></span>
+        <span id="smart-status-text">Hệ thống đang sẵn sàng. Hãy bấm "Bắt Đầu Đồng Bộ Ngay" để kích hoạt cập nhật danh mục.</span>
+      </div>
+    </section>
+
+    <!-- Section 4: Visual Charts (Thêm các biểu đồ trực quan cho người dùng Non-Tech) -->
+    <section class="charts-grid">
+      <!-- Chart 1: Donut Chart - Tỷ Lệ Phân Bổ Dữ Liệu -->
+      <div class="card chart-card">
+        <div class="chart-header">
+          <div>
+            <h3 class="chart-title">📊 Tỷ Lệ Phân Bổ Dữ Liệu Đồng Bộ</h3>
+            <p class="chart-subtitle">Cơ cấu số lượng sản phẩm mới, cập nhật, ngừng bán và các bản ghi cần lưu ý.</p>
           </div>
         </div>
-        <div id="event-log-container" class="event-log-list">
-          <div class="log-entry log-system">[00:00:00] SSE Listener initialized. Waiting for events...</div>
+        <div class="chart-body donut-layout">
+          <div class="donut-container">
+            <svg id="donut-svg" viewBox="0 0 200 200" class="donut-svg">
+              <!-- Rendered dynamically by JS -->
+            </svg>
+            <div class="donut-center-text">
+              <span id="donut-total-count" class="donut-total">0</span>
+              <span class="donut-total-label">Tổng Đã Xử Lý</span>
+            </div>
+          </div>
+          <div class="chart-legend" id="donut-legend">
+            <div class="legend-item"><span class="legend-dot dot-added"></span> Sản phẩm Mới: <strong id="leg-val-added">0 (0%)</strong></div>
+            <div class="legend-item"><span class="legend-dot dot-updated"></span> Cập Nhật Giá: <strong id="leg-val-updated">0 (0%)</strong></div>
+            <div class="legend-item"><span class="legend-dot dot-withdrawn"></span> Ngừng Kinh Doanh: <strong id="leg-val-withdrawn">0 (0%)</strong></div>
+            <div class="legend-item"><span class="legend-dot dot-skipped"></span> Dữ Liệu Trùng: <strong id="leg-val-skipped">0 (0%)</strong></div>
+            <div class="legend-item"><span class="legend-dot dot-deadletter"></span> Cần Kiểm Tra (Lỗi): <strong id="leg-val-deadletter">0 (0%)</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart 2: Success Rate & System Health Card -->
+      <div class="card chart-card">
+        <div class="chart-header">
+          <div>
+            <h3 class="chart-title">🛡️ Chỉ Số Toàn Vẹn & Sức Khỏe Dữ Liệu</h3>
+            <p class="chart-subtitle">Đo lường mức độ tin cậy và tỷ lệ hoàn tất giao dịch tự động.</p>
+          </div>
+        </div>
+        <div class="chart-body health-layout">
+          <div class="health-gauge-box">
+            <div class="health-circle">
+              <svg viewBox="0 0 120 120" class="gauge-svg">
+                <circle cx="60" cy="60" r="50" class="gauge-track"></circle>
+                <circle id="gauge-fill" cx="60" cy="60" r="50" class="gauge-value" style="stroke-dashoffset: 314;"></circle>
+              </svg>
+              <div class="gauge-text">
+                <strong id="health-pct-value">100%</strong>
+                <span>Thành Công</span>
+              </div>
+            </div>
+          </div>
+          <div class="health-details">
+            <div class="health-status-badge badge-success" id="health-status-badge">
+              <span>✅</span> <span id="health-status-title">Hệ thống an toàn tuyệt đối</span>
+            </div>
+            <p class="health-desc" id="health-status-desc">Toàn bộ giao dịch đều tuân thủ nghiêm ngặt 5 Invariants toán học. Không có sai lệch hay xung đột dữ liệu.</p>
+            <div class="health-stat-row">
+              <div class="mini-stat">
+                <span class="mini-stat-label">Thời Gian Xử Lý:</span>
+                <strong id="stat-elapsed-time">00:00</strong>
+              </div>
+              <div class="mini-stat">
+                <span class="mini-stat-label">Tốc Độ Bình Quân:</span>
+                <strong id="stat-avg-speed">0 sp/giây</strong>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- Section 4: Data Explorers (DLQ, Products, History) -->
+    <!-- Section 5: Data Explorers (Danh Mục & Hàng Đợi Lỗi) -->
     <section class="card explorer-card">
       <div class="card-header">
         <div class="tab-group" role="tablist">
-          <button class="tab-btn active" data-tab="tab-dlq" role="tab">⚠ Dead-Letter Queue (<span id="count-dlq-badge">0</span>)</button>
-          <button class="tab-btn" data-tab="tab-catalog" role="tab">📦 Product Catalog (<span id="count-catalog-badge">0</span>)</button>
-          <button class="tab-btn" data-tab="tab-history" role="tab">📋 Sync History</button>
+          <button class="tab-btn active" data-tab="tab-catalog" role="tab">📦 Danh Mục Sản Phẩm (<span id="count-catalog-badge">0</span>)</button>
+          <button class="tab-btn" data-tab="tab-dlq" role="tab">⚠️ Dữ Liệu Cần Kiểm Tra (<span id="count-dlq-badge">0</span>)</button>
+          <button class="tab-btn" data-tab="tab-history" role="tab">📋 Lịch Sử Các Đợt Đồng Bộ</button>
         </div>
       </div>
 
-      <!-- Explorer Tab 1: Dead Letter Queue -->
-      <div id="tab-dlq" class="tab-content active" role="tabpanel">
+      <!-- Explorer Tab 1: Catalog Products -->
+      <div id="tab-catalog" class="tab-content active" role="tabpanel">
         <div class="table-toolbar">
           <div class="filter-group">
-            <label for="filter-dlq-job">Filter Job:</label>
-            <input type="text" id="filter-dlq-job" class="form-input form-sm" placeholder="Enter Job ID or leave empty for all">
-            <label for="filter-dlq-reason" style="margin-left: 0.5rem;">Reason:</label>
-            <input type="text" id="filter-dlq-reason" class="form-input form-sm" placeholder="Filter by reason keyword...">
-          </div>
-          <button id="btn-refresh-dlq" class="btn btn-sm btn-secondary">↻ Refresh DLQ</button>
-        </div>
-
-        <div class="table-responsive">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Issue ID</th>
-                <th>Job ID</th>
-                <th>Batch</th>
-                <th>SKU</th>
-                <th>Defect Reason</th>
-                <th>Quarantined At</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="dlq-table-body">
-              <tr><td colspan="7" class="table-empty">No corrupt records in Dead-Letter Queue.</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="pagination-bar">
-          <span id="dlq-pagination-info" class="pagination-info">Showing 0-0 of 0</span>
-          <div class="pagination-buttons">
-            <button id="btn-dlq-prev" class="btn btn-sm btn-outline" disabled>Previous</button>
-            <span id="dlq-page-num" class="page-indicator">Page 1</span>
-            <button id="btn-dlq-next" class="btn btn-sm btn-outline" disabled>Next</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Explorer Tab 2: Catalog Products -->
-      <div id="tab-catalog" class="tab-content" role="tabpanel">
-        <div class="table-toolbar">
-          <div class="filter-group">
-            <input type="text" id="filter-product-search" class="form-input form-sm" placeholder="Search SKU or Product Name...">
+            <input type="text" id="filter-product-search" class="form-input form-sm" placeholder="🔍 Tìm kiếm theo tên sản phẩm hoặc mã SKU...">
           </div>
           <div class="filter-group">
             <select id="filter-product-status" class="form-select form-sm">
-              <option value="">All Statuses</option>
-              <option value="ACTIVE">ACTIVE Only</option>
-              <option value="WITHDRAWN">WITHDRAWN Only</option>
+              <option value="">Tất Cả Trạng Thái</option>
+              <option value="ACTIVE">Chỉ Sản Phẩm Đang Bán (ACTIVE)</option>
+              <option value="WITHDRAWN">Chỉ Sản Phẩm Ngừng Bán (WITHDRAWN)</option>
             </select>
           </div>
-          <button id="btn-refresh-catalog" class="btn btn-sm btn-secondary">↻ Refresh Catalog</button>
+          <button id="btn-refresh-catalog" class="btn btn-sm btn-secondary">↻ Làm Mới Bảng</button>
         </div>
 
         <div class="table-responsive">
           <table class="data-table">
             <thead>
               <tr>
-                <th>SKU</th>
-                <th>Product Name</th>
-                <th>Price</th>
-                <th>Status</th>
-                <th>Supplier Timestamp</th>
-                <th>Local Updated At</th>
+                <th>Mã SKU</th>
+                <th>Tên Sản Phẩm</th>
+                <th>Giá Bán</th>
+                <th>Trạng Thái</th>
+                <th>Thời Gian Cung Cấp</th>
+                <th>Cập Nhật Lần Cuối</th>
               </tr>
             </thead>
             <tbody id="catalog-table-body">
-              <tr><td colspan="6" class="table-empty">Loading product catalog...</td></tr>
+              <tr><td colspan="6" class="table-empty">Đang tải danh mục sản phẩm...</td></tr>
             </tbody>
           </table>
         </div>
 
         <div class="pagination-bar">
-          <span id="catalog-pagination-info" class="pagination-info">Showing 0-0 of 0</span>
+          <span id="catalog-pagination-info" class="pagination-info">Hiển thị 0-0 trên 0</span>
           <div class="pagination-buttons">
-            <button id="btn-catalog-prev" class="btn btn-sm btn-outline" disabled>Previous</button>
-            <span id="catalog-page-num" class="page-indicator">Page 1</span>
-            <button id="btn-catalog-next" class="btn btn-sm btn-outline" disabled>Next</button>
+            <button id="btn-catalog-prev" class="btn btn-sm btn-outline" disabled>Trang Trước</button>
+            <span id="catalog-page-num" class="page-indicator">Trang 1</span>
+            <button id="btn-catalog-next" class="btn btn-sm btn-outline" disabled>Trang Sau</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Explorer Tab 2: Dead Letter Queue -->
+      <div id="tab-dlq" class="tab-content" role="tabpanel">
+        <div class="table-toolbar">
+          <div class="filter-group">
+            <input type="text" id="filter-dlq-reason" class="form-input form-sm" placeholder="🔍 Lọc theo lý do lỗi (ví dụ: giá âm, thiếu SKU)...">
+          </div>
+          <button id="btn-refresh-dlq" class="btn btn-sm btn-secondary">↻ Làm Mới Hàng Đợi</button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Mã Bản Ghi Lỗi</th>
+                <th>Mã Đợt Hàng</th>
+                <th>Mã SKU</th>
+                <th>Lý Do Từ Chối</th>
+                <th>Thời Gian Cách Ly</th>
+                <th>Hành Động</th>
+              </tr>
+            </thead>
+            <tbody id="dlq-table-body">
+              <tr><td colspan="6" class="table-empty">Tuyệt vời! Không có bản ghi nào bị lỗi.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pagination-bar">
+          <span id="dlq-pagination-info" class="pagination-info">Hiển thị 0-0 trên 0</span>
+          <div class="pagination-buttons">
+            <button id="btn-dlq-prev" class="btn btn-sm btn-outline" disabled>Trang Trước</button>
+            <span id="dlq-page-num" class="page-indicator">Trang 1</span>
+            <button id="btn-dlq-next" class="btn btn-sm btn-outline" disabled>Trang Sau</button>
           </div>
         </div>
       </div>
@@ -333,25 +419,25 @@
       <!-- Explorer Tab 3: Sync History -->
       <div id="tab-history" class="tab-content" role="tabpanel">
         <div class="table-toolbar">
-          <button id="btn-refresh-history" class="btn btn-sm btn-secondary">↻ Refresh History</button>
+          <button id="btn-refresh-history" class="btn btn-sm btn-secondary">↻ Làm Mới Lịch Sử</button>
         </div>
+
         <div class="table-responsive">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Job ID</th>
-                <th>Status</th>
-                <th>Progress</th>
-                <th>Added</th>
-                <th>Updated</th>
-                <th>Withdrawn</th>
-                <th>Skipped</th>
-                <th>Dead-Letter</th>
-                <th>Created At</th>
+                <th>Mã Tiến Trình</th>
+                <th>Trạng Thái</th>
+                <th>Tổng Lô Hàng</th>
+                <th>Lô Đã Commit</th>
+                <th>Số Lượng Thêm Mới</th>
+                <th>Số Lượng Cập Nhật</th>
+                <th>Số Lượng Thu Hồi</th>
+                <th>Thời Gian Bắt Đầu</th>
               </tr>
             </thead>
             <tbody id="history-table-body">
-              <tr><td colspan="9" class="table-empty">Loading sync history...</td></tr>
+              <tr><td colspan="8" class="table-empty">Chưa có lịch sử đồng bộ nào.</td></tr>
             </tbody>
           </table>
         </div>
@@ -359,33 +445,38 @@
     </section>
   </main>
 
-  <!-- Modal: Raw Payload Inspector -->
-  <div id="payload-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-    <div class="modal-dialog">
+  <!-- Modal: Dead-Letter Issue Inspection -->
+  <div id="payload-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
       <div class="modal-header">
-        <h3 id="modal-title" class="modal-title">Quarantined Record Payload</h3>
-        <button id="btn-close-modal" class="btn btn-icon modal-close" aria-label="Close modal">✕</button>
+        <h3 class="modal-title">Chi Tiết Bản Ghi Bị Cách Ly Lỗi</h3>
+        <button id="btn-close-modal" class="btn btn-icon" aria-label="Đóng">✕</button>
       </div>
       <div class="modal-body">
-        <div class="modal-meta">
-          <div><strong>Issue ID:</strong> <span id="modal-issue-id" class="code-tag">—</span></div>
-          <div><strong>Defect Reason:</strong> <span id="modal-defect-reason" class="defect-badge">—</span></div>
+        <div class="modal-info-row">
+          <span class="modal-label">Mã Lỗi:</span>
+          <strong id="modal-issue-id" class="code-badge">—</strong>
         </div>
-        <div class="code-block-wrapper">
-          <pre id="modal-payload-code" class="code-block"></pre>
+        <div class="modal-info-row">
+          <span class="modal-label">Lý Do Từ Chối:</span>
+          <span id="modal-defect-reason" class="text-danger">—</span>
+        </div>
+        <div class="modal-payload-box">
+          <label class="modal-label">Nội Dung Bản Ghi Gốc Từ Nhà Cung Cấp:</label>
+          <pre id="modal-payload-code" class="code-preview"></pre>
         </div>
       </div>
       <div class="modal-footer">
-        <button id="btn-copy-payload" class="btn btn-outline">📋 Copy JSON</button>
-        <button id="btn-dismiss-modal" class="btn btn-secondary">Close</button>
+        <button id="btn-copy-payload" class="btn btn-secondary">📋 Sao Chép JSON</button>
+        <button id="btn-dismiss-modal" class="btn btn-primary">Đóng Lại</button>
       </div>
     </div>
   </div>
 
-  <!-- Toast Notification Container -->
+  <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <!-- Application Script -->
+  <!-- Application Logic -->
   <script src="/app.js"></script>
 </body>
 </html>
