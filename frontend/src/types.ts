@@ -90,3 +90,99 @@ export interface TestScenario {
   withdrawnRatio: number;
   invalidRatio: number;
 }
+
+export interface CatalogUpdate {
+  id: string;
+  version: string;
+  title: string;
+  description: string;
+  recordsCount: number;
+  batches: number;
+  batchSize: number;
+  seed: number;
+  updateRatio: number;
+  dupRatio: number;
+  oooRatio: number;
+  withdrawnRatio: number;
+  invalidRatio: number;
+  isInterrupted?: boolean;
+}
+
+export const DEFAULT_CATALOG_UPDATES: CatalogUpdate[] = [
+  {
+    id: 'update-1-baseline',
+    version: 'v1.0.0',
+    title: 'Baseline Catalog Feed',
+    description: '1,000 new products imported directly from supplier baseline.',
+    recordsCount: 1000,
+    batches: 10,
+    batchSize: 100,
+    seed: 42,
+    updateRatio: 20,
+    dupRatio: 5,
+    oooRatio: 10,
+    withdrawnRatio: 5,
+    invalidRatio: 5,
+  },
+  {
+    id: 'update-2-price-refresh',
+    version: 'v1.1.0',
+    title: 'Price & Inventory Adjustment',
+    description: '1,000 products refreshed with new pricing and compliant schema.',
+    recordsCount: 1000,
+    batches: 10,
+    batchSize: 100,
+    seed: 101,
+    updateRatio: 20,
+    dupRatio: 0,
+    oooRatio: 0,
+    withdrawnRatio: 0,
+    invalidRatio: 0,
+  },
+  {
+    id: 'update-3-defect-quarantine',
+    version: 'v1.2.0',
+    title: 'Supplier Anomaly Feed (DLQ)',
+    description: '1,500 records containing price defects and empty SKUs for quarantine testing.',
+    recordsCount: 1500,
+    batches: 15,
+    batchSize: 100,
+    seed: 999,
+    updateRatio: 15,
+    dupRatio: 10,
+    oooRatio: 15,
+    withdrawnRatio: 10,
+    invalidRatio: 15,
+  },
+  {
+    id: 'update-4-high-volume',
+    version: 'v1.3.0',
+    title: 'High-Volume Restock Stream',
+    description: '2,500 products stream-ingested across 25 batches.',
+    recordsCount: 2500,
+    batches: 25,
+    batchSize: 100,
+    seed: 777,
+    updateRatio: 20,
+    dupRatio: 5,
+    oooRatio: 10,
+    withdrawnRatio: 5,
+    invalidRatio: 5,
+  },
+  {
+    id: 'update-5-recovery',
+    version: 'v1.4.0',
+    title: 'Mid-Feed Crash & Checkpoint Recovery',
+    description: 'Halts automatically at batch 5/10 to verify WAL atomic recovery.',
+    recordsCount: 1000,
+    batches: 10,
+    batchSize: 100,
+    seed: 555,
+    updateRatio: 20,
+    dupRatio: 5,
+    oooRatio: 10,
+    withdrawnRatio: 5,
+    invalidRatio: 5,
+    isInterrupted: true,
+  },
+];

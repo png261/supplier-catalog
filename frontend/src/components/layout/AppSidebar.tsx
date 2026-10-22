@@ -17,7 +17,6 @@ export type NavItemKey = "overview" | "catalog" | "attention" | "history";
 interface AppSidebarProps {
   activeTab: NavItemKey;
   onSelectTab: (tab: NavItemKey) => void;
-  openScenarioModal?: (preselectedScenario?: string) => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   isMobileOpen: boolean;

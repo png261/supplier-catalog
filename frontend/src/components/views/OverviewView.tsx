@@ -1,12 +1,10 @@
 import React from 'react';
 import { ProgressBanner } from '../ProgressBanner';
+import { UpdatesList } from '../UpdatesList';
 import { AnalyticsFilterBar } from '../AnalyticsFilterBar';
 import { MetricsGrid } from '../MetricsGrid';
 import { ChartsSection } from '../ChartsSection';
-import { Card } from '../ui/card';
-import { Button } from '../ui/button';
-import { Badge } from '../ui/badge';
-import { AnalyticsResponse } from '../../types';
+import { AnalyticsResponse, CatalogUpdate } from '../../types';
 
 interface OverviewViewProps {
   currentBatch: number;
@@ -18,8 +16,11 @@ interface OverviewViewProps {
   smartStatusType: 'normal' | 'running' | 'warning' | 'success';
   isSyncing?: boolean;
   isInterrupted?: boolean;
-  onStartSync?: () => void;
   onCancelSync?: () => void;
+  updates: CatalogUpdate[];
+  syncedUpdateIds: string[];
+  activeSyncingUpdateId: string | null;
+  onSyncUpdate: (update: CatalogUpdate) => void;
   analyticsRange: string;
   analyticsFrom: string;
   analyticsTo: string;
@@ -58,8 +59,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   smartStatusType,
   isSyncing,
   isInterrupted,
-  onStartSync,
   onCancelSync,
+  updates,
+  syncedUpdateIds,
+  activeSyncingUpdateId,
+  onSyncUpdate,
   analyticsRange,
   analyticsFrom,
   analyticsTo,
@@ -73,10 +77,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   onJobSelect,
   onRefreshAnalytics,
   onMetricCardClick,
-  onNavigateToTab,
 }) => {
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Feed Ingestion Progress Strip */}
       <ProgressBanner
         currentBatch={currentBatch}
@@ -88,8 +91,16 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         smartStatusType={smartStatusType}
         isSyncing={isSyncing}
         isInterrupted={isInterrupted}
-        onStartSync={onStartSync}
         onCancelSync={onCancelSync}
+      />
+
+      {/* Available Catalog Updates for Staff */}
+      <UpdatesList
+        updates={updates}
+        syncedIds={syncedUpdateIds}
+        activeSyncingId={activeSyncingUpdateId}
+        isAnySyncing={Boolean(isSyncing)}
+        onSync={onSyncUpdate}
       />
 
       {/* Operations Analytics Filter Bar */}
@@ -106,7 +117,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         isRefreshing={isRefreshingAnalytics}
       />
 
-      {/* 5 Interactive Summary Metric Cards */}
+      {/* 5 Summary Metric Cards */}
       <MetricsGrid
         metrics={metrics}
         deltas={deltas}

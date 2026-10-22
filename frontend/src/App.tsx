@@ -5,7 +5,6 @@ import { OverviewView } from './components/views/OverviewView';
 import { CatalogView } from './components/views/CatalogView';
 import { AttentionView } from './components/views/AttentionView';
 import { HistoryView } from './components/views/HistoryView';
-import { DemoModal, SCENARIOS } from './components/DemoModal';
 import { RemediationModal } from './components/RemediationModal';
 import { MetricDrilldownModal } from './components/MetricDrilldownModal';
 import { ShopModal } from './components/ShopModal';
@@ -34,7 +33,8 @@ import {
   CatalogProduct,
   DeadLetterIssue,
   AnalyticsResponse,
-  TestScenario,
+  CatalogUpdate,
+  DEFAULT_CATALOG_UPDATES,
   JobStatus,
   TimeSeriesPoint,
 } from './types';
@@ -104,8 +104,53 @@ export const AppContent: React.FC = () => {
   const runtimeTimerRef = useRef<any>(null);
   const autoHaltBatchRef = useRef<number | null>(null);
 
-  // --- Staged Scenario ---
-  const [stagedScenario, setStagedScenario] = useState<TestScenario>(SCENARIOS[0]);
+  // --- Catalog Updates & Sync Tracking ---
+  const [catalogUpdates] = useState<CatalogUpdate[]>(DEFAULT_CATALOG_UPDATES);
+  const [syncedUpdateIds, setSyncedUpdateIds] = useState<string[]>(() => {
+    try {
+      const key = `catalog_synced_updates_${getActiveShopId()}`;
+      const saved = localStorage.getItem(key);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [activeSyncingUpdateId, setActiveSyncingUpdateId] = useState<string | null>(null);
+  const activeSyncingUpdateIdRef = useRef<string | null>(null);
+
+  // Sync update completion tracker
+  const markUpdateCompleted = (updateId: string | null) => {
+    if (!updateId) return;
+    setSyncedUpdateIds((prev) => {
+      if (prev.includes(updateId)) return prev;
+      const next = [...prev, updateId];
+      try {
+        localStorage.setItem(`catalog_synced_updates_${shopId}`, JSON.stringify(next));
+      } catch (e) {
+        console.error('Failed to save synced updates to localStorage', e);
+      }
+      return next;
+    });
+    if (activeSyncingUpdateIdRef.current === updateId) {
+      activeSyncingUpdateIdRef.current = null;
+      setActiveSyncingUpdateId(null);
+    }
+  };
+
+  // Re-read synced updates when switching shops
+  useEffect(() => {
+    if (shopId) {
+      try {
+        const key = `catalog_synced_updates_${shopId}`;
+        const saved = localStorage.getItem(key);
+        setSyncedUpdateIds(saved ? JSON.parse(saved) : []);
+      } catch {
+        setSyncedUpdateIds([]);
+      }
+      setActiveSyncingUpdateId(null);
+      activeSyncingUpdateIdRef.current = null;
+    }
+  }, [shopId]);
 
   // --- Analytics Filters & Metrics ---
   const [analyticsRange, setAnalyticsRange] = useState<string>('today');
@@ -181,7 +226,6 @@ export const AppContent: React.FC = () => {
   const [historyStatus, setHistoryStatus] = useState<string>('');
 
   // --- Modal Open States ---
-  const [isScenarioModalOpen, setIsScenarioModalOpen] = useState<boolean>(false);
   const [activeRemediationIssue, setActiveRemediationIssue] = useState<DeadLetterIssue | null>(null);
   const [drilldownCategory, setDrilldownCategory] = useState<
     'added' | 'updated' | 'withdrawn' | 'skipped' | 'dead_letter' | null
@@ -331,7 +375,7 @@ export const AppContent: React.FC = () => {
 
           const remainingBatches = Math.max(0, total - (batchIndex + 1));
           if (speed > 0 && remainingBatches > 0) {
-            const avgBatchSize = stagedScenario.size || 100;
+            const avgBatchSize = 100;
             const remainingRecords = remainingBatches * avgBatchSize;
             const estSeconds = Math.ceil(remainingRecords / speed);
             setEta(`${estSeconds}s`);
@@ -374,6 +418,9 @@ export const AppContent: React.FC = () => {
             skipped: data.summary.skipped || 0,
             dead_letter: data.summary.dead_letter || 0,
           });
+        }
+        if (activeSyncingUpdateIdRef.current) {
+          markUpdateCompleted(activeSyncingUpdateIdRef.current);
         }
         setActiveJob(null);
         stopRuntimeTimer();
@@ -452,6 +499,9 @@ export const AppContent: React.FC = () => {
         }
 
         if (job.status === 'COMPLETED') {
+          if (activeSyncingUpdateIdRef.current) {
+            markUpdateCompleted(activeSyncingUpdateIdRef.current);
+          }
           setActiveJob(null);
           stopRuntimeTimer();
           setEta('Done');
@@ -683,41 +733,43 @@ export const AppContent: React.FC = () => {
     toast.success(`Switched to shop: ${newShopId}`);
   };
 
-  const handleOpenScenarioModal = (preselectedScenario?: string) => {
-    if (preselectedScenario) {
-      const match = SCENARIOS.find((s) => s.key === preselectedScenario);
-      if (match) setStagedScenario(match);
+  const handleSyncUpdate = async (update: CatalogUpdate) => {
+    if (syncedUpdateIds.includes(update.id)) {
+      toast.info(`Update ${update.version} has already been synced.`);
+      return;
     }
-    setIsScenarioModalOpen(true);
-  };
+    if (activeJob && activeJob.status === 'RUNNING') {
+      toast.warning('A sync job is currently running.');
+      return;
+    }
 
-  const handleStartImmediately = async (scenario: TestScenario) => {
-    setStagedScenario(scenario);
-    let payload: any;
-    if (scenario.key === 'interrupted') {
+    activeSyncingUpdateIdRef.current = update.id;
+    setActiveSyncingUpdateId(update.id);
+
+    if (update.isInterrupted) {
       autoHaltBatchRef.current = 5;
     } else {
       autoHaltBatchRef.current = null;
     }
 
-    payload = {
+    const payload = {
       mode: 'generator',
-      seed: scenario.seed,
-      total_batches: scenario.batches,
-      batch_size: scenario.size,
-      update_ratio: scenario.updateRatio / 100,
-      duplicate_ratio: scenario.dupRatio / 100,
-      out_of_order_ratio: scenario.oooRatio / 100,
-      withdrawn_ratio: scenario.withdrawnRatio / 100,
-      invalid_ratio: scenario.invalidRatio / 100,
+      seed: update.seed,
+      total_batches: update.batches,
+      batch_size: update.batchSize,
+      update_ratio: update.updateRatio / 100,
+      duplicate_ratio: update.dupRatio / 100,
+      out_of_order_ratio: update.oooRatio / 100,
+      withdrawn_ratio: update.withdrawnRatio / 100,
+      invalid_ratio: update.invalidRatio / 100,
     };
 
     setCurrentBatch(0);
-    setTotalBatches(scenario.batches || 10);
+    setTotalBatches(update.batches || 10);
     setEta('Estimating...');
     jobStartTimeRef.current = Date.now();
     startRuntimeTimer();
-    setSmartStatusText(`Starting sync (${scenario.name})...`);
+    setSmartStatusText(`Starting sync: ${update.version} (${update.title})...`);
     setSmartStatusType('running');
     setActiveJob({
       job_id: 'pending',
@@ -730,15 +782,16 @@ export const AppContent: React.FC = () => {
         job_id: res.job_id,
         status: 'RUNNING',
       });
-      toast.success(`Synchronization started: ${res.job_id}`);
+      toast.success(`Sync started: ${update.version} (${res.job_id})`);
 
       try {
         const jobRes = await fetchJob(res.job_id);
         if (jobRes?.job?.status === 'COMPLETED') {
+          markUpdateCompleted(update.id);
           setActiveJob(null);
           stopRuntimeTimer();
           setEta('Done');
-          setCurrentBatch(jobRes.job.total_batches || scenario.batches || 10);
+          setCurrentBatch(jobRes.job.total_batches || update.batches || 10);
           if (jobRes.job.summary) {
             setMetrics({
               added: jobRes.job.summary.added || 0,
@@ -755,20 +808,14 @@ export const AppContent: React.FC = () => {
         }
       } catch (_) {}
     } catch (err: any) {
+      activeSyncingUpdateIdRef.current = null;
+      setActiveSyncingUpdateId(null);
       setActiveJob(null);
       stopRuntimeTimer();
       setSmartStatusText(`Failed to start sync: ${err.message || 'Unknown error'}`);
       setSmartStatusType('warning');
       toast.error(err.message || 'Failed to start job');
     }
-  };
-
-  const handleStartSync = async () => {
-    if (interruptedJob) {
-      handleResumeInterrupted(interruptedJob.job_id);
-      return;
-    }
-    await handleStartImmediately(stagedScenario);
   };
 
   const handleCancelSync = async () => {
@@ -779,11 +826,6 @@ export const AppContent: React.FC = () => {
     } catch (err: any) {
       toast.error(err.message || 'Failed to cancel job');
     }
-  };
-
-  const handleSelectScenario = (scenario: TestScenario) => {
-    setStagedScenario(scenario);
-    toast.success(`Staged scenario: ${scenario.name}`);
   };
 
   const handleResumeInterrupted = async (jobId: string) => {
@@ -821,6 +863,13 @@ export const AppContent: React.FC = () => {
       setDeltas({ added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 });
       setSmartStatusText('Database has been completely reset to a clean state.');
       setSmartStatusType('normal');
+      // Reset synced updates
+      setSyncedUpdateIds([]);
+      try {
+        localStorage.removeItem(`catalog_synced_updates_${shopId}`);
+      } catch (_) {}
+      setActiveSyncingUpdateId(null);
+      activeSyncingUpdateIdRef.current = null;
       loadAllData();
       loadAnalytics();
     } catch (err: any) {
@@ -870,9 +919,6 @@ export const AppContent: React.FC = () => {
       <AppSidebar
         activeTab={activeTab}
         onSelectTab={navigateToTab}
-        openScenarioModal={(pre) => {
-          setIsScenarioModalOpen(true);
-        }}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         isMobileOpen={isMobileSidebarOpen}
@@ -892,13 +938,9 @@ export const AppContent: React.FC = () => {
       >
         {/* Top Header */}
         <AppHeader
-          activeTab={activeTab}
           onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
-          openScenarioModal={handleOpenScenarioModal}
           onResetDatabase={handleResetDb}
           activeJobId={activeJob ? activeJob.job_id : null}
-          stagedScenario={stagedScenario}
-          onStartSync={handleStartSync}
           isRunning={Boolean(activeJob)}
         />
 
@@ -918,8 +960,11 @@ export const AppContent: React.FC = () => {
                 smartStatusType={smartStatusType}
                 isSyncing={isSyncing}
                 isInterrupted={isInterrupted}
-                onStartSync={handleStartSync}
                 onCancelSync={handleCancelSync}
+                updates={catalogUpdates}
+                syncedUpdateIds={syncedUpdateIds}
+                activeSyncingUpdateId={activeSyncingUpdateId}
+                onSyncUpdate={handleSyncUpdate}
                 analyticsRange={analyticsRange}
                 analyticsFrom={analyticsFrom}
                 analyticsTo={analyticsTo}
@@ -1011,16 +1056,6 @@ export const AppContent: React.FC = () => {
       </div>
 
       {/* Modals */}
-      <DemoModal
-        open={isScenarioModalOpen}
-        onOpenChange={setIsScenarioModalOpen}
-        stagedScenarioKey={stagedScenario.key}
-        interruptedJob={interruptedJob}
-        onSelectScenario={handleSelectScenario}
-        onStartImmediately={handleStartImmediately}
-        onResumeInterrupted={handleResumeInterrupted}
-      />
-
       <RemediationModal
         issue={activeRemediationIssue}
         onOpenChange={(op) => !op && setActiveRemediationIssue(null)}
