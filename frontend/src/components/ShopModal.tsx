@@ -44,11 +44,11 @@ export const ShopModal: React.FC<ShopModalProps> = ({
     e.preventDefault();
     const clean = inputShopId.trim().toLowerCase();
     if (!clean) {
-      setError('Tên shop không được để trống.');
+      setError('Shop name cannot be empty.');
       return;
     }
     if (!/^[a-z0-9_-]{1,64}$/.test(clean)) {
-      setError('Tên shop chỉ chứa chữ cái, số, dấu gạch ngang (-) hoặc gạch dưới (_), tối đa 64 ký tự.');
+      setError('Shop name can only contain letters, numbers, hyphens (-), or underscores (_), up to 64 characters.');
       return;
     }
     setError(null);
@@ -65,9 +65,9 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               <Store className="h-5 w-5" />
             </div>
             <div>
-              <DialogTitle className="text-lg font-bold">Môi Trường Shop Demo Riêng</DialogTitle>
+              <DialogTitle className="text-lg font-bold">Isolated Shop Demo Sandbox</DialogTitle>
               <DialogDescription className="text-xs text-slate-500">
-                Mỗi shop là 1 Database SQLite độc lập, tách biệt 100% dữ liệu.
+                Each shop operates as an isolated SQLite tenant with 100% data separation.
               </DialogDescription>
             </div>
           </div>
@@ -78,14 +78,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 text-xs text-emerald-900 flex items-start gap-2">
             <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
             <span>
-              <strong>Zero-impact sandbox:</strong> Mọi thao tác sync batch, xem dead-letter hoặc reset database chỉ áp dụng cho shop này. Shop sẽ <strong>tự động xóa sau 1 giờ</strong> không hoạt động.
+              <strong>Zero-impact sandbox:</strong> Batch sync operations, dead-letter quarantine reviews, or database resets apply solely to this shop tenant.
             </span>
           </div>
 
           {/* Shop Input Field */}
           <div className="space-y-2">
             <Label htmlFor="shop-id" className="text-xs font-semibold text-slate-700">
-              Tên / Định Danh Shop (Tenant ID)
+              Shop Name / Tenant ID
             </Label>
             <div className="flex gap-2">
               <Input
@@ -95,7 +95,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   setInputShopId(e.target.value);
                   setError(null);
                 }}
-                placeholder="VD: nike-store-88, tech-mart"
+                placeholder="e.g. nike-store-88, tech-mart"
                 className="font-mono text-sm"
               />
               <Button
@@ -104,10 +104,10 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 size="sm"
                 onClick={handleRandomize}
                 className="shrink-0 gap-1 text-xs"
-                title="Tạo tên shop ngẫu nhiên"
+                title="Generate random shop name"
               >
                 <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                Ngẫu nhiên
+                Randomize
               </Button>
             </div>
             {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
@@ -118,7 +118,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
             <div className="space-y-1.5 pt-1">
               <div className="flex items-center gap-1 text-xs text-slate-500 font-medium">
                 <History className="h-3.5 w-3.5" />
-                <span>Shop gần đây của bạn:</span>
+                <span>Your recent shops:</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {recentShops.map((s) => (
@@ -146,10 +146,10 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               size="sm"
               onClick={() => onOpenChange(false)}
             >
-              Hủy
+              Cancel
             </Button>
             <Button type="submit" size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700">
-              Vào Shop Này
+              Enter Shop
               <ArrowRight className="h-3.5 w-3.5" />
             </Button>
           </DialogFooter>
