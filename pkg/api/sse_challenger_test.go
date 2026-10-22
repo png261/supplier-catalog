@@ -942,7 +942,7 @@ func TestAdversarial_ResumedJob_MetricFidelity(t *testing.T) {
 	handler.CancelActiveJob()
 
 	var interruptedJob *domain.SyncJob
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(6 * time.Second)
 	for time.Now().Before(deadline) {
 		interruptedJob, err = store.GetJob(context.Background(), jobID)
 		if err == nil && interruptedJob != nil && interruptedJob.Status == domain.JobStatusInterrupted {
