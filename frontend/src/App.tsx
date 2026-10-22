@@ -78,7 +78,6 @@ export const AppContent: React.FC = () => {
 
   // --- Staged Scenario ---
   const [stagedScenario, setStagedScenario] = useState<TestScenario>(SCENARIOS[0]);
-  const [customRecordsStaged, setCustomRecordsStaged] = useState<any[] | undefined>(undefined);
 
   // --- Analytics Filters & Metrics ---
   const [analyticsRange, setAnalyticsRange] = useState<string>('today');
@@ -478,36 +477,23 @@ export const AppContent: React.FC = () => {
     }
 
     let payload: any;
-    if (stagedScenario.key === 'custom') {
-      if (!customRecordsStaged || customRecordsStaged.length === 0) {
-        toast.error('No custom records staged. Please select scenario and provide JSON payload.');
-        setIsScenarioModalOpen(true);
-        return;
-      }
-      payload = {
-        mode: 'batches',
-        batches: [{ batch_index: 0, records: customRecordsStaged }],
-      };
-      autoHaltBatchRef.current = null;
+    if (stagedScenario.key === 'interrupted') {
+      autoHaltBatchRef.current = 5;
     } else {
-      if (stagedScenario.key === 'interrupted') {
-        autoHaltBatchRef.current = 5;
-      } else {
-        autoHaltBatchRef.current = null;
-      }
-
-      payload = {
-        mode: 'generator',
-        seed: stagedScenario.seed,
-        total_batches: stagedScenario.batches,
-        batch_size: stagedScenario.size,
-        update_ratio: stagedScenario.updateRatio / 100,
-        duplicate_ratio: stagedScenario.dupRatio / 100,
-        out_of_order_ratio: stagedScenario.oooRatio / 100,
-        withdrawn_ratio: stagedScenario.withdrawnRatio / 100,
-        invalid_ratio: stagedScenario.invalidRatio / 100,
-      };
+      autoHaltBatchRef.current = null;
     }
+
+    payload = {
+      mode: 'generator',
+      seed: stagedScenario.seed,
+      total_batches: stagedScenario.batches,
+      batch_size: stagedScenario.size,
+      update_ratio: stagedScenario.updateRatio / 100,
+      duplicate_ratio: stagedScenario.dupRatio / 100,
+      out_of_order_ratio: stagedScenario.oooRatio / 100,
+      withdrawn_ratio: stagedScenario.withdrawnRatio / 100,
+      invalid_ratio: stagedScenario.invalidRatio / 100,
+    };
 
     try {
       const res = await startJob(payload);
@@ -527,46 +513,31 @@ export const AppContent: React.FC = () => {
     }
   };
 
-  const handleSelectScenario = (scenario: TestScenario, customRecords?: any[]) => {
+  const handleSelectScenario = (scenario: TestScenario) => {
     setStagedScenario(scenario);
-    if (customRecords) {
-      setCustomRecordsStaged(customRecords);
-    }
     toast.success(`Staged scenario: ${scenario.name}`);
   };
 
-  const handleStartImmediately = async (scenario: TestScenario, customRecords?: any[]) => {
+  const handleStartImmediately = async (scenario: TestScenario) => {
     setStagedScenario(scenario);
     let payload: any;
-    if (scenario.key === 'custom') {
-      if (!customRecords || customRecords.length === 0) {
-        toast.error('No custom records provided');
-        return;
-      }
-      payload = {
-        mode: 'batches',
-        batches: [{ batch_index: 0, records: customRecords }],
-      };
-      autoHaltBatchRef.current = null;
+    if (scenario.key === 'interrupted') {
+      autoHaltBatchRef.current = 5;
     } else {
-      if (scenario.key === 'interrupted') {
-        autoHaltBatchRef.current = 5;
-      } else {
-        autoHaltBatchRef.current = null;
-      }
-
-      payload = {
-        mode: 'generator',
-        seed: scenario.seed,
-        total_batches: scenario.batches,
-        batch_size: scenario.size,
-        update_ratio: scenario.updateRatio / 100,
-        duplicate_ratio: scenario.dupRatio / 100,
-        out_of_order_ratio: scenario.oooRatio / 100,
-        withdrawn_ratio: scenario.withdrawnRatio / 100,
-        invalid_ratio: scenario.invalidRatio / 100,
-      };
+      autoHaltBatchRef.current = null;
     }
+
+    payload = {
+      mode: 'generator',
+      seed: scenario.seed,
+      total_batches: scenario.batches,
+      batch_size: scenario.size,
+      update_ratio: scenario.updateRatio / 100,
+      duplicate_ratio: scenario.dupRatio / 100,
+      out_of_order_ratio: scenario.oooRatio / 100,
+      withdrawn_ratio: scenario.withdrawnRatio / 100,
+      invalid_ratio: scenario.invalidRatio / 100,
+    };
 
     try {
       const res = await startJob(payload);
@@ -696,7 +667,7 @@ export const AppContent: React.FC = () => {
                 {activeTab === 'catalog' && 'Search, filter, and inspect product catalog state synchronized from supplier feeds.'}
                 {activeTab === 'attention' && 'Invariant D dead-letter isolation: review and remediate defective supplier records.'}
                 {activeTab === 'history' && 'Immutable audit log of historical sync sessions and batch transaction checkpoints.'}
-                {activeTab === 'scenarios' && 'Select, configure, and benchmark synthetic workloads and direct custom JSON ingestion.'}
+                {activeTab === 'scenarios' && 'Select, configure, and benchmark synthetic workloads on SQLite WAL concurrency.'}
               </p>
             </div>
 
@@ -740,7 +711,7 @@ export const AppContent: React.FC = () => {
                   Sync History ({history.total})
                 </TabsTrigger>
                 <TabsTrigger value="scenarios" className="text-xs font-semibold px-3.5 py-1.5">
-                  Scenarios (6)
+                  Scenarios (5)
                 </TabsTrigger>
               </TabsList>
             </div>

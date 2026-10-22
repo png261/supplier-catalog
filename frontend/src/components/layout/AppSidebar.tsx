@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   History,
   PlayCircle,
-  FileCode,
   Layers,
   ChevronLeft,
   ChevronRight,
@@ -62,7 +61,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           key: "scenarios" as NavItemKey,
           label: "Supplier Scenarios",
           icon: PlayCircle,
-          badge: "6 tests",
+          badge: "5 tests",
           badgeVariant: "outline" as const,
         },
       ],
@@ -221,29 +220,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           </div>
         ))}
 
-        {/* Quick Operations Group */}
-        <div className="space-y-1 pt-2 border-t border-slate-100 dark:border-slate-800">
-          {!isCollapsed && (
-            <h4 className="px-2.5 text-[11px] font-semibold tracking-wider text-slate-400 dark:text-slate-500 uppercase">
-              Operations
-            </h4>
-          )}
-          <div className="space-y-0.5">
-            <button
-              onClick={() => {
-                openScenarioModal("custom");
-                onCloseMobile();
-              }}
-              className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 transition-all ${
-                isCollapsed ? "justify-center px-0" : ""
-              }`}
-              title={isCollapsed ? "Custom JSON Ingestion" : undefined}
-            >
-              <FileCode className="h-4 w-4 flex-shrink-0 text-slate-500 dark:text-slate-400" />
-              {!isCollapsed && <span className="flex-1 text-left truncate">Custom JSON Feed</span>}
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Footer / User Profile Card */}

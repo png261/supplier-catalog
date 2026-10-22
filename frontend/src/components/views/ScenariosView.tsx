@@ -5,7 +5,7 @@ import { Badge } from '../ui/badge';
 import { StagedScenarioBar } from '../StagedScenarioBar';
 import { TestScenario } from '../../types';
 import { SCENARIOS } from '../DemoModal';
-import { Play, PlayCircle, SlidersHorizontal, FileCode } from 'lucide-react';
+import { Play, PlayCircle, SlidersHorizontal } from 'lucide-react';
 
 interface ScenariosViewProps {
   stagedScenario: TestScenario;
@@ -51,19 +51,9 @@ export const ScenariosView: React.FC<ScenariosViewProps> = ({
             Click any workload card below to stage it, or run immediately to benchmark SQLite WAL concurrency.
           </p>
         </div>
-
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onOpenScenarioModal('custom')}
-          className="h-8 text-xs font-semibold border-slate-300 dark:border-slate-700"
-        >
-          <FileCode className="h-3.5 w-3.5 mr-1.5 text-indigo-600 dark:text-indigo-400" />
-          Direct JSON Editor
-        </Button>
       </div>
 
-      {/* 6 Scenario Cards Grid */}
+      {/* 5 Scenario Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {SCENARIOS.map((sc) => {
           const isStaged = stagedScenario.key === sc.key;
