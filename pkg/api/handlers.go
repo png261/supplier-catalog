@@ -44,6 +44,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/jobs", h.handleStartJob)
 	mux.HandleFunc("POST /api/jobs/{id}/resume", h.handleResumeJob)
 	mux.HandleFunc("POST /api/jobs/{id}/cancel", h.handleCancelJob)
+	mux.HandleFunc("POST /api/database/reset", h.handleResetDatabase)
 	mux.HandleFunc("GET /api/jobs", h.handleListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", h.handleGetJob)
 	mux.HandleFunc("GET /api/dead-letter", h.handleListDeadLetter)
@@ -90,6 +91,29 @@ func (h *Handler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		"status":  "cancelling",
 		"job_id":  jobID,
 		"message": "cancellation signal sent successfully",
+	})
+}
+
+// handleResetDatabase handles POST /api/database/reset.
+func (h *Handler) handleResetDatabase(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	h.mu.Lock()
+	if h.activeJobID != "" {
+		activeID := h.activeJobID
+		h.mu.Unlock()
+		h.writeError(w, http.StatusConflict, fmt.Sprintf("cannot reset database while job %s is running", activeID), ErrCodeJobConflict)
+		return
+	}
+	h.mu.Unlock()
+
+	if err := h.storage.Reset(ctx); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "failed to reset database: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "success",
+		"message": "database reset to clean state",
 	})
 }
 

@@ -41,6 +41,9 @@ type Storage interface {
 	ListJobs(ctx context.Context, limit, offset int) ([]domain.SyncJob, int, error)
 	ListProducts(ctx context.Context, status string, search string, limit, offset int) ([]domain.Product, int, error)
 	GetBatchCheckpoints(ctx context.Context, jobID string) ([]domain.BatchCheckpoint, error)
+
+	// Maintenance
+	Reset(ctx context.Context) error
 }
 
 // SQLiteStorage implements Storage backed by embedded SQLite in WAL mode.
@@ -720,6 +723,29 @@ func (s *SQLiteStorage) GetBatchCheckpoints(ctx context.Context, jobID string) (
 		return nil, fmt.Errorf("error iterating checkpoint rows: %w", err)
 	}
 	return checkpoints, nil
+}
+
+// Reset atomically deletes all records from products, sync_jobs, batch_checkpoints, and dead_letter_issues.
+func (s *SQLiteStorage) Reset(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction for reset: %w", err)
+	}
+	defer tx.Rollback()
+
+	queries := []string{
+		"DELETE FROM batch_checkpoints;",
+		"DELETE FROM dead_letter_issues;",
+		"DELETE FROM sync_jobs;",
+		"DELETE FROM products;",
+	}
+	for _, q := range queries {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("failed executing %s: %w", q, err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // ParseTime parses RFC3339Nano or RFC3339 formatted UTC timestamps.

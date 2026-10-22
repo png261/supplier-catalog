@@ -346,6 +346,11 @@ body {
   background-color: #dc2626;
 }
 
+#btn-reset-db:hover:not(:disabled) {
+  border-color: var(--color-deadletter);
+  color: var(--color-deadletter);
+}
+
 .advanced-panel {
   margin-top: 1.25rem;
   padding: 1.25rem;

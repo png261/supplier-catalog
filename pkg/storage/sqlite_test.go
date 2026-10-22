@@ -1015,3 +1015,68 @@ func TestStorage_ClosedDB_QueryErrors(t *testing.T) {
 		t.Error("expected error on GetBatchCheckpoints with closed DB")
 	}
 }
+
+func TestStorage_Reset(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.OpenInMemory()
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	// Insert a product
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	err = s.UpsertProductTx(ctx, tx, &domain.Product{
+		SKU:               "RESET-01",
+		Name:              "Reset Product",
+		Price:             50.0,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now,
+		UpdatedAt:         now,
+	})
+	if err != nil {
+		t.Fatalf("UpsertProductTx failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Insert a job
+	err = s.CreateJob(ctx, &domain.SyncJob{
+		JobID:        "job-reset-1",
+		Status:       domain.JobStatusCompleted,
+		TotalBatches: 1,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob failed: %v", err)
+	}
+
+	// Call Reset
+	if err := s.Reset(ctx); err != nil {
+		t.Fatalf("Reset failed: %v", err)
+	}
+
+	// Verify tables are empty
+	prods, total, err := s.ListProducts(ctx, "", "", 10, 0)
+	if err != nil || total != 0 || len(prods) != 0 {
+		t.Fatalf("expected 0 products after reset, got total=%d, len=%d", total, len(prods))
+	}
+
+	jobs, totalJobs, err := s.ListJobs(ctx, 10, 0)
+	if err != nil || totalJobs != 0 || len(jobs) != 0 {
+		t.Fatalf("expected 0 jobs after reset, got total=%d, len=%d", totalJobs, len(jobs))
+	}
+
+	// Closed DB error check
+	sClosed, _ := storage.OpenInMemory()
+	_ = sClosed.Close()
+	if err := sClosed.Reset(ctx); err == nil {
+		t.Error("expected error on Reset with closed DB")
+	}
+}

@@ -56,6 +56,7 @@
     btnToggleAdvanced: document.getElementById('btn-toggle-advanced'),
     advancedToggleLabel: document.getElementById('advanced-toggle-label'),
     advancedSettingsPanel: document.getElementById('advanced-settings-panel'),
+    btnResetDb: document.getElementById('btn-reset-db'),
     btnCancelJob: document.getElementById('btn-cancel-job'),
 
     // Control Form (Advanced)
@@ -765,6 +766,56 @@
         }
       } catch (err) {
         showToast(`Error: ${err.message}`, 'error');
+      }
+    });
+  }
+
+  // --- Reset Entire Database ---
+  if (el.btnResetDb) {
+    el.btnResetDb.addEventListener('click', async () => {
+      if (!confirm('Are you sure you want to reset the entire database? All products, synchronization history, and quarantined defect records will be permanently erased.')) {
+        return;
+      }
+
+      el.btnResetDb.disabled = true;
+      try {
+        const resp = await fetch('/api/database/reset', { method: 'POST' });
+        const body = await resp.json();
+        if (resp.ok) {
+          state.activeJob = null;
+          state.metrics = { added: 0, updated: 0, withdrawn: 0, skipped: 0, deadLetter: 0 };
+          state.lastDeltas = { added: 0, updated: 0, withdrawn: 0, skipped: 0, deadLetter: 0 };
+          state.totalBatches = 0;
+          state.recordsProcessed = 0;
+          stopRuntimeTimer();
+          updateMetricCards();
+
+          if (el.progressBarFill) el.progressBarFill.style.width = '0%';
+          if (el.batchProgressText) el.batchProgressText.textContent = '0 / 0 Batches (0.0%)';
+          if (el.telemetrySpeed) el.telemetrySpeed.textContent = '0 rec/s';
+          if (el.telemetryEta) el.telemetryEta.textContent = '—';
+          if (el.telemetryRuntime) el.telemetryRuntime.textContent = '00:00';
+          if (el.activeJobBadge) {
+            el.activeJobBadge.className = 'badge badge-job status-idle';
+            el.activeJobText.textContent = 'Ready';
+          }
+          if (el.btnStartJob) el.btnStartJob.disabled = false;
+          if (el.btnCancelJob) el.btnCancelJob.classList.add('hidden');
+
+          showToast('Database reset successfully', 'success');
+          updateSmartStatus('Database has been completely reset to a clean state.', 'normal');
+
+          loadCatalog();
+          loadDLQ();
+          loadHistory();
+          loadInterruptedJobs();
+        } else {
+          showToast(body.error || 'Failed to reset database', 'error');
+        }
+      } catch (err) {
+        showToast(`Network error: ${err.message}`, 'error');
+      } finally {
+        el.btnResetDb.disabled = false;
       }
     });
   }

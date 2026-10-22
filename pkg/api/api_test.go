@@ -1060,3 +1060,79 @@ func TestHandler_AdditionalValidationEdges(t *testing.T) {
 		t.Errorf("expected 400 or 404, got %d", recResumeBadJSON.Code)
 	}
 }
+
+func TestHandler_ResetDatabase(t *testing.T) {
+	store, _ := storage.OpenInMemory()
+	defer store.Close()
+	eng := catalogSync.NewEngine(store)
+	broker := NewBroker()
+	handler := NewHandler(store, eng, broker)
+
+	// 1. Success reset when idle
+	req := httptest.NewRequest(http.MethodPost, "/api/database/reset", nil)
+	rec := httptest.NewRecorder()
+	handler.handleResetDatabase(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	// 2. Conflict when job is active
+	handler.mu.Lock()
+	handler.activeJobID = "job-active-test"
+	handler.mu.Unlock()
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/database/reset", nil)
+	rec2 := httptest.NewRecorder()
+	handler.handleResetDatabase(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict when job is active, got %d", rec2.Code)
+	}
+
+	// Cleanup
+	handler.mu.Lock()
+	handler.activeJobID = ""
+	handler.mu.Unlock()
+}
+
+func TestHandler_CancelJob(t *testing.T) {
+	store, _ := storage.OpenInMemory()
+	defer store.Close()
+	eng := catalogSync.NewEngine(store)
+	broker := NewBroker()
+	handler := NewHandler(store, eng, broker)
+
+	// 1. Missing job ID
+	reqEmpty := httptest.NewRequest(http.MethodPost, "/api/jobs//cancel", nil)
+	recEmpty := httptest.NewRecorder()
+	handler.handleCancelJob(recEmpty, reqEmpty)
+	if recEmpty.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty job ID, got %d", recEmpty.Code)
+	}
+
+	// 2. Not running job
+	reqNotFound := httptest.NewRequest(http.MethodPost, "/api/jobs/job-unknown/cancel", nil)
+	reqNotFound.SetPathValue("id", "job-unknown")
+	recNotFound := httptest.NewRecorder()
+	handler.handleCancelJob(recNotFound, reqNotFound)
+	if recNotFound.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown job, got %d", recNotFound.Code)
+	}
+
+	// 3. Active job cancellation
+	calledCancel := false
+	handler.mu.Lock()
+	handler.activeJobID = "job-run-test"
+	handler.activeCancel = func() { calledCancel = true }
+	handler.mu.Unlock()
+
+	reqCancel := httptest.NewRequest(http.MethodPost, "/api/jobs/job-run-test/cancel", nil)
+	reqCancel.SetPathValue("id", "job-run-test")
+	recCancel := httptest.NewRecorder()
+	handler.handleCancelJob(recCancel, reqCancel)
+	if recCancel.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for cancel, got %d", recCancel.Code)
+	}
+	if !calledCancel {
+		t.Fatal("expected cancel callback to be invoked")
+	}
+}
