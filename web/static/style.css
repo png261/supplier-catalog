@@ -967,12 +967,16 @@ input[type="range"] {
 }
 
 /* ==========================================================================
-   Visual Charts & Data Health (Non-Tech Business Friendly)
+   Visual Charts: Catalog Distribution (Non-Tech Business Friendly)
    ========================================================================== */
 .charts-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: 1fr;
   gap: 1.25rem;
+}
+
+.charts-single .chart-card {
+  padding: 1.5rem 2rem;
 }
 
 .chart-card {
@@ -989,7 +993,7 @@ input[type="range"] {
 }
 
 .chart-title {
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 700;
   color: var(--text-primary);
   margin-bottom: 0.2rem;
@@ -1003,16 +1007,16 @@ input[type="range"] {
 .donut-layout {
   display: flex;
   align-items: center;
-  justify-content: space-around;
-  gap: 1.5rem;
+  justify-content: center;
+  gap: 3.5rem;
   flex-wrap: wrap;
-  padding: 0.5rem 0;
+  padding: 1rem 0;
 }
 
 .donut-container {
   position: relative;
-  width: 170px;
-  height: 170px;
+  width: 190px;
+  height: 190px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1049,7 +1053,7 @@ input[type="range"] {
 }
 
 .donut-total {
-  font-size: 1.45rem;
+  font-size: 1.65rem;
   font-weight: 800;
   font-family: var(--font-mono);
   color: var(--text-primary);
@@ -1067,16 +1071,38 @@ input[type="range"] {
 .chart-legend {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.55rem;
   flex: 1;
-  min-width: 200px;
+  max-width: 440px;
+  min-width: 220px;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   color: var(--text-secondary);
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-card-hover);
+  border: 1px solid var(--border-subtle);
+  transition: all var(--transition-fast);
+  cursor: pointer;
+  user-select: none;
+}
+
+.legend-item:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  transform: translateX(2px);
+}
+
+.legend-item:focus-visible {
+  outline: 2px solid var(--border-focus);
+}
+
+.legend-name {
+  margin-right: 0.5rem;
 }
 
 .legend-item strong {
@@ -1098,6 +1124,7 @@ input[type="range"] {
 .dot-updated { background-color: var(--color-updated); }
 .dot-withdrawn { background-color: var(--color-withdrawn); }
 .dot-skipped { background-color: var(--color-skipped); }
+.dot-deadletter { background-color: var(--color-deadletter); }
 .dot-deadletter { background-color: var(--color-deadletter); }
 
 .health-layout {
@@ -1645,9 +1672,6 @@ input[type="range"] {
     padding: 1.25rem;
     gap: 1.25rem;
   }
-  .metrics-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
 }
 
 /* Tablets in Portrait / Phablets */
@@ -1702,13 +1726,6 @@ input[type="range"] {
   .dashboard-container {
     padding: 1rem;
     gap: 1rem;
-  }
-  .metrics-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.75rem;
-  }
-  .card-deadletter {
-    grid-column: span 2;
   }
   .staged-scenario-card {
     padding: 1rem 1.15rem;
@@ -1854,21 +1871,8 @@ input[type="range"] {
     justify-content: center;
     padding: 0.45rem;
   }
-  .metrics-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
-  }
-  .metric-card {
-    padding: 0.75rem 0.85rem;
-  }
-  .metric-label {
-    font-size: 0.7rem;
-  }
-  .metric-value {
-    font-size: 1.35rem;
-  }
-  .metric-sub {
-    font-size: 0.68rem;
+  .charts-single .chart-card {
+    padding: 1rem 0.85rem;
   }
   .chart-card {
     padding: 0.95rem;
@@ -1876,41 +1880,28 @@ input[type="range"] {
   .donut-layout {
     flex-direction: column;
     align-items: center;
-    gap: 1rem;
+    gap: 1.25rem;
   }
   .donut-container {
-    width: 140px;
-    height: 140px;
+    width: 150px;
+    height: 150px;
   }
   .donut-center-text .donut-total {
-    font-size: 1.15rem;
+    font-size: 1.35rem;
   }
   .donut-center-text .donut-total-label {
     font-size: 0.65rem;
   }
   .chart-legend {
     width: 100%;
-    gap: 0.35rem;
+    max-width: 100%;
+    gap: 0.4rem;
   }
   .legend-item {
     width: 100%;
-    font-size: 0.75rem;
-    display: flex;
-    justify-content: space-between;
+    font-size: 0.78rem;
+    padding: 0.35rem 0.65rem;
   }
-  .health-layout {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    gap: 1rem;
-  }
-  .health-details {
-    width: 100%;
-    align-items: center;
-    display: flex;
-    flex-direction: column;
-  }
-  .health-desc {
     text-align: center;
     font-size: 0.78rem;
   }
@@ -1986,12 +1977,6 @@ input[type="range"] {
   .btn-pill {
     flex: 1 1 45%;
     font-size: 0.68rem;
-  }
-  .metrics-grid {
-    grid-template-columns: 1fr;
-  }
-  .card-deadletter {
-    grid-column: span 1;
   }
   .donut-container {
     width: 125px;

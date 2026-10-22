@@ -599,25 +599,24 @@
 
   // --- Metric Cards Animation ---
   function updateMetricCards() {
-    if (!el.metricAdded) return;
-    el.metricAdded.textContent = state.metrics.added.toLocaleString();
-    el.metricUpdated.textContent = state.metrics.updated.toLocaleString();
-    el.metricWithdrawn.textContent = state.metrics.withdrawn.toLocaleString();
-    el.metricSkipped.textContent = state.metrics.skipped.toLocaleString();
-    el.metricDeadLetter.textContent = state.metrics.deadLetter.toLocaleString();
+    if (el.metricAdded) el.metricAdded.textContent = state.metrics.added.toLocaleString();
+    if (el.metricUpdated) el.metricUpdated.textContent = state.metrics.updated.toLocaleString();
+    if (el.metricWithdrawn) el.metricWithdrawn.textContent = state.metrics.withdrawn.toLocaleString();
+    if (el.metricSkipped) el.metricSkipped.textContent = state.metrics.skipped.toLocaleString();
+    if (el.metricDeadLetter) el.metricDeadLetter.textContent = state.metrics.deadLetter.toLocaleString();
 
-    el.deltaAdded.textContent = `+${state.lastDeltas.added || 0}`;
-    el.deltaUpdated.textContent = `+${state.lastDeltas.updated || 0}`;
-    el.deltaWithdrawn.textContent = `+${state.lastDeltas.withdrawn || 0}`;
-    el.deltaSkipped.textContent = `+${state.lastDeltas.skipped || 0}`;
-    el.deltaDeadLetter.textContent = `+${state.lastDeltas.dead_letter || 0}`;
+    if (el.deltaAdded) el.deltaAdded.textContent = `+${state.lastDeltas.added || 0}`;
+    if (el.deltaUpdated) el.deltaUpdated.textContent = `+${state.lastDeltas.updated || 0}`;
+    if (el.deltaWithdrawn) el.deltaWithdrawn.textContent = `+${state.lastDeltas.withdrawn || 0}`;
+    if (el.deltaSkipped) el.deltaSkipped.textContent = `+${state.lastDeltas.skipped || 0}`;
+    if (el.deltaDeadLetter) el.deltaDeadLetter.textContent = `+${state.lastDeltas.dead_letter || 0}`;
 
     if (el.countDlqBadge) {
       el.countDlqBadge.textContent = state.metrics.deadLetter.toLocaleString();
     }
 
     renderDonutChart();
-    updateHealthGauge();
+    if (el.gaugeFill) updateHealthGauge();
   }
 
   // --- Analytics & Filter Engine ---
@@ -1827,16 +1826,16 @@
     }
   }
 
-  // Wire Metric Cards Clicks
-  document.querySelectorAll('.metric-card[data-metric]').forEach((card) => {
-    card.addEventListener('click', () => {
-      const type = card.getAttribute('data-metric');
+  // Wire Metric Drill-Down Clicks (from legend items or cards)
+  document.querySelectorAll('[data-metric]').forEach((elem) => {
+    elem.addEventListener('click', () => {
+      const type = elem.getAttribute('data-metric');
       openMetricModal(type);
     });
-    card.addEventListener('keydown', (e) => {
+    elem.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        const type = card.getAttribute('data-metric');
+        const type = elem.getAttribute('data-metric');
         openMetricModal(type);
       }
     });

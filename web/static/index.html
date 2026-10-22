@@ -150,62 +150,13 @@
       </div>
     </section>
 
-    <!-- Operational Metrics -->
-    <section class="metrics-grid">
-      <!-- Added -->
-      <div class="metric-card card-added" data-metric="added" role="button" tabindex="0" title="Click to inspect new products added">
-        <div class="metric-body">
-          <div class="metric-label">New Products Added</div>
-          <div id="metric-added" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-added">+0</span> in last feed</div>
-        </div>
-      </div>
-
-      <!-- Updated -->
-      <div class="metric-card card-updated" data-metric="updated" role="button" tabindex="0" title="Click to inspect price & info updates">
-        <div class="metric-body">
-          <div class="metric-label">Price & Info Updates</div>
-          <div id="metric-updated" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-updated">+0</span> in last feed</div>
-        </div>
-      </div>
-
-      <!-- Withdrawn -->
-      <div class="metric-card card-withdrawn" data-metric="withdrawn" role="button" tabindex="0" title="Click to inspect discontinued / withdrawn products">
-        <div class="metric-body">
-          <div class="metric-label">Discontinued / Withdrawn</div>
-          <div id="metric-withdrawn" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-withdrawn">+0</span> in last feed</div>
-        </div>
-      </div>
-
-      <!-- Skipped -->
-      <div class="metric-card card-skipped" data-metric="skipped" role="button" tabindex="0" title="Click to inspect duplicates preserved">
-        <div class="metric-body">
-          <div class="metric-label">Duplicates Preserved</div>
-          <div id="metric-skipped" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-skipped">+0</span> redundant items</div>
-        </div>
-      </div>
-
-      <!-- Dead-Lettered -->
-      <div class="metric-card card-deadletter" data-metric="deadletter" role="button" tabindex="0" title="Click to inspect quarantined DLQ items">
-        <div class="metric-body">
-          <div class="metric-label">Needs Attention (DLQ)</div>
-          <div id="metric-deadletter" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-deadletter">+0</span> quarantined defects</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Visual Charts -->
-    <section class="charts-grid">
-      <!-- Chart 1: Donut Chart - Data Distribution -->
+    <!-- Visual Charts: Catalog Distribution Breakdown -->
+    <section class="charts-grid charts-single">
       <div class="card chart-card">
         <div class="chart-header">
           <div>
             <h3 class="chart-title">Catalog Distribution</h3>
-            <p class="chart-subtitle">Breakdown of processed supplier records by lifecycle state.</p>
+            <p class="chart-subtitle">Breakdown of processed supplier records by lifecycle state in the selected period.</p>
           </div>
         </div>
         <div class="chart-body donut-layout">
@@ -219,50 +170,30 @@
             </div>
           </div>
           <div class="chart-legend" id="donut-legend">
-            <div class="legend-item"><span class="legend-dot dot-added"></span> New Products: <strong id="leg-val-added">0 (0.0%)</strong></div>
-            <div class="legend-item"><span class="legend-dot dot-updated"></span> Price Updates: <strong id="leg-val-updated">0 (0.0%)</strong></div>
-            <div class="legend-item"><span class="legend-dot dot-withdrawn"></span> Withdrawn Items: <strong id="leg-val-withdrawn">0 (0.0%)</strong></div>
-            <div class="legend-item"><span class="legend-dot dot-skipped"></span> Duplicates Skipped: <strong id="leg-val-skipped">0 (0.0%)</strong></div>
-            <div class="legend-item"><span class="legend-dot dot-deadletter"></span> Quarantined Defects: <strong id="leg-val-deadletter">0 (0.0%)</strong></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Chart 2: Success Rate & System Health Card -->
-      <div class="card chart-card">
-        <div class="chart-header">
-          <div>
-            <h3 class="chart-title">Data Quality & Compliance</h3>
-            <p class="chart-subtitle">Real-time compliance with mathematical synchronization invariants.</p>
-          </div>
-        </div>
-        <div class="chart-body health-layout">
-          <div class="health-gauge-box">
-            <div class="health-circle">
-              <svg viewBox="0 0 120 120" class="gauge-svg">
-                <circle cx="60" cy="60" r="50" class="gauge-track"></circle>
-                <circle id="gauge-fill" cx="60" cy="60" r="50" class="gauge-value" style="stroke-dashoffset: 314;"></circle>
-              </svg>
-              <div class="gauge-text">
-                <strong id="health-pct-value">100%</strong>
-                <span>Quality Score</span>
-              </div>
+            <div class="legend-item" data-metric="added" role="button" tabindex="0" title="Click to inspect new products added">
+              <span class="legend-dot dot-added"></span>
+              <span class="legend-name">New Products:</span>
+              <strong id="leg-val-added">0 (0.0%)</strong>
             </div>
-          </div>
-          <div class="health-details">
-            <div class="health-status-badge badge-success" id="health-status-badge">
-              <span id="health-status-title">Optimal Integrity (100%)</span>
+            <div class="legend-item" data-metric="updated" role="button" tabindex="0" title="Click to inspect price & info updates">
+              <span class="legend-dot dot-updated"></span>
+              <span class="legend-name">Price Updates:</span>
+              <strong id="leg-val-updated">0 (0.0%)</strong>
             </div>
-            <p class="health-desc" id="health-status-desc">All committed records strictly satisfy mathematical invariants with zero database corruption.</p>
-            <div class="health-stat-row">
-              <div class="mini-stat">
-                <span class="mini-stat-label">Elapsed Time:</span>
-                <strong id="stat-elapsed-time">00:00</strong>
-              </div>
-              <div class="mini-stat">
-                <span class="mini-stat-label">Average Speed:</span>
-                <strong id="stat-avg-speed">0 rec/s</strong>
-              </div>
+            <div class="legend-item" data-metric="withdrawn" role="button" tabindex="0" title="Click to inspect discontinued / withdrawn products">
+              <span class="legend-dot dot-withdrawn"></span>
+              <span class="legend-name">Withdrawn Items:</span>
+              <strong id="leg-val-withdrawn">0 (0.0%)</strong>
+            </div>
+            <div class="legend-item" data-metric="skipped" role="button" tabindex="0" title="Click to inspect duplicates preserved">
+              <span class="legend-dot dot-skipped"></span>
+              <span class="legend-name">Duplicates Skipped:</span>
+              <strong id="leg-val-skipped">0 (0.0%)</strong>
+            </div>
+            <div class="legend-item" data-metric="deadletter" role="button" tabindex="0" title="Click to inspect quarantined DLQ items">
+              <span class="legend-dot dot-deadletter"></span>
+              <span class="legend-name">Quarantined Defects:</span>
+              <strong id="leg-val-deadletter">0 (0.0%)</strong>
             </div>
           </div>
         </div>
