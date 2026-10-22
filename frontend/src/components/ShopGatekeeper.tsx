@@ -28,11 +28,11 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
     e.preventDefault();
     const clean = shopInput.trim().toLowerCase();
     if (!clean) {
-      setError('Vui lòng nhập tên shop hoặc bấm tạo ngẫu nhiên.');
+      setError('Please enter a shop name or click generate random.');
       return;
     }
     if (!/^[a-z0-9_-]{1,64}$/.test(clean)) {
-      setError('Tên shop chỉ chứa chữ cái (a-z), số (0-9), gạch ngang (-) hoặc gạch dưới (_), tối đa 64 ký tự.');
+      setError('Shop name can only contain lowercase letters (a-z), numbers (0-9), hyphens (-), or underscores (_), up to 64 characters.');
       return;
     }
     setError(null);
@@ -55,7 +55,7 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
             Supplier Catalog
           </h1>
           <p className="text-slate-400 text-sm max-w-md mx-auto">
-            Hệ thống Đồng Bộ Danh Mục Nhà Cung Cấp & Multi-Tenant Demo Sandbox
+            Supplier Catalog Synchronization Engine & Multi-Tenant Demo Sandbox
           </p>
         </div>
 
@@ -65,14 +65,14 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
             <div className="flex items-center justify-between">
               <CardTitle className="text-xl font-bold text-white flex items-center gap-2">
                 <Store className="h-5 w-5 text-blue-400" />
-                <span>Chọn hoặc Tạo Shop Demo</span>
+                <span>Select or Create Demo Shop</span>
               </CardTitle>
               <Badge variant="outline" className="text-emerald-400 border-emerald-500/30 bg-emerald-500/10 text-[10px] font-bold">
                 100% ISOLATED
               </Badge>
             </div>
             <CardDescription className="text-slate-400 text-xs">
-              Mỗi người vào sẽ sử dụng 1 Shop (Tenant) riêng để việc thử nghiệm và demo không bị ảnh hưởng lẫn nhau.
+              Each user operates within an isolated shop tenant so testing and demos do not affect one another.
             </CardDescription>
           </CardHeader>
 
@@ -82,10 +82,10 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
               <div className="space-y-0.5">
                 <div className="text-sm font-semibold text-white flex items-center gap-1.5">
                   <Sparkles className="h-4 w-4 text-amber-400" />
-                  <span>Vào demo nhanh</span>
+                  <span>Quick Demo Access</span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  Tự động sinh 1 shop mới sạch sẽ và vào làm việc ngay
+                  Automatically generate a clean new shop tenant and start testing immediately
                 </p>
               </div>
               <Button
@@ -93,7 +93,7 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
                 onClick={handleGenerateRandom}
                 className="bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-md shadow-blue-600/30 shrink-0 gap-1.5"
               >
-                <span>Tạo Shop Tự Động</span>
+                <span>Auto-Create Shop</span>
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </div>
@@ -101,7 +101,7 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
             <div className="relative flex items-center justify-center">
               <div className="border-t border-slate-700/80 w-full" />
               <span className="bg-slate-800 px-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                hoặc nhập tên shop tùy ý
+                or enter custom shop name
               </span>
               <div className="border-t border-slate-700/80 w-full" />
             </div>
@@ -110,7 +110,7 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
             <form onSubmit={handleSubmit} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="shop-name-input" className="text-xs font-medium text-slate-300">
-                  Tên Shop (Tenant ID)
+                  Shop Name (Tenant ID)
                 </Label>
                 <div className="flex gap-2">
                   <Input
@@ -120,7 +120,7 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
                       setShopInput(e.target.value);
                       setError(null);
                     }}
-                    placeholder="VD: zara-store, apple-vietnam, test-01"
+                    placeholder="e.g. zara-store, nike-outlet, test-01"
                     className="bg-slate-900 border-slate-700 text-white placeholder:text-slate-500 font-mono text-sm focus-visible:ring-blue-500"
                   />
                   <Button
@@ -128,7 +128,7 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
                     variant="outline"
                     className="bg-slate-700 hover:bg-slate-600 text-white border-slate-600 shrink-0 font-semibold"
                   >
-                    Vào Shop
+                    Enter Shop
                   </Button>
                 </div>
                 {error && <p className="text-xs text-rose-400 font-medium">{error}</p>}
@@ -140,7 +140,7 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
               <div className="space-y-2 pt-2 border-t border-slate-700/60">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
                   <History className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Shop bạn đã từng truy cập:</span>
+                  <span>Recently visited shops:</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {recentShops.map((s) => (
@@ -164,15 +164,15 @@ export const ShopGatekeeper: React.FC<ShopGatekeeperProps> = ({ onSelectShop }) 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-400">
           <div className="flex items-center gap-2 p-3 rounded-lg border border-slate-800 bg-slate-800/40">
             <Database className="h-4 w-4 text-blue-400 shrink-0" />
-            <span>SQLite WAL riêng biệt cho từng shop</span>
+            <span>Isolated SQLite database per shop</span>
           </div>
           <div className="flex items-center gap-2 p-3 rounded-lg border border-slate-800 bg-slate-800/40">
             <Zap className="h-4 w-4 text-amber-400 shrink-0" />
-            <span>Server-Sent Events streaming độc lập</span>
+            <span>Independent Server-Sent Events stream</span>
           </div>
           <div className="flex items-center gap-2 p-3 rounded-lg border border-slate-800 bg-slate-800/40">
             <Clock className="h-4 w-4 text-emerald-400 shrink-0" />
-            <span>Tự động xóa shop sau 1 giờ idle</span>
+            <span>Ephemeral sandbox automatically pruned after idle</span>
           </div>
         </div>
       </div>

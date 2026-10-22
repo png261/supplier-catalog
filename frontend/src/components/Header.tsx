@@ -67,7 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
                 type="button"
                 onClick={onShareShop}
                 className="ml-1 p-0.5 text-blue-600 hover:text-blue-900 font-medium cursor-pointer"
-                title="Sao chép link demo shop này"
+                title="Copy demo link for this shop"
               >
                 <Copy className="h-3.5 w-3.5" />
               </button>
@@ -75,10 +75,10 @@ export const Header: React.FC<HeaderProps> = ({
                 type="button"
                 onClick={onLogoutShop}
                 className="ml-1.5 px-2 py-0.5 rounded text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors flex items-center gap-1 cursor-pointer"
-                title="Rời khỏi shop này và đổi/tạo shop khác"
+                title="Leave this shop to switch or create another"
               >
                 <LogOut className="h-3 w-3" />
-                <span>Rời Shop</span>
+                <span>Leave Shop</span>
               </button>
             </div>
           )}
@@ -132,7 +132,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onResetDatabase}
             disabled={isResetting || isRunning}
             className="text-slate-700 hover:text-red-700 hover:border-red-200"
-            title="Reset catalog database của shop này"
+            title="Reset catalog database for this shop"
           >
             <RotateCcw className={`h-3.5 w-3.5 ${isResetting ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline ml-1.5">Reset</span>
