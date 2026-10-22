@@ -205,7 +205,7 @@ docker-logs: ## Tail docker compose container logs
 	$(COMPOSE) logs -f
 
 ##@ Cloud Deployment (Cloudflare)
-.PHONY: deploy-cloudflare cf-dev cf-d1-migrate cf-test deploy-fly
+.PHONY: deploy-cloudflare cf-dev cf-d1-migrate cf-test
 deploy-cloudflare: ## Deploy fullstack to Cloudflare (Pages + Worker + D1 Database)
 	@./scripts/deploy_cloudflare.sh
 
@@ -220,11 +220,6 @@ cf-d1-migrate: ## Apply D1 SQLite migrations locally
 cf-test: ## Run Cloudflare Worker unit & integration tests
 	@echo "==> Running Cloudflare Worker test suite..."
 	npm --prefix worker test
-
-deploy-fly: ## [Deprecated] Superseded by Cloudflare deployment
-	@echo "⚠️ Notice: Fly.io deployment has been superseded by Cloudflare (Pages + Worker + D1)."
-	@echo "==> Redirecting to deploy-cloudflare..."
-	@$(MAKE) deploy-cloudflare
 
 ##@ Housekeeping
 .PHONY: clean
