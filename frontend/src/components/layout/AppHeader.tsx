@@ -34,7 +34,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
     catalog: "Live Catalog Explorer",
     attention: "Quarantined DLQ Attention",
     history: "Sync Run History",
-    scenarios: "Supplier Workload Scenarios",
   };
 
   return (
