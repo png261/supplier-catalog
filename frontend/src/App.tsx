@@ -89,8 +89,22 @@ export const AppContent: React.FC = () => {
   // --- Active Job & Execution State ---
   const [activeJob, setActiveJob] = useState<{ job_id: string; status: JobStatus } | null>(null);
   const [interruptedJob, setInterruptedJob] = useState<SyncJob | null>(null);
-  const [currentBatch, setCurrentBatch] = useState<number>(0);
-  const [totalBatches, setTotalBatches] = useState<number>(10);
+  const [currentBatch, setCurrentBatch] = useState<number>(() => {
+    try {
+      const b = localStorage.getItem(`active_sync_batch_${getActiveShopId()}`);
+      return b ? parseInt(b, 10) : 0;
+    } catch {
+      return 0;
+    }
+  });
+  const [totalBatches, setTotalBatches] = useState<number>(() => {
+    try {
+      const t = localStorage.getItem(`active_sync_total_${getActiveShopId()}`);
+      return t ? parseInt(t, 10) : 10;
+    } catch {
+      return 10;
+    }
+  });
   const [throughput, setThroughput] = useState<number>(0);
   const [eta, setEta] = useState<string>('—');
   const [elapsedTime, setElapsedTime] = useState<string>('00:00');
@@ -115,8 +129,14 @@ export const AppContent: React.FC = () => {
       return [];
     }
   });
-  const [activeSyncingUpdateId, setActiveSyncingUpdateId] = useState<string | null>(null);
-  const activeSyncingUpdateIdRef = useRef<string | null>(null);
+  const [activeSyncingUpdateId, setActiveSyncingUpdateId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(`active_sync_update_id_${getActiveShopId()}`);
+    } catch {
+      return null;
+    }
+  });
+  const activeSyncingUpdateIdRef = useRef<string | null>(activeSyncingUpdateId);
 
   // Sync update completion tracker
   const markUpdateCompleted = (updateId: string | null) => {
@@ -131,6 +151,13 @@ export const AppContent: React.FC = () => {
       }
       return next;
     });
+    try {
+      localStorage.removeItem(`active_sync_update_id_${shopId}`);
+      localStorage.removeItem(`active_sync_job_id_${shopId}`);
+      localStorage.removeItem(`active_sync_start_time_${shopId}`);
+      localStorage.removeItem(`active_sync_batch_${shopId}`);
+      localStorage.removeItem(`active_sync_total_${shopId}`);
+    } catch (_) {}
     if (activeSyncingUpdateIdRef.current === updateId) {
       activeSyncingUpdateIdRef.current = null;
       setActiveSyncingUpdateId(null);
@@ -144,11 +171,21 @@ export const AppContent: React.FC = () => {
         const key = `catalog_synced_updates_${shopId}`;
         const saved = localStorage.getItem(key);
         setSyncedUpdateIds(saved ? JSON.parse(saved) : []);
+
+        const savedActive = localStorage.getItem(`active_sync_update_id_${shopId}`);
+        setActiveSyncingUpdateId(savedActive);
+        activeSyncingUpdateIdRef.current = savedActive;
+
+        const savedBatch = localStorage.getItem(`active_sync_batch_${shopId}`);
+        if (savedBatch) setCurrentBatch(parseInt(savedBatch, 10));
+
+        const savedTotal = localStorage.getItem(`active_sync_total_${shopId}`);
+        if (savedTotal) setTotalBatches(parseInt(savedTotal, 10));
       } catch {
         setSyncedUpdateIds([]);
+        setActiveSyncingUpdateId(null);
+        activeSyncingUpdateIdRef.current = null;
       }
-      setActiveSyncingUpdateId(null);
-      activeSyncingUpdateIdRef.current = null;
     }
   }, [shopId]);
 
@@ -315,6 +352,10 @@ export const AppContent: React.FC = () => {
         const total = data.total_batches || totalBatches || 10;
         setCurrentBatch(batchIndex + 1);
         setTotalBatches(total);
+        try {
+          localStorage.setItem(`active_sync_batch_${shopId}`, String(batchIndex + 1));
+          localStorage.setItem(`active_sync_total_${shopId}`, String(total));
+        } catch (_) {}
 
         const cumulative = data.cumulative_summary || data.summary;
         if (cumulative) {
@@ -528,15 +569,17 @@ export const AppContent: React.FC = () => {
   }, [activeJob?.job_id, activeJob?.status, totalBatches]);
 
   // --- Runtime Timer ---
-  const startRuntimeTimer = () => {
+  const startRuntimeTimer = (customStartTime?: number) => {
     if (runtimeTimerRef.current) clearInterval(runtimeTimerRef.current);
-    const start = Date.now();
-    runtimeTimerRef.current = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - start) / 1000);
+    const start = customStartTime || Date.now();
+    const tick = () => {
+      const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
       const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
       const secs = String(elapsed % 60).padStart(2, '0');
       setElapsedTime(`${mins}:${secs}`);
-    }, 1000);
+    };
+    tick();
+    runtimeTimerRef.current = setInterval(tick, 1000);
   };
 
   const stopRuntimeTimer = () => {
@@ -552,6 +595,7 @@ export const AppContent: React.FC = () => {
       loadAllData();
       loadAnalytics();
       loadInterruptedJob();
+      restoreActiveSync();
     }
   }, [shopId]);
 
@@ -625,6 +669,92 @@ export const AppContent: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to fetch interrupted jobs:', err);
+    }
+  };
+
+  const restoreActiveSync = async () => {
+    const savedUpdateId = localStorage.getItem(`active_sync_update_id_${shopId}`);
+    const savedJobId = localStorage.getItem(`active_sync_job_id_${shopId}`);
+    const savedStartTime = localStorage.getItem(`active_sync_start_time_${shopId}`);
+    const savedBatch = localStorage.getItem(`active_sync_batch_${shopId}`);
+    const savedTotal = localStorage.getItem(`active_sync_total_${shopId}`);
+
+    try {
+      let jobToRestore: any = null;
+
+      // 1. Try checking the savedJobId if present
+      if (savedJobId && savedJobId !== 'pending') {
+        try {
+          const res = await fetchJob(savedJobId);
+          if (res?.job) {
+            jobToRestore = res.job;
+          }
+        } catch (_) {}
+      }
+
+      // 2. Query server for any currently running job for this shop
+      if (!jobToRestore || jobToRestore.status !== 'RUNNING') {
+        try {
+          const historyRes = await fetchHistory(5, 0, 'RUNNING');
+          if (historyRes.jobs && historyRes.jobs.length > 0) {
+            jobToRestore = historyRes.jobs[0];
+          }
+        } catch (_) {}
+      }
+
+      // 3. If there is a running job, restore state immediately
+      if (jobToRestore && jobToRestore.status === 'RUNNING') {
+        const jobId = jobToRestore.job_id;
+        const total = jobToRestore.total_batches || (savedTotal ? parseInt(savedTotal, 10) : 10);
+        const batch =
+          typeof jobToRestore.committed_batch_index === 'number' && jobToRestore.committed_batch_index >= 0
+            ? jobToRestore.committed_batch_index + 1
+            : (savedBatch ? parseInt(savedBatch, 10) : 0);
+
+        let updateId = savedUpdateId;
+        if (!updateId) {
+          const pending = DEFAULT_CATALOG_UPDATES.find((u) => !syncedUpdateIds.includes(u.id));
+          updateId = pending ? pending.id : DEFAULT_CATALOG_UPDATES[0].id;
+        }
+
+        setActiveSyncingUpdateId(updateId);
+        activeSyncingUpdateIdRef.current = updateId;
+        try {
+          localStorage.setItem(`active_sync_update_id_${shopId}`, updateId);
+          localStorage.setItem(`active_sync_job_id_${shopId}`, jobId);
+        } catch (_) {}
+
+        setActiveJob({ job_id: jobId, status: 'RUNNING' });
+        setCurrentBatch(batch);
+        setTotalBatches(total);
+
+        if (jobToRestore.summary) {
+          setMetrics({
+            added: jobToRestore.summary.added || 0,
+            updated: jobToRestore.summary.updated || 0,
+            withdrawn: jobToRestore.summary.withdrawn || 0,
+            skipped: jobToRestore.summary.skipped || 0,
+            dead_letter: jobToRestore.summary.dead_letter || 0,
+          });
+        }
+
+        const startTs = savedStartTime
+          ? parseInt(savedStartTime, 10)
+          : (jobToRestore.created_at ? new Date(jobToRestore.created_at).getTime() : Date.now());
+        jobStartTimeRef.current = startTs;
+        startRuntimeTimer(startTs);
+
+        setSmartStatusText(`Sync job ${jobId} running. Streaming batches...`);
+        setSmartStatusType('running');
+        return;
+      }
+
+      // 4. If the saved job has already COMPLETED while reloaded
+      if (jobToRestore && jobToRestore.status === 'COMPLETED' && savedUpdateId) {
+        markUpdateCompleted(savedUpdateId);
+      }
+    } catch (err) {
+      console.error('Failed to restore active sync:', err);
     }
   };
 
@@ -764,17 +894,21 @@ export const AppContent: React.FC = () => {
       invalid_ratio: update.invalidRatio / 100,
     };
 
-    setCurrentBatch(0);
-    setTotalBatches(update.batches || 10);
-    setEta('Estimating...');
-    jobStartTimeRef.current = Date.now();
-    startRuntimeTimer();
+    const now = Date.now();
+    jobStartTimeRef.current = now;
+    startRuntimeTimer(now);
     setSmartStatusText(`Starting sync: ${update.version} (${update.title})...`);
     setSmartStatusType('running');
     setActiveJob({
       job_id: 'pending',
       status: 'RUNNING',
     });
+    try {
+      localStorage.setItem(`active_sync_update_id_${shopId}`, update.id);
+      localStorage.setItem(`active_sync_start_time_${shopId}`, String(now));
+      localStorage.setItem(`active_sync_total_${shopId}`, String(update.batches || 10));
+      localStorage.setItem(`active_sync_batch_${shopId}`, '0');
+    } catch (_) {}
 
     try {
       const res = await startJob(payload);
@@ -782,6 +916,9 @@ export const AppContent: React.FC = () => {
         job_id: res.job_id,
         status: 'RUNNING',
       });
+      try {
+        localStorage.setItem(`active_sync_job_id_${shopId}`, res.job_id);
+      } catch (_) {}
       toast.success(`Sync started: ${update.version} (${res.job_id})`);
 
       try {
@@ -853,23 +990,67 @@ export const AppContent: React.FC = () => {
   const handleResetDb = async () => {
     if (!confirm('Are you sure you want to completely reset the catalog database?')) return;
     setIsResettingDb(true);
+
+    // 1. Immediately abort local timers
+    stopRuntimeTimer();
+
+    // 2. Terminate all active syncing jobs on the server
+    const currentActiveJob = activeJob;
+    const savedJobId = localStorage.getItem(`active_sync_job_id_${shopId}`);
+    const jobsToCancel = new Set<string>();
+
+    if (currentActiveJob?.job_id && currentActiveJob.job_id !== 'pending') {
+      jobsToCancel.add(currentActiveJob.job_id);
+    }
+    if (savedJobId && savedJobId !== 'pending') {
+      jobsToCancel.add(savedJobId);
+    }
+
+    try {
+      const runningJobs = await fetchHistory(5, 0, 'RUNNING');
+      if (runningJobs?.jobs) {
+        for (const rj of runningJobs.jobs) {
+          jobsToCancel.add(rj.job_id);
+        }
+      }
+    } catch (_) {}
+
+    // Send cancellation signal to all running jobs
+    for (const jid of jobsToCancel) {
+      try {
+        await cancelJob(jid);
+      } catch (_) {}
+    }
+
+    // 3. Clear all active sync keys and localStorage
+    try {
+      localStorage.removeItem(`active_sync_update_id_${shopId}`);
+      localStorage.removeItem(`active_sync_job_id_${shopId}`);
+      localStorage.removeItem(`active_sync_start_time_${shopId}`);
+      localStorage.removeItem(`active_sync_batch_${shopId}`);
+      localStorage.removeItem(`active_sync_total_${shopId}`);
+      localStorage.removeItem(`catalog_synced_updates_${shopId}`);
+    } catch (_) {}
+
+    setActiveJob(null);
+    setInterruptedJob(null);
+    setActiveSyncingUpdateId(null);
+    activeSyncingUpdateIdRef.current = null;
+    setSyncedUpdateIds([]);
+    setCurrentBatch(0);
+    setTotalBatches(10);
+    setThroughput(0);
+    setEta('—');
+    setElapsedTime('00:00');
+    setMetrics({ added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 });
+    setDeltas({ added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 });
+
+    // 4. Perform database reset
     try {
       await resetDatabase();
-      toast.success('Database reset to clean initial state');
-      setActiveJob(null);
-      setInterruptedJob(null);
-      setCurrentBatch(0);
-      setMetrics({ added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 });
-      setDeltas({ added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 });
+      toast.success('Database reset and all active sync processes stopped');
       setSmartStatusText('Database has been completely reset to a clean state.');
       setSmartStatusType('normal');
-      // Reset synced updates
-      setSyncedUpdateIds([]);
-      try {
-        localStorage.removeItem(`catalog_synced_updates_${shopId}`);
-      } catch (_) {}
-      setActiveSyncingUpdateId(null);
-      activeSyncingUpdateIdRef.current = null;
       loadAllData();
       loadAnalytics();
     } catch (err: any) {

@@ -580,7 +580,14 @@ app.post('/api/database/reset', async (c) => {
   const storage = new D1Storage(c.env.DB);
 
   if (activeJobs.has(shopId)) {
-    return c.json({ error: 'cannot reset database while a job is running', code: 'JOB_CONFLICT' }, 409);
+    const activeJobId = activeJobs.get(shopId);
+    if (activeJobId) {
+      cancelledJobs.add(activeJobId);
+      try {
+        await storage.updateJobStatus(shopId, activeJobId, 'INTERRUPTED');
+      } catch (_) {}
+    }
+    activeJobs.delete(shopId);
   }
 
   await storage.resetDatabase(shopId);
