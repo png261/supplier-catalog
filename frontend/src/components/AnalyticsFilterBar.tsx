@@ -45,18 +45,13 @@ export const AnalyticsFilterBar: React.FC<AnalyticsFilterBarProps> = ({
     <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3.5 transition-colors">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         {/* Title and Active Period */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center gap-2">
-            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-              Operations & Catalog Analytics
-            </h2>
-            <Badge variant="secondary" className="font-semibold text-xs text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-900/50">
-              {range.toUpperCase()}
-            </Badge>
-          </div>
-          <span className="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">
-            • Metrics and distribution across synchronized supplier feeds
-          </span>
+        <div className="flex items-center gap-2.5">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+            Analytics
+          </h2>
+          <Badge variant="secondary" className="font-semibold text-xs text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-900/50">
+            {range.toUpperCase()}
+          </Badge>
         </div>
 
         {/* Filter Controls Row */}

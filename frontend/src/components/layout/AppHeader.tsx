@@ -29,10 +29,10 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   activeJobId,
 }) => {
   const tabTitles: Record<NavItemKey, string> = {
-    overview: "Dashboard Overview",
-    catalog: "Live Catalog Explorer",
-    attention: "Quarantined DLQ Attention",
-    history: "Sync Run History",
+    overview: "Dashboard",
+    catalog: "Catalog",
+    attention: "Quarantine",
+    history: "History",
   };
 
   return (

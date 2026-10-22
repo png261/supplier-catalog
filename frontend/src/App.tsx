@@ -96,7 +96,7 @@ export const AppContent: React.FC = () => {
   const [eta, setEta] = useState<string>('—');
   const [elapsedTime, setElapsedTime] = useState<string>('00:00');
   const [smartStatusText, setSmartStatusText] = useState<string>(
-    'Catalog is up to date. Use "Simulate Supplier Feed" to ingest new batches.'
+    'Catalog is up to date.'
   );
   const [smartStatusType, setSmartStatusType] = useState<'normal' | 'running' | 'warning' | 'success'>('normal');
 
@@ -712,21 +712,15 @@ export const AppContent: React.FC = () => {
 
         {/* Content Body */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 max-w-[1600px] w-full mx-auto">
-          {/* Top Page Title & Nav Tabs Bar (satnaing/shadcn-admin style) */}
+          {/* Top Page Title Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-200/80 dark:border-slate-800">
             <div>
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-                {activeTab === 'overview' && 'Dashboard Overview'}
-                {activeTab === 'catalog' && 'Live Catalog Management'}
-                {activeTab === 'attention' && 'Quarantined Attention (DLQ)'}
-                {activeTab === 'history' && 'Sync Run Audit Trail'}
+                {activeTab === 'overview' && 'Dashboard'}
+                {activeTab === 'catalog' && 'Catalog'}
+                {activeTab === 'attention' && 'Quarantine'}
+                {activeTab === 'history' && 'History'}
               </h1>
-              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                {activeTab === 'overview' && 'Comprehensive operations metrics, live ingestion telemetry, and SQLite WAL health.'}
-                {activeTab === 'catalog' && 'Search, filter, and inspect product catalog state synchronized from supplier feeds.'}
-                {activeTab === 'attention' && 'Invariant D dead-letter isolation: review and remediate defective supplier records.'}
-                {activeTab === 'history' && 'Immutable audit log of historical sync sessions and batch transaction checkpoints.'}
-              </p>
             </div>
 
             {/* Quick Action for Dashboard Overview */}
@@ -877,7 +871,7 @@ export const AppContent: React.FC = () => {
 
         {/* Footer */}
         <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-4 text-center text-xs text-slate-500 dark:text-slate-400 transition-colors">
-          Coderpush Supplier Catalog Engine • Single-Responsibility Modular Architecture • SQLite WAL Mode
+          Supplier Catalog Engine
         </footer>
       </div>
 

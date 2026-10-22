@@ -53,19 +53,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       {/* View Header & Filter Bar */}
       <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <History className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-              <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-                Sync Run History & Audit Trail
-              </h2>
-              <Badge variant="secondary" className="font-mono text-xs font-bold">
-                {formatNumber(total)} sync sessions
-              </Badge>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Immutable ledger of batch commit checkpoints and operational progress.
-            </p>
+          <div className="flex items-center gap-2.5">
+            <History className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+              History
+            </h2>
+            <Badge variant="secondary" className="font-mono text-xs font-semibold">
+              {formatNumber(total)}
+            </Badge>
           </div>
 
           {/* Status Filter Badges */}
