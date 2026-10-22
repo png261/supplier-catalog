@@ -19,12 +19,12 @@ else
 fi
 
 # 2. Race condition detection and multi-iteration test execution
-echo "🧪 [2/3] Executing multi-iteration race tests (go test -race -count=5 ./...)..."
+echo "🧪 [2/3] Executing multi-iteration race tests with count=5..."
 go test -race -count=5 ./...
 echo "✅ All tests passed with 0 race conditions across 5 iterations."
 
-# 3. Statement coverage verification (>= 90.0%)
-echo "📊 [3/3] Enforcing statement coverage threshold (>= 90.0%)..."
+# 3. Statement coverage verification >= 90.0%
+echo "📊 [3/3] Enforcing statement coverage threshold >= 90.0%..."
 COVERAGE_FILE="coverage.out"
 go test -covermode=atomic -coverprofile="$COVERAGE_FILE" ./...
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
