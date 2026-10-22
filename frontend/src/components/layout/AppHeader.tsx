@@ -4,7 +4,6 @@ import {
   Play,
   RotateCcw,
   Radio,
-  Search,
   ChevronRight,
   Database,
 } from "lucide-react";
@@ -18,7 +17,6 @@ interface AppHeaderProps {
   openScenarioModal: (preselectedScenario?: string) => void;
   onResetDatabase: () => void;
   activeJobId: string | null;
-  onSearchFocus?: () => void;
 }
 
 export const AppHeader: React.FC<AppHeaderProps> = ({
@@ -58,21 +56,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               {tabTitles[activeTab]}
             </span>
           </nav>
-        </div>
-
-        {/* Center / Search bar trigger */}
-        <div className="hidden md:flex items-center flex-1 max-w-md mx-4">
-          <div className="relative w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
-            <input
-              type="text"
-              placeholder="Search catalog by SKU, product name..."
-              className="w-full h-9 pl-9 pr-12 rounded-lg bg-slate-100/80 dark:bg-slate-800/80 border border-transparent dark:border-slate-700/50 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-indigo-500 transition-all"
-            />
-            <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] bg-white dark:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 font-mono">
-              ⌘K
-            </kbd>
-          </div>
         </div>
 
         {/* Right: Actions, Theme Toggle */}
