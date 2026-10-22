@@ -331,134 +331,123 @@
         <button id="btn-close-demo-modal" class="btn btn-sm btn-outline" aria-label="Close modal">Close</button>
       </div>
       <div class="modal-body">
-        <div class="tab-group" role="tablist">
-          <button class="tab-btn active" data-tab="tab-generator" role="tab">Test Scenarios</button>
-          <button class="tab-btn" data-tab="tab-resume" role="tab">Resume Interrupted</button>
-          <button class="tab-btn" data-tab="tab-manual" role="tab">Custom Batch</button>
+        <!-- Interrupted Job Recovery Banner (Shown dynamically if an interrupted job exists) -->
+        <div id="active-interrupted-banner" class="interrupted-banner hidden">
+          <div class="interrupted-banner-info">
+            <strong>Interrupted Job Detected:</strong>
+            <span id="interrupted-banner-text">Job #... halted at batch 5.</span>
+          </div>
+          <button type="button" id="btn-banner-resume" class="btn btn-primary btn-xs">
+            <span>Resume Now</span>
+          </button>
         </div>
 
-        <!-- Sub-Tab 1: Presets -->
-        <div id="tab-generator" class="tab-content active" role="tabpanel">
-          <div class="quick-cards-grid">
-            <div class="preset-card active" data-preset="default">
-              <div class="preset-card-title">Standard Ingestion Profile</div>
-              <div class="preset-card-desc">10 batches (1,000 records). Balanced operational workload with updates, duplicates, and defects.</div>
-            </div>
-            <div class="preset-card" data-preset="clean">
-              <div class="preset-card-title">Clean Ingestion (Zero Defects)</div>
-              <div class="preset-card-desc">10 batches (1,000 records). 100% compliant supplier feed with zero synthetic anomalies.</div>
-            </div>
-            <div class="preset-card" data-preset="stress">
-              <div class="preset-card-title">Fault Tolerance & DLQ Stress</div>
-              <div class="preset-card-desc">15 batches (2,250 records). Injects price defects, empty SKUs, and schema errors to verify quarantine.</div>
-            </div>
-            <div class="preset-card" data-preset="large">
-              <div class="preset-card-title">High-Volume Stress Load</div>
-              <div class="preset-card-desc">50 batches (10,000 records). High-throughput streaming verification for pipeline stability.</div>
-            </div>
+        <!-- 6 Workload Test Scenarios Grid -->
+        <div class="quick-cards-grid">
+          <div class="preset-card active" data-preset="default">
+            <div class="preset-card-title">Standard Ingestion Profile</div>
+            <div class="preset-card-desc">10 batches (1,000 records). Balanced operational workload with updates, duplicates, and defects.</div>
           </div>
-
-          <div class="action-bar modal-action-bar">
-            <button type="button" id="btn-apply-scenario" class="btn btn-primary btn-large">
-              <span>Apply Scenario & Stage Data</span>
-            </button>
-            <button type="button" id="btn-toggle-advanced" class="btn btn-outline">
-              <span id="advanced-toggle-label">Advanced Settings</span>
-            </button>
-            <button type="button" id="btn-start-job" class="btn btn-outline btn-sm" title="Directly start sync without staging">
-              <span class="btn-spinner hidden"></span>
-              <span>Start Immediately</span>
-            </button>
-            <button type="button" id="btn-cancel-job" class="btn btn-danger hidden">
-              <span>Stop Job</span>
-            </button>
+          <div class="preset-card" data-preset="clean">
+            <div class="preset-card-title">Clean Ingestion (Zero Defects)</div>
+            <div class="preset-card-desc">10 batches (1,000 records). 100% compliant supplier feed with zero synthetic anomalies.</div>
           </div>
-
-          <!-- Collapsible Advanced Settings -->
-          <div id="advanced-settings-panel" class="advanced-panel hidden">
-            <h4 class="advanced-title">Generator Parameters</h4>
-            <form id="generator-form" class="form-grid">
-              <div class="form-group">
-                <label for="input-seed">PRNG Seed:</label>
-                <div class="input-inline">
-                  <input type="number" id="input-seed" name="seed" value="42" min="0" required>
-                  <button type="button" id="btn-random-seed" class="btn btn-sm btn-secondary">Randomize</button>
-                </div>
-              </div>
-              <div class="form-group">
-                <label for="input-batches">Total Batches:</label>
-                <input type="number" id="input-batches" name="total_batches" value="10" min="1" max="1000" required>
-              </div>
-              <div class="form-group">
-                <label for="input-batch-size">Records per Batch:</label>
-                <input type="number" id="input-batch-size" name="batch_size" value="100" min="10" max="5000" required>
-              </div>
-              <div class="form-group">
-                <label for="input-update-ratio">Update Ratio: <span id="val-update-ratio">20%</span></label>
-                <input type="range" id="input-update-ratio" min="0" max="100" value="20" step="1">
-              </div>
-              <div class="form-group">
-                <label for="input-dup-ratio">Duplicate Ratio: <span id="val-dup-ratio">5%</span></label>
-                <input type="range" id="input-dup-ratio" min="0" max="100" value="5" step="1">
-              </div>
-              <div class="form-group">
-                <label for="input-ooo-ratio">Out-of-Order Ratio: <span id="val-ooo-ratio">10%</span></label>
-                <input type="range" id="input-ooo-ratio" min="0" max="100" value="10" step="1">
-              </div>
-              <div class="form-group">
-                <label for="input-withdrawn-ratio">Withdrawn Ratio: <span id="val-withdrawn-ratio">5%</span></label>
-                <input type="range" id="input-withdrawn-ratio" min="0" max="100" value="5" step="1">
-              </div>
-              <div class="form-group">
-                <label for="input-invalid-ratio">Schema Error Ratio: <span id="val-invalid-ratio">5%</span></label>
-                <input type="range" id="input-invalid-ratio" min="0" max="100" value="5" step="1">
-              </div>
-
-              <div class="form-footer">
-                <div id="ratio-validator" class="ratio-validator valid">
-                  Total Ratios: <span id="total-ratio-val">45%</span> (Max 100%)
-                </div>
-                <button type="button" id="btn-reset-form" class="btn btn-secondary">Reset to Default</button>
-              </div>
-            </form>
+          <div class="preset-card" data-preset="stress">
+            <div class="preset-card-title">Fault Tolerance & DLQ Stress</div>
+            <div class="preset-card-desc">15 batches (2,250 records). Injects price defects, empty SKUs, and schema errors to verify quarantine.</div>
+          </div>
+          <div class="preset-card" data-preset="large">
+            <div class="preset-card-title">High-Volume Stress Load</div>
+            <div class="preset-card-desc">50 batches (10,000 records). High-throughput streaming verification for pipeline stability.</div>
+          </div>
+          <div class="preset-card" data-preset="interrupted">
+            <div class="preset-card-title">Mid-Feed Crash & Checkpoint Recovery</div>
+            <div class="preset-card-desc">10 batches (1,000 records). Automatically halts at batch 5/10 to test atomic checkpoints & 1-click recovery.</div>
+          </div>
+          <div class="preset-card" data-preset="custom">
+            <div class="preset-card-title">Custom Supplier Batch (Direct JSON)</div>
+            <div class="preset-card-desc">Ad-hoc supplier verification. Paste or edit custom JSON records to ingest directly into the pipeline.</div>
           </div>
         </div>
 
-        <!-- Sub-Tab 2: Resume Interrupted -->
-        <div id="tab-resume" class="tab-content" role="tabpanel">
-          <div class="resume-container">
-            <p class="section-desc">Resume an interrupted synchronization job from the last committed checkpoint without duplicate ingestion.</p>
-            <div class="resume-controls">
-              <div class="form-group resume-select-group">
-                <label for="select-interrupted-job">Select interrupted job:</label>
-                <select id="select-interrupted-job" class="form-select">
-                  <option value="">Searching for interrupted jobs...</option>
-                </select>
-              </div>
-              <button type="button" id="btn-refresh-interrupted" class="btn btn-secondary">Refresh</button>
-              <button type="button" id="btn-resume-job" class="btn btn-primary" disabled>
-                <span class="btn-spinner hidden"></span>
-                <span>Resume Job</span>
-              </button>
-            </div>
-            <div id="resume-job-details" class="job-meta-preview hidden"></div>
-          </div>
-        </div>
-
-        <!-- Sub-Tab 3: Custom JSON Batch -->
-        <div id="tab-manual" class="tab-content" role="tabpanel">
-          <div class="manual-container">
-            <p class="section-desc">Submit a custom JSON array of supplier records directly to the synchronization pipeline.</p>
+        <!-- Collapsible Custom JSON Panel (Shown when 'custom' scenario is selected) -->
+        <div id="custom-batch-panel" class="custom-batch-panel hidden">
+          <div class="custom-batch-header">
+            <h4 class="custom-batch-title">Custom Supplier Records (JSON Array)</h4>
             <div class="textarea-actions">
-              <button type="button" id="btn-load-sample-json" class="btn btn-sm btn-outline">Load Sample</button>
-              <button type="button" id="btn-clear-json" class="btn btn-sm btn-outline">Clear</button>
-            </div>
-            <textarea id="manual-json-input" class="code-editor" placeholder="[&#10;  {&#10;    &quot;sku&quot;: &quot;PROD-101&quot;,&#10;    &quot;name&quot;: &quot;Minimalist Oak Desk&quot;,&#10;    &quot;price&quot;: 149.99,&#10;    &quot;status&quot;: &quot;ACTIVE&quot;,&#10;    &quot;timestamp&quot;: &quot;2026-10-22T10:00:00Z&quot;&#10;  }&#10;]"></textarea>
-            <div class="form-footer">
-              <span id="json-parse-status" class="status-msg"></span>
-              <button type="button" id="btn-submit-manual" class="btn btn-primary">Submit Batch</button>
+              <button type="button" id="btn-load-sample-json" class="btn btn-xs btn-outline">Load Sample</button>
+              <button type="button" id="btn-clear-json" class="btn btn-xs btn-outline">Clear</button>
             </div>
           </div>
+          <textarea id="manual-json-input" class="code-editor" placeholder="[&#10;  {&#10;    &quot;sku&quot;: &quot;PROD-101&quot;,&#10;    &quot;name&quot;: &quot;Minimalist Oak Desk&quot;,&#10;    &quot;price&quot;: 149.99,&#10;    &quot;status&quot;: &quot;ACTIVE&quot;,&#10;    &quot;timestamp&quot;: &quot;2026-10-22T10:00:00Z&quot;&#10;  }&#10;]"></textarea>
+          <div class="custom-batch-footer">
+            <span id="json-parse-status" class="status-msg"></span>
+          </div>
+        </div>
+
+        <div class="action-bar modal-action-bar">
+          <button type="button" id="btn-apply-scenario" class="btn btn-primary btn-large">
+            <span>Apply Scenario & Stage Data</span>
+          </button>
+          <button type="button" id="btn-toggle-advanced" class="btn btn-outline">
+            <span id="advanced-toggle-label">Advanced Settings</span>
+          </button>
+          <button type="button" id="btn-start-job" class="btn btn-outline btn-sm" title="Directly start sync without staging">
+            <span class="btn-spinner hidden"></span>
+            <span>Start Immediately</span>
+          </button>
+          <button type="button" id="btn-cancel-job" class="btn btn-danger hidden">
+            <span>Stop Job</span>
+          </button>
+        </div>
+
+        <!-- Collapsible Advanced Settings -->
+        <div id="advanced-settings-panel" class="advanced-panel hidden">
+          <h4 class="advanced-title">Generator Parameters</h4>
+          <form id="generator-form" class="form-grid">
+            <div class="form-group">
+              <label for="input-seed">PRNG Seed:</label>
+              <div class="input-inline">
+                <input type="number" id="input-seed" name="seed" value="42" min="0" required>
+                <button type="button" id="btn-random-seed" class="btn btn-sm btn-secondary">Randomize</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="input-batches">Total Batches:</label>
+              <input type="number" id="input-batches" name="total_batches" value="10" min="1" max="1000" required>
+            </div>
+            <div class="form-group">
+              <label for="input-batch-size">Records per Batch:</label>
+              <input type="number" id="input-batch-size" name="batch_size" value="100" min="10" max="5000" required>
+            </div>
+            <div class="form-group">
+              <label for="input-update-ratio">Update Ratio: <span id="val-update-ratio">20%</span></label>
+              <input type="range" id="input-update-ratio" min="0" max="100" value="20" step="1">
+            </div>
+            <div class="form-group">
+              <label for="input-dup-ratio">Duplicate Ratio: <span id="val-dup-ratio">5%</span></label>
+              <input type="range" id="input-dup-ratio" min="0" max="100" value="5" step="1">
+            </div>
+            <div class="form-group">
+              <label for="input-ooo-ratio">Out-of-Order Ratio: <span id="val-ooo-ratio">10%</span></label>
+              <input type="range" id="input-ooo-ratio" min="0" max="100" value="10" step="1">
+            </div>
+            <div class="form-group">
+              <label for="input-withdrawn-ratio">Withdrawn Ratio: <span id="val-withdrawn-ratio">5%</span></label>
+              <input type="range" id="input-withdrawn-ratio" min="0" max="100" value="5" step="1">
+            </div>
+            <div class="form-group">
+              <label for="input-invalid-ratio">Schema Error Ratio: <span id="val-invalid-ratio">5%</span></label>
+              <input type="range" id="input-invalid-ratio" min="0" max="100" value="5" step="1">
+            </div>
+
+            <div class="form-footer">
+              <div id="ratio-validator" class="ratio-validator valid">
+                Total Ratios: <span id="total-ratio-val">45%</span> (Max 100%)
+              </div>
+              <button type="button" id="btn-reset-form" class="btn btn-secondary">Reset to Default</button>
+            </div>
+          </form>
         </div>
       </div>
     </div>

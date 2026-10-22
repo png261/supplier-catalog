@@ -64,14 +64,20 @@
 
     // Active Remediation Issue
     currentRemedyIssue: null,
+
+    // Interrupted simulation & recovery
+    autoHaltAtBatch: null,
+    interruptedJobId: null,
   };
 
   // --- Workload Presets ---
   const PRESETS = {
-    default: { seed: 42, batches: 10, size: 100, update: 20, dup: 5, ooo: 10, with: 5, inv: 5, name: 'Standard Profile' },
-    clean:   { seed: 101, batches: 10, size: 100, update: 20, dup: 0, ooo: 0, with: 0, inv: 0, name: 'Clean Ingestion' },
-    stress:  { seed: 999, batches: 15, size: 150, update: 15, dup: 10, ooo: 15, with: 10, inv: 15, name: 'Fault Tolerance' },
-    large:   { seed: 777, batches: 50, size: 200, update: 20, dup: 5, ooo: 10, with: 5, inv: 5, name: 'High Volume' },
+    default:     { seed: 42, batches: 10, size: 100, update: 20, dup: 5, ooo: 10, with: 5, inv: 5, name: 'Standard Ingestion Profile' },
+    clean:       { seed: 101, batches: 10, size: 100, update: 20, dup: 0, ooo: 0, with: 0, inv: 0, name: 'Clean Ingestion (Zero Defects)' },
+    stress:      { seed: 999, batches: 15, size: 150, update: 15, dup: 10, ooo: 15, with: 10, inv: 15, name: 'Fault Tolerance & DLQ Stress' },
+    large:       { seed: 777, batches: 50, size: 200, update: 20, dup: 5, ooo: 10, with: 5, inv: 5, name: 'High-Volume Stress Load' },
+    interrupted: { seed: 555, batches: 10, size: 100, update: 20, dup: 5, ooo: 10, with: 5, inv: 5, name: 'Mid-Feed Crash & Checkpoint Recovery' },
+    custom:      { seed: 1, batches: 1, size: 2, update: 0, dup: 0, ooo: 0, with: 0, inv: 0, name: 'Custom Supplier Batch (Direct JSON)' },
   };
 
   // --- DOM Element References ---
@@ -128,17 +134,16 @@
     totalRatioVal: document.getElementById('total-ratio-val'),
     btnResetForm: document.getElementById('btn-reset-form'),
 
-    // Resume Tab
-    selectInterruptedJob: document.getElementById('select-interrupted-job'),
-    btnRefreshInterrupted: document.getElementById('btn-refresh-interrupted'),
-    btnResumeJob: document.getElementById('btn-resume-job'),
-    resumeJobDetails: document.getElementById('resume-job-details'),
+    // Interrupted Banner in Scenario Modal
+    activeInterruptedBanner: document.getElementById('active-interrupted-banner'),
+    interruptedBannerText: document.getElementById('interrupted-banner-text'),
+    btnBannerResume: document.getElementById('btn-banner-resume'),
 
-    // Manual Tab
+    // Custom Batch Panel in Scenario Modal
+    customBatchPanel: document.getElementById('custom-batch-panel'),
     manualJsonInput: document.getElementById('manual-json-input'),
     btnLoadSampleJson: document.getElementById('btn-load-sample-json'),
     btnClearJson: document.getElementById('btn-clear-json'),
-    btnSubmitManual: document.getElementById('btn-submit-manual'),
     jsonParseStatus: document.getElementById('json-parse-status'),
 
     // Analytics Filter Controls
@@ -272,7 +277,6 @@
       if (targetTabId === 'tab-dlq') loadDLQ();
       if (targetTabId === 'tab-catalog') loadCatalog();
       if (targetTabId === 'tab-history') loadHistory();
-      if (targetTabId === 'tab-resume') loadInterruptedJobs();
     });
   });
 
@@ -445,6 +449,31 @@
     }
   }
 
+  // --- Sample Records for Custom Ingestion ---
+  const SAMPLE_RECORDS = [
+    {
+      sku: 'DESK-OAK-101',
+      name: 'Minimalist Solid Oak Desk',
+      price: 249.99,
+      status: 'ACTIVE',
+      timestamp: new Date().toISOString()
+    },
+    {
+      sku: 'CHAIR-ERGONOMIC-202',
+      name: 'Ergonomic Precision Mesh Chair',
+      price: 189.50,
+      status: 'ACTIVE',
+      timestamp: new Date().toISOString()
+    },
+    {
+      sku: 'LAMP-TASK-303',
+      name: 'Architectural LED Task Lamp',
+      price: 59.00,
+      status: 'ACTIVE',
+      timestamp: new Date().toISOString()
+    }
+  ];
+
   // --- Workload Presets & Scenario Management ---
   const SCENARIO_DETAILS = {
     default: {
@@ -479,6 +508,22 @@
       volume: 10000,
       quality: '5% anomalies (High throughput)',
     },
+    interrupted: {
+      name: 'Mid-Feed Crash & Checkpoint Recovery',
+      desc: 'Simulates an abrupt process termination mid-feed (halts at batch 5/10). Verifies atomic WAL commits and provides 1-click resumption.',
+      batches: 10,
+      size: 100,
+      volume: 1000,
+      quality: 'Crash simulation at batch 5/10',
+    },
+    custom: {
+      name: 'Custom Supplier Batch (Direct JSON)',
+      desc: 'Ad-hoc supplier verification. Paste or edit raw supplier JSON records to ingest directly into the resilient pipeline.',
+      batches: 1,
+      size: 3,
+      volume: 3,
+      quality: 'Direct JSON validation',
+    },
   };
 
   function updateStagedScenarioUI() {
@@ -491,13 +536,25 @@
     if (el.stagedStatQuality) el.stagedStatQuality.textContent = s.quality;
     if (el.stagedStatStatus) {
       el.stagedStatStatus.textContent = s.status;
-      el.stagedStatStatus.className = s.status === 'Ready to Sync' ? 'status-ready' : (s.status.includes('Sync') ? 'status-syncing' : 'status-completed');
+      el.stagedStatStatus.className = s.status === 'Ready to Sync' ? 'status-ready' : (s.status.includes('Sync') ? 'status-syncing' : (s.status === 'Interrupted' ? 'status-interrupted' : 'status-completed'));
     }
   }
 
   function applyPreset(key) {
     const p = PRESETS[key];
     if (!p) return;
+
+    if (el.customBatchPanel) {
+      if (key === 'custom') {
+        el.customBatchPanel.classList.remove('hidden');
+        if (el.manualJsonInput && !el.manualJsonInput.value.trim()) {
+          el.manualJsonInput.value = JSON.stringify(SAMPLE_RECORDS, null, 2);
+        }
+      } else {
+        el.customBatchPanel.classList.add('hidden');
+      }
+    }
+
     if (el.inputSeed) el.inputSeed.value = p.seed;
     if (el.inputBatches) el.inputBatches.value = p.batches;
     if (el.inputBatchSize) el.inputBatchSize.value = p.size;
@@ -517,13 +574,27 @@
       quality: `${p.inv}% anomalies`,
     };
 
+    let vol = detail.volume;
+    let bCount = detail.batches;
+    let bSize = detail.size;
+    if (key === 'custom' && el.manualJsonInput && el.manualJsonInput.value.trim()) {
+      try {
+        const arr = JSON.parse(el.manualJsonInput.value.trim());
+        if (Array.isArray(arr)) {
+          vol = arr.length;
+          bSize = arr.length;
+          bCount = 1;
+        }
+      } catch (e) {}
+    }
+
     state.stagedScenario = {
       key: key,
       name: detail.name,
       desc: detail.desc,
-      batches: detail.batches,
-      size: detail.size,
-      volume: detail.volume,
+      batches: bCount,
+      size: bSize,
+      volume: vol,
       quality: detail.quality,
       status: 'Ready to Sync',
     };
@@ -958,6 +1029,17 @@
     }
 
     updateSmartStatus(`Batch ${batchIndex + 1}/${totalBatches} committed: Added +${delta.added || 0}, Updated ~${delta.updated || 0}, Withdrawn -${delta.withdrawn || 0}, Duplicates skipped ${delta.skipped || 0}.`, 'running');
+
+    // Mid-feed crash simulation check
+    if (state.autoHaltAtBatch && (batchIndex + 1) >= state.autoHaltAtBatch) {
+      const haltBatch = state.autoHaltAtBatch;
+      state.autoHaltAtBatch = null;
+      showToast(`Simulation: Mid-feed interruption triggered at batch ${haltBatch}/${totalBatches}! Checkpoint saved to WAL storage.`, 'warning');
+      const cancelId = data.job_id || (state.activeJob && state.activeJob.job_id);
+      if (cancelId) {
+        fetch(`/api/jobs/${encodeURIComponent(cancelId)}/cancel`, { method: 'POST' }).catch(() => {});
+      }
+    }
   }
 
   function handleDeadLetter(issue) {
@@ -967,6 +1049,9 @@
 
   function handleJobCompleted(data) {
     stopRuntimeTimer();
+    state.activeJob = null;
+    state.autoHaltAtBatch = null;
+    state.interruptedJobId = null;
     state.stagedScenario.status = 'Synchronized';
     updateStagedScenarioUI();
 
@@ -989,6 +1074,7 @@
     showToast('Synchronization completed successfully', 'success');
     loadCatalog();
     loadHistory();
+    checkInterruptedBanner();
     loadInterruptedJobs();
     loadAnalyticsMetrics();
   }
@@ -996,6 +1082,7 @@
   function handleJobInterrupted(data) {
     stopRuntimeTimer();
     state.stagedScenario.status = 'Interrupted';
+    state.interruptedJobId = data.job_id;
     updateStagedScenarioUI();
 
     if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
@@ -1011,14 +1098,87 @@
     if (el.btnCancelJob) el.btnCancelJob.classList.add('hidden');
     if (el.telemetryEta) el.telemetryEta.textContent = 'Paused';
 
-    updateSmartStatus(`Synchronization paused safely at batch ${data.committed_batch_index + 1}. Checkpoint saved.`, 'warning');
+    updateSmartStatus(`Synchronization paused safely at batch ${data.committed_batch_index + 1}. Checkpoint saved. Click "Resume Sync" to continue from batch ${data.committed_batch_index + 2}.`, 'warning');
     showToast('Job paused safely at last committed batch.', 'info');
+    checkInterruptedBanner();
     loadInterruptedJobs();
     loadHistory();
   }
 
+  // --- Check & Display Active Interrupted Banner ---
+  async function checkInterruptedBanner() {
+    try {
+      const resp = await fetch('/api/jobs?status=INTERRUPTED&limit=1');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const jobs = data.jobs || [];
+      if (jobs.length > 0) {
+        const j = jobs[0];
+        state.interruptedJobId = j.job_id;
+        if (el.interruptedBannerText) {
+          el.interruptedBannerText.textContent = `Job #${j.job_id.substring(0, 16)} halted at batch ${j.committed_batch_index + 1}/${j.total_batches}. Checkpoint preserved.`;
+        }
+        if (el.activeInterruptedBanner) el.activeInterruptedBanner.classList.remove('hidden');
+      } else {
+        state.interruptedJobId = null;
+        if (el.activeInterruptedBanner) el.activeInterruptedBanner.classList.add('hidden');
+      }
+    } catch (err) {
+      console.error('Failed to check interrupted jobs', err);
+    }
+  }
+
+  // --- Resume an Interrupted Job ---
+  async function resumeJob(jobID) {
+    if (el.btnStartJob) el.btnStartJob.disabled = true;
+    if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = true;
+    const spinner = el.btnStartJob ? el.btnStartJob.querySelector('.btn-spinner') : null;
+    if (spinner) spinner.classList.remove('hidden');
+    if (el.mainSyncSpinner) el.mainSyncSpinner.classList.remove('hidden');
+    if (el.mainSyncText) el.mainSyncText.textContent = 'Resuming...';
+    if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.remove('hidden');
+
+    state.stagedScenario.status = 'Resuming...';
+    updateStagedScenarioUI();
+
+    try {
+      const resp = await fetch(`/api/jobs/${encodeURIComponent(jobID)}/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const body = await resp.json();
+      if (resp.status === 202 || resp.status === 200) {
+        showToast(`Resumed job ${jobID}`, 'success');
+        state.interruptedJobId = null;
+        if (el.activeInterruptedBanner) el.activeInterruptedBanner.classList.add('hidden');
+        if (el.demoModal) el.demoModal.classList.add('hidden');
+      } else {
+        showToast(body.error || 'Failed to resume job', 'error');
+        if (el.btnStartJob) el.btnStartJob.disabled = false;
+        if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
+        if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
+        if (el.mainSyncText) el.mainSyncText.textContent = 'Resume Sync';
+        if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
+        state.stagedScenario.status = 'Interrupted';
+        updateStagedScenarioUI();
+      }
+    } catch (err) {
+      showToast(`Network error: ${err.message}`, 'error');
+      if (el.btnStartJob) el.btnStartJob.disabled = false;
+      if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
+      if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
+      if (el.mainSyncText) el.mainSyncText.textContent = 'Resume Sync';
+      if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
+      state.stagedScenario.status = 'Interrupted';
+      updateStagedScenarioUI();
+    } finally {
+      if (spinner) spinner.classList.add('hidden');
+    }
+  }
+
   // --- Demo Simulation Modal Open/Close ---
   function openDemoModal() {
+    checkInterruptedBanner();
     if (el.demoModal) el.demoModal.classList.remove('hidden');
   }
 
@@ -1035,7 +1195,26 @@
   }
 
   // --- Start Sync Job ---
+  function resetSyncButtons() {
+    if (el.btnStartJob) el.btnStartJob.disabled = false;
+    if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
+    if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
+    if (el.mainSyncText) el.mainSyncText.textContent = 'Start Sync';
+    if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
+    state.stagedScenario.status = 'Ready to Sync';
+    updateStagedScenarioUI();
+  }
+
   async function triggerStartJob() {
+    // 1. If currently paused/interrupted or button says "Resume Sync"
+    if (state.interruptedJobId || (el.mainSyncText && el.mainSyncText.textContent === 'Resume Sync')) {
+      const resumeId = state.interruptedJobId || (state.activeJob && state.activeJob.job_id);
+      if (resumeId) {
+        await resumeJob(resumeId);
+        return;
+      }
+    }
+
     if (el.btnStartJob) el.btnStartJob.disabled = true;
     if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = true;
     const spinner = el.btnStartJob ? el.btnStartJob.querySelector('.btn-spinner') : null;
@@ -1047,17 +1226,58 @@
     state.stagedScenario.status = 'Syncing...';
     updateStagedScenarioUI();
 
-    const payload = {
-      mode: 'generator',
-      seed: parseInt(el.inputSeed.value || '42', 10),
-      total_batches: parseInt(el.inputBatches.value || '10', 10),
-      batch_size: parseInt(el.inputBatchSize.value || '100', 10),
-      update_ratio: parseFloat(el.inputUpdateRatio.value || '20') / 100.0,
-      duplicate_ratio: parseFloat(el.inputDupRatio.value || '5') / 100.0,
-      out_of_order_ratio: parseFloat(el.inputOooRatio.value || '10') / 100.0,
-      withdrawn_ratio: parseFloat(el.inputWithdrawnRatio.value || '5') / 100.0,
-      invalid_ratio: parseFloat(el.inputInvalidRatio.value || '5') / 100.0,
-    };
+    let payload;
+
+    if (state.stagedScenario.key === 'custom') {
+      const rawText = el.manualJsonInput ? el.manualJsonInput.value.trim() : '';
+      if (!rawText) {
+        showToast('Please provide a valid JSON array of supplier records', 'error');
+        resetSyncButtons();
+        openDemoModal();
+        return;
+      }
+      let records;
+      try {
+        records = JSON.parse(rawText);
+        if (!Array.isArray(records)) {
+          throw new Error('Payload must be a JSON array [] of records');
+        }
+      } catch (err) {
+        if (el.jsonParseStatus) {
+          el.jsonParseStatus.textContent = `Invalid JSON: ${err.message}`;
+          el.jsonParseStatus.style.color = 'var(--color-deadletter)';
+        }
+        showToast(`Invalid JSON: ${err.message}`, 'error');
+        resetSyncButtons();
+        openDemoModal();
+        return;
+      }
+      if (el.jsonParseStatus) el.jsonParseStatus.textContent = '';
+
+      payload = {
+        mode: 'batches',
+        batches: [{ batch_index: 0, records: records }],
+      };
+      state.autoHaltAtBatch = null;
+    } else {
+      if (state.stagedScenario.key === 'interrupted') {
+        state.autoHaltAtBatch = 5; // Halt automatically after batch 5 (50% progress checkpoint)
+      } else {
+        state.autoHaltAtBatch = null;
+      }
+
+      payload = {
+        mode: 'generator',
+        seed: parseInt(el.inputSeed.value || '42', 10),
+        total_batches: parseInt(el.inputBatches.value || '10', 10),
+        batch_size: parseInt(el.inputBatchSize.value || '100', 10),
+        update_ratio: parseFloat(el.inputUpdateRatio.value || '20') / 100.0,
+        duplicate_ratio: parseFloat(el.inputDupRatio.value || '5') / 100.0,
+        out_of_order_ratio: parseFloat(el.inputOooRatio.value || '10') / 100.0,
+        withdrawn_ratio: parseFloat(el.inputWithdrawnRatio.value || '5') / 100.0,
+        invalid_ratio: parseFloat(el.inputInvalidRatio.value || '5') / 100.0,
+      };
+    }
 
     try {
       const resp = await fetch('/api/jobs', {
@@ -1072,32 +1292,14 @@
         if (el.demoModal) el.demoModal.classList.add('hidden');
       } else if (resp.status === 409) {
         showToast(body.error || 'A synchronization job is already running!', 'error');
-        if (el.btnStartJob) el.btnStartJob.disabled = false;
-        if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
-        if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
-        if (el.mainSyncText) el.mainSyncText.textContent = 'Start Sync';
-        if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
-        state.stagedScenario.status = 'Ready to Sync';
-        updateStagedScenarioUI();
+        resetSyncButtons();
       } else {
         showToast(body.error || 'Failed to start synchronization', 'error');
-        if (el.btnStartJob) el.btnStartJob.disabled = false;
-        if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
-        if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
-        if (el.mainSyncText) el.mainSyncText.textContent = 'Start Sync';
-        if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
-        state.stagedScenario.status = 'Ready to Sync';
-        updateStagedScenarioUI();
+        resetSyncButtons();
       }
     } catch (err) {
       showToast(`Network error: ${err.message}`, 'error');
-      if (el.btnStartJob) el.btnStartJob.disabled = false;
-      if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
-      if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
-      if (el.mainSyncText) el.mainSyncText.textContent = 'Start Sync';
-      if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
-      state.stagedScenario.status = 'Ready to Sync';
-      updateStagedScenarioUI();
+      resetSyncButtons();
     } finally {
       if (spinner) spinner.classList.add('hidden');
     }
@@ -1206,168 +1408,92 @@
     });
   }
 
-  // --- Resume Interrupted Job ---
+  // --- Compatibility Helper for Interrupted Jobs Check ---
   async function loadInterruptedJobs() {
-    if (!el.selectInterruptedJob) return;
-    try {
-      const resp = await fetch('/api/jobs?status=INTERRUPTED&limit=50');
-      if (!resp.ok) return;
-      const data = await resp.json();
-      const jobs = data.jobs || [];
-
-      el.selectInterruptedJob.innerHTML = '';
-      if (jobs.length === 0) {
-        el.selectInterruptedJob.innerHTML = '<option value="">No interrupted jobs found (Clean state)</option>';
-        if (el.btnResumeJob) el.btnResumeJob.disabled = true;
-        if (el.resumeJobDetails) el.resumeJobDetails.classList.add('hidden');
-        return;
-      }
-
-      el.selectInterruptedJob.innerHTML = '<option value="">-- Select an interrupted job --</option>';
-      jobs.forEach((j) => {
-        const opt = document.createElement('option');
-        opt.value = j.job_id;
-        opt.textContent = `Job: ${j.job_id.substring(0, 16)}... | Committed: ${j.committed_batch_index + 1}/${j.total_batches} batches | ${new Date(j.created_at).toLocaleTimeString()}`;
-        opt.dataset.job = JSON.stringify(j);
-        el.selectInterruptedJob.appendChild(opt);
-      });
-      if (el.btnResumeJob) el.btnResumeJob.disabled = true;
-    } catch (err) {
-      console.error('Error fetching interrupted jobs', err);
-    }
+    await checkInterruptedBanner();
   }
 
-  if (el.btnRefreshInterrupted) {
-    el.btnRefreshInterrupted.addEventListener('click', loadInterruptedJobs);
-  }
-
-  if (el.selectInterruptedJob) {
-    el.selectInterruptedJob.addEventListener('change', () => {
-      const selectedOpt = el.selectInterruptedJob.selectedOptions[0];
-      if (!selectedOpt || !selectedOpt.value) {
-        if (el.btnResumeJob) el.btnResumeJob.disabled = true;
-        if (el.resumeJobDetails) el.resumeJobDetails.classList.add('hidden');
-        return;
+  // --- Banner Resume Action ---
+  if (el.btnBannerResume) {
+    el.btnBannerResume.addEventListener('click', async () => {
+      if (!state.interruptedJobId) {
+        await checkInterruptedBanner();
       }
-      if (el.btnResumeJob) el.btnResumeJob.disabled = false;
-      const job = JSON.parse(selectedOpt.dataset.job);
-      if (el.resumeJobDetails) {
-        el.resumeJobDetails.innerHTML = `
-          <div class="code-block-wrapper">
-            <strong>Job ID:</strong> ${job.job_id}<br>
-            <strong>Last Checkpoint:</strong> Batch ${job.committed_batch_index + 1} / ${job.total_batches}<br>
-            <strong>Storage Integrity:</strong> All batches committed prior to interruption remain atomic in WAL storage.
-          </div>
-        `;
-        el.resumeJobDetails.classList.remove('hidden');
+      if (state.interruptedJobId) {
+        closeDemoModal();
+        await resumeJob(state.interruptedJobId);
       }
     });
   }
 
-  if (el.btnResumeJob) {
-    el.btnResumeJob.addEventListener('click', async () => {
-      const jobID = el.selectInterruptedJob.value;
-      if (!jobID) return;
-
-      el.btnResumeJob.disabled = true;
-      const spinner = el.btnResumeJob.querySelector('.btn-spinner');
-      if (spinner) spinner.classList.remove('hidden');
-
-      try {
-        const resp = await fetch(`/api/jobs/${encodeURIComponent(jobID)}/resume`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        const body = await resp.json();
-        if (resp.status === 202 || resp.status === 200) {
-          showToast(`Resumed job ${jobID}`, 'success');
-          if (el.demoModal) el.demoModal.classList.add('hidden');
-        } else {
-          showToast(body.error || 'Failed to resume job', 'error');
-          el.btnResumeJob.disabled = false;
-        }
-      } catch (err) {
-        showToast(`Network error: ${err.message}`, 'error');
-        el.btnResumeJob.disabled = false;
-      } finally {
-        if (spinner) spinner.classList.add('hidden');
-      }
-    });
-  }
-
-  // --- Custom JSON Batch Submission ---
+  // --- Custom JSON Batch Controls ---
   if (el.btnLoadSampleJson) {
     el.btnLoadSampleJson.addEventListener('click', () => {
-      const sample = [
-        {
-          sku: 'DESK-OAK-01',
-          name: 'Minimalist Oak Desk',
-          price: 199.99,
-          status: 'ACTIVE',
-          timestamp: new Date().toISOString(),
-        },
-        {
-          sku: 'CHAIR-ERGONOMIC-02',
-          name: 'Ergonomic Precision Chair',
-          price: 249.50,
-          status: 'ACTIVE',
-          timestamp: new Date().toISOString(),
-        },
-      ];
-      el.manualJsonInput.value = JSON.stringify(sample, null, 2);
+      if (el.manualJsonInput) {
+        el.manualJsonInput.value = JSON.stringify(SAMPLE_RECORDS, null, 2);
+      }
+      if (el.jsonParseStatus) {
+        el.jsonParseStatus.textContent = `${SAMPLE_RECORDS.length} valid sample records ready`;
+        el.jsonParseStatus.style.color = 'var(--text-secondary)';
+      }
+      if (state.stagedScenario.key === 'custom') {
+        state.stagedScenario.volume = SAMPLE_RECORDS.length;
+        state.stagedScenario.size = SAMPLE_RECORDS.length;
+        updateStagedScenarioUI();
+      }
     });
   }
 
   if (el.btnClearJson) {
     el.btnClearJson.addEventListener('click', () => {
-      el.manualJsonInput.value = '';
-      if (el.jsonParseStatus) el.jsonParseStatus.textContent = '';
+      if (el.manualJsonInput) {
+        el.manualJsonInput.value = '';
+      }
+      if (el.jsonParseStatus) {
+        el.jsonParseStatus.textContent = '';
+      }
+      if (state.stagedScenario.key === 'custom') {
+        state.stagedScenario.volume = 0;
+        state.stagedScenario.size = 0;
+        updateStagedScenarioUI();
+      }
     });
   }
 
-  if (el.btnSubmitManual) {
-    el.btnSubmitManual.addEventListener('click', async () => {
-      const text = el.manualJsonInput.value.trim();
-      if (!text) {
-        showToast('Please provide a valid JSON array of supplier records', 'error');
+  if (el.manualJsonInput) {
+    el.manualJsonInput.addEventListener('input', () => {
+      const val = el.manualJsonInput.value.trim();
+      if (!val) {
+        if (el.jsonParseStatus) el.jsonParseStatus.textContent = '';
+        if (state.stagedScenario.key === 'custom') {
+          state.stagedScenario.volume = 0;
+          updateStagedScenarioUI();
+        }
         return;
       }
-      let records;
       try {
-        records = JSON.parse(text);
-        if (!Array.isArray(records)) {
-          throw new Error('Payload must be a JSON array [] of records');
+        const parsed = JSON.parse(val);
+        if (Array.isArray(parsed)) {
+          if (el.jsonParseStatus) {
+            el.jsonParseStatus.textContent = `${parsed.length} valid records ready for direct ingestion`;
+            el.jsonParseStatus.style.color = 'var(--text-secondary)';
+          }
+          if (state.stagedScenario.key === 'custom') {
+            state.stagedScenario.volume = parsed.length;
+            state.stagedScenario.size = parsed.length;
+            updateStagedScenarioUI();
+          }
+        } else {
+          if (el.jsonParseStatus) {
+            el.jsonParseStatus.textContent = 'JSON root must be an array [...]';
+            el.jsonParseStatus.style.color = 'var(--color-deadletter)';
+          }
         }
       } catch (err) {
         if (el.jsonParseStatus) {
-          el.jsonParseStatus.textContent = `Invalid JSON: ${err.message}`;
+          el.jsonParseStatus.textContent = `JSON error: ${err.message}`;
           el.jsonParseStatus.style.color = 'var(--color-deadletter)';
         }
-        return;
-      }
-
-      const payload = {
-        mode: 'batches',
-        batches: [{ batch_index: 0, records: records }],
-      };
-
-      try {
-        const resp = await fetch('/api/jobs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const body = await resp.json();
-        if (resp.status === 202 || resp.status === 200) {
-          showToast(`Custom batch submitted: ${body.job_id}`, 'success');
-          if (el.demoModal) el.demoModal.classList.add('hidden');
-          el.manualJsonInput.value = '';
-          if (el.jsonParseStatus) el.jsonParseStatus.textContent = '';
-        } else {
-          showToast(body.error || 'Failed to submit batch', 'error');
-        }
-      } catch (err) {
-        showToast(`Network error: ${err.message}`, 'error');
       }
     });
   }

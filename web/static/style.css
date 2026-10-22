@@ -253,7 +253,7 @@ body {
    ========================================================================== */
 .quick-cards-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
   margin-bottom: 1.25rem;
 }
@@ -294,6 +294,82 @@ body {
   font-size: 0.78rem;
   color: var(--text-secondary);
   line-height: 1.4;
+}
+
+/* Interrupted Job Banner */
+.interrupted-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background-color: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.9rem;
+  margin-bottom: 1.15rem;
+  font-size: 0.85rem;
+  color: #92400e;
+}
+
+.interrupted-banner.hidden {
+  display: none !important;
+}
+
+.interrupted-banner-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.interrupted-banner strong {
+  color: #b45309;
+}
+
+/* Custom Supplier Batch Panel */
+.custom-batch-panel {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.custom-batch-panel.hidden {
+  display: none !important;
+}
+
+.custom-batch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.custom-batch-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.textarea-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.custom-batch-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-xs {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
 }
 
 .action-bar {
@@ -1658,13 +1734,6 @@ input[type="range"] {
    Responsive Breakpoints & Mobile Optimization
    ========================================================================== */
 
-/* Large Desktop / Laptops */
-@media (max-width: 1200px) {
-  .quick-cards-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
 /* Medium Tablets & Small Laptops */
 @media (max-width: 1024px) {
   .dashboard-container {
@@ -1676,6 +1745,9 @@ input[type="range"] {
 
 /* Tablets in Portrait / Phablets */
 @media (max-width: 900px) {
+  .quick-cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
   .charts-grid {
     grid-template-columns: 1fr;
     gap: 1.25rem;
@@ -1901,9 +1973,6 @@ input[type="range"] {
     width: 100%;
     font-size: 0.78rem;
     padding: 0.35rem 0.65rem;
-  }
-    text-align: center;
-    font-size: 0.78rem;
   }
   .health-stat-row {
     width: 100%;
