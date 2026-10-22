@@ -16,10 +16,11 @@ export function formatCurrency(val: number): string {
   }).format(val);
 }
 
-export function formatDateTime(isoStr: string): string {
+export function formatDateTime(isoStr?: string | null): string {
   if (!isoStr) return "—";
   try {
     const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return "—";
     return d.toLocaleString("en-US", {
       month: "short",
       day: "numeric",

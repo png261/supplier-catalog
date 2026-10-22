@@ -23,7 +23,9 @@ export interface CatalogProduct {
   name: string;
   price: number;
   status: 'ACTIVE' | 'WITHDRAWN';
-  last_updated_at: string;
+  supplier_timestamp?: string;
+  updated_at?: string;
+  last_updated_at?: string;
 }
 
 export interface DeadLetterIssue {
