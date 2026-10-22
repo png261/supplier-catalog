@@ -13,7 +13,9 @@ ARG TARGETARCH
 
 WORKDIR /build
 
-# Pre-fetch dependencies (optimized caching layer)
+# Pre-fetch dependencies and install UPX for ultra-compact runtime packaging (<=25MB)
+RUN apk add --no-cache upx
+
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -27,7 +29,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
     -trimpath \
     -ldflags="-s -w" \
     -buildvcs=false \
-    -o /build/bin/server ./cmd/server
+    -o /build/bin/server ./cmd/server && \
+    upx --best --lzma /build/bin/server
 
 # ------------------------------------------------------------------------------
 # Stage 2: Minimal hardened Alpine runtime (<= 25MB uncompressed)
