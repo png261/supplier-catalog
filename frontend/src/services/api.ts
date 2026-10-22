@@ -143,6 +143,12 @@ export async function fetchInterruptedJobs(limit = 1): Promise<{ jobs: SyncJob[]
   return res.json();
 }
 
+export async function fetchJob(jobId: string): Promise<any> {
+  const res = await shopFetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+  if (!res.ok) throw new Error(`Failed to fetch job: ${res.statusText}`);
+  return res.json();
+}
+
 export async function fetchAnalytics(params: {
   range?: string;
   from?: string;
