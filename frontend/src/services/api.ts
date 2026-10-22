@@ -125,9 +125,14 @@ export async function fetchDLQ(
 
 export async function fetchHistory(
   limit = 20,
-  offset = 0
+  offset = 0,
+  status = ''
 ): Promise<{ jobs: SyncJob[]; total: number }> {
-  const res = await shopFetch(`/api/jobs?limit=${limit}&offset=${offset}`);
+  let url = `/api/jobs?limit=${limit}&offset=${offset}`;
+  if (status && status !== 'ALL') {
+    url += `&status=${encodeURIComponent(status)}`;
+  }
+  const res = await shopFetch(url);
   if (!res.ok) throw new Error(`Failed to fetch history: ${res.statusText}`);
   return res.json();
 }
