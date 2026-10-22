@@ -50,7 +50,10 @@
     sseStatus: document.getElementById('sse-status'),
     sseStatusText: document.getElementById('sse-status-text'),
 
-    // Workload Presets & Controls
+    // Demo Simulation Modal & Controls
+    btnOpenDemo: document.getElementById('btn-open-demo'),
+    demoModal: document.getElementById('demo-modal'),
+    btnCloseDemoModal: document.getElementById('btn-close-demo-modal'),
     presetCards: document.querySelectorAll('.preset-card'),
     btnStartJob: document.getElementById('btn-start-job'),
     btnToggleAdvanced: document.getElementById('btn-toggle-advanced'),
@@ -696,6 +699,23 @@
     loadHistory();
   }
 
+  // --- Demo Simulation Modal Open/Close ---
+  function openDemoModal() {
+    if (el.demoModal) el.demoModal.classList.remove('hidden');
+  }
+
+  function closeDemoModal() {
+    if (el.demoModal) el.demoModal.classList.add('hidden');
+  }
+
+  if (el.btnOpenDemo) el.btnOpenDemo.addEventListener('click', openDemoModal);
+  if (el.btnCloseDemoModal) el.btnCloseDemoModal.addEventListener('click', closeDemoModal);
+  if (el.demoModal) {
+    el.demoModal.addEventListener('click', (e) => {
+      if (e.target === el.demoModal) closeDemoModal();
+    });
+  }
+
   // --- Start Sync Job ---
   async function triggerStartJob() {
     if (!el.btnStartJob) return;
@@ -725,6 +745,7 @@
       const body = await resp.json();
       if (resp.status === 202 || resp.status === 200) {
         showToast(`Synchronization started: ${body.job_id}`, 'success');
+        if (el.demoModal) el.demoModal.classList.add('hidden');
       } else if (resp.status === 409) {
         showToast(body.error || 'A synchronization job is already running!', 'error');
         el.btnStartJob.disabled = false;
@@ -895,6 +916,7 @@
         const body = await resp.json();
         if (resp.status === 202 || resp.status === 200) {
           showToast(`Resumed job ${jobID}`, 'success');
+          if (el.demoModal) el.demoModal.classList.add('hidden');
         } else {
           showToast(body.error || 'Failed to resume job', 'error');
           el.btnResumeJob.disabled = false;
@@ -973,6 +995,7 @@
         const body = await resp.json();
         if (resp.status === 202 || resp.status === 200) {
           showToast(`Custom batch submitted: ${body.job_id}`, 'success');
+          if (el.demoModal) el.demoModal.classList.add('hidden');
           el.manualJsonInput.value = '';
           if (el.jsonParseStatus) el.jsonParseStatus.textContent = '';
         } else {
@@ -1101,8 +1124,13 @@
     });
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && el.payloadModal && !el.payloadModal.classList.contains('hidden')) {
-      closePayloadModal();
+    if (e.key === 'Escape') {
+      if (el.payloadModal && !el.payloadModal.classList.contains('hidden')) {
+        closePayloadModal();
+      }
+      if (el.demoModal && !el.demoModal.classList.contains('hidden')) {
+        closeDemoModal();
+      }
     }
   });
 

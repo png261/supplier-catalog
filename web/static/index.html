@@ -3,219 +3,38 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Coderpush Catalog Sync Engine — Resilient Supplier Catalog Synchronization</title>
+  <title>Coderpush Catalog Sync Engine — Staff Operations Portal</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%232563eb%22/><text x=%2250%22 y=%2265%22 font-size=%2250%22 font-family=%22sans-serif%22 font-weight=%22bold%22 text-anchor=%22middle%22 fill=%22white%22>CP</text></svg>">
 </head>
 <body>
-  <!-- Header & Status Bar -->
+  <!-- Top Navigation Bar -->
   <header class="app-header">
     <div class="header-brand">
       <div class="brand-text">
         <h1 class="brand-title">Coderpush Catalog Sync Engine</h1>
-        <span class="brand-subtitle">Resilient Supplier Catalog Synchronization</span>
+        <span class="brand-subtitle">Catalog Operations Portal</span>
       </div>
     </div>
-    <div class="header-status">
+    <div class="header-actions">
+      <button id="btn-open-demo" class="btn btn-primary btn-sm">
+        <span>Simulate Supplier Feed</span>
+      </button>
+      <button id="btn-reset-db" class="btn btn-outline btn-sm" title="Clear all catalog and audit records">
+        <span>Reset Database</span>
+      </button>
       <button id="theme-toggle" class="btn btn-outline btn-sm" aria-label="Toggle theme">
-        <span id="theme-label">Light</span>
+        <span id="theme-label">Light Mode</span>
       </button>
     </div>
   </header>
 
   <main class="dashboard-container">
-    <!-- Section 1: Workload Profile & Controls -->
-    <section class="card control-card">
-      <div class="card-header-simple">
-        <div>
-          <h2 class="section-title">Workload Profile</h2>
-          <p class="section-subtitle">Select an operational preset or configure custom batch ingestion.</p>
-        </div>
-        <div class="tab-group" role="tablist">
-          <button class="tab-btn active" data-tab="tab-generator" role="tab" aria-selected="true">Quick Presets</button>
-          <button class="tab-btn" data-tab="tab-resume" role="tab" aria-selected="false">Resume Interrupted</button>
-          <button class="tab-btn" data-tab="tab-manual" role="tab" aria-selected="false">Custom Batch</button>
-        </div>
-      </div>
-
-      <!-- Tab 1: Workload Presets & Controls -->
-      <div id="tab-generator" class="tab-content active" role="tabpanel">
-        <div class="quick-cards-grid">
-          <div class="preset-card active" data-preset="default">
-            <div class="preset-card-title">Standard Profile</div>
-            <div class="preset-card-desc">10 batches (1,000 records). Balanced workload for standard operations.</div>
-          </div>
-          <div class="preset-card" data-preset="clean">
-            <div class="preset-card-title">Clean Ingestion</div>
-            <div class="preset-card-desc">10 batches, 100% compliant records. Zero synthetic anomalies.</div>
-          </div>
-          <div class="preset-card" data-preset="stress">
-            <div class="preset-card-title">Fault Tolerance</div>
-            <div class="preset-card-desc">15 batches containing price defects and schema errors to verify quarantine.</div>
-          </div>
-          <div class="preset-card" data-preset="large">
-            <div class="preset-card-title">High Volume</div>
-            <div class="preset-card-desc">50 batches (10,000 records). High-throughput streaming verification.</div>
-          </div>
-        </div>
-
-        <div class="action-bar">
-          <button type="button" id="btn-start-job" class="btn btn-primary btn-large">
-            <span class="btn-spinner hidden"></span>
-            <span>Start Synchronization</span>
-          </button>
-          <button type="button" id="btn-toggle-advanced" class="btn btn-outline">
-            <span id="advanced-toggle-label">Advanced Settings</span>
-          </button>
-          <button type="button" id="btn-reset-db" class="btn btn-outline" title="Reset all products, history, and quarantined items">
-            <span>Reset Database</span>
-          </button>
-          <button type="button" id="btn-cancel-job" class="btn btn-danger hidden">
-            <span>Stop Job</span>
-          </button>
-        </div>
-
-        <!-- Collapsible Advanced Settings -->
-        <div id="advanced-settings-panel" class="advanced-panel hidden">
-          <h3 class="advanced-title">Generator Parameters</h3>
-          <form id="generator-form" class="form-grid">
-            <div class="form-group">
-              <label for="input-seed">PRNG Seed:</label>
-              <div class="input-inline">
-                <input type="number" id="input-seed" name="seed" value="42" min="0" required>
-                <button type="button" id="btn-random-seed" class="btn btn-sm btn-secondary">Randomize</button>
-              </div>
-            </div>
-            <div class="form-group">
-              <label for="input-batches">Total Batches:</label>
-              <input type="number" id="input-batches" name="total_batches" value="10" min="1" max="1000" required>
-            </div>
-            <div class="form-group">
-              <label for="input-batch-size">Records per Batch:</label>
-              <input type="number" id="input-batch-size" name="batch_size" value="100" min="10" max="5000" required>
-            </div>
-            <div class="form-group">
-              <label for="input-update-ratio">Update Ratio: <span id="val-update-ratio">20%</span></label>
-              <input type="range" id="input-update-ratio" min="0" max="100" value="20" step="1">
-            </div>
-            <div class="form-group">
-              <label for="input-dup-ratio">Duplicate Ratio: <span id="val-dup-ratio">5%</span></label>
-              <input type="range" id="input-dup-ratio" min="0" max="100" value="5" step="1">
-            </div>
-            <div class="form-group">
-              <label for="input-ooo-ratio">Out-of-Order Ratio: <span id="val-ooo-ratio">10%</span></label>
-              <input type="range" id="input-ooo-ratio" min="0" max="100" value="10" step="1">
-            </div>
-            <div class="form-group">
-              <label for="input-withdrawn-ratio">Withdrawn Ratio: <span id="val-withdrawn-ratio">5%</span></label>
-              <input type="range" id="input-withdrawn-ratio" min="0" max="100" value="5" step="1">
-            </div>
-            <div class="form-group">
-              <label for="input-invalid-ratio">Schema Error Ratio: <span id="val-invalid-ratio">5%</span></label>
-              <input type="range" id="input-invalid-ratio" min="0" max="100" value="5" step="1">
-            </div>
-
-            <div class="form-footer">
-              <div id="ratio-validator" class="ratio-validator valid">
-                Total Ratios: <span id="total-ratio-val">45%</span> (Max 100%)
-              </div>
-              <button type="button" id="btn-reset-form" class="btn btn-secondary">Reset to Default</button>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      <!-- Tab 2: Resume Interrupted -->
-      <div id="tab-resume" class="tab-content" role="tabpanel">
-        <div class="resume-container">
-          <p class="section-desc">Resume an interrupted synchronization job from the last committed checkpoint without duplicate ingestion.</p>
-          <div class="resume-controls">
-            <div class="form-group resume-select-group">
-              <label for="select-interrupted-job">Select interrupted job:</label>
-              <select id="select-interrupted-job" class="form-select">
-                <option value="">Searching for interrupted jobs...</option>
-              </select>
-            </div>
-            <button type="button" id="btn-refresh-interrupted" class="btn btn-secondary">Refresh</button>
-            <button type="button" id="btn-resume-job" class="btn btn-primary" disabled>
-              <span class="btn-spinner hidden"></span>
-              <span>Resume Job</span>
-            </button>
-          </div>
-          <div id="resume-job-details" class="job-meta-preview hidden"></div>
-        </div>
-      </div>
-
-      <!-- Tab 3: Custom JSON Batch -->
-      <div id="tab-manual" class="tab-content" role="tabpanel">
-        <div class="manual-container">
-          <p class="section-desc">Submit a custom JSON array of supplier records directly to the synchronization pipeline.</p>
-          <div class="textarea-actions">
-            <button type="button" id="btn-load-sample-json" class="btn btn-sm btn-outline">Load Sample</button>
-            <button type="button" id="btn-clear-json" class="btn btn-sm btn-outline">Clear</button>
-          </div>
-          <textarea id="manual-json-input" class="code-editor" placeholder="[&#10;  {&#10;    &quot;sku&quot;: &quot;PROD-101&quot;,&#10;    &quot;name&quot;: &quot;Minimalist Oak Desk&quot;,&#10;    &quot;price&quot;: 149.99,&#10;    &quot;status&quot;: &quot;ACTIVE&quot;,&#10;    &quot;timestamp&quot;: &quot;2026-10-22T10:00:00Z&quot;&#10;  }&#10;]"></textarea>
-          <div class="form-footer">
-            <span id="json-parse-status" class="status-msg"></span>
-            <button type="button" id="btn-submit-manual" class="btn btn-primary">Submit Batch</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Section 2: Key Metrics -->
-    <section class="metrics-grid">
-      <!-- Added -->
-      <div class="metric-card card-added">
-        <div class="metric-body">
-          <div class="metric-label">Added</div>
-          <div id="metric-added" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-added">+0</span> in last batch</div>
-        </div>
-      </div>
-
-      <!-- Updated -->
-      <div class="metric-card card-updated">
-        <div class="metric-body">
-          <div class="metric-label">Updated</div>
-          <div id="metric-updated" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-updated">+0</span> in last batch</div>
-        </div>
-      </div>
-
-      <!-- Withdrawn -->
-      <div class="metric-card card-withdrawn">
-        <div class="metric-body">
-          <div class="metric-label">Withdrawn</div>
-          <div id="metric-withdrawn" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-withdrawn">+0</span> in last batch</div>
-        </div>
-      </div>
-
-      <!-- Skipped -->
-      <div class="metric-card card-skipped">
-        <div class="metric-body">
-          <div class="metric-label">Duplicates Skipped</div>
-          <div id="metric-skipped" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-skipped">+0</span> preserved</div>
-        </div>
-      </div>
-
-      <!-- Dead-Lettered -->
-      <div class="metric-card card-deadletter">
-        <div class="metric-body">
-          <div class="metric-label">Quarantined (DLQ)</div>
-          <div id="metric-deadletter" class="metric-value">0</div>
-          <div class="metric-sub"><span id="delta-deadletter">+0</span> isolated defects</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Section 3: Visual Progress Bar & Smart Status Banner -->
+    <!-- Live Feed Ingestion Progress & Status -->
     <section class="card progress-card">
       <div class="progress-header">
         <div class="progress-title">
-          <span>Batch Progress:</span>
+          <span>Feed Ingestion:</span>
           <strong id="batch-progress-text">0 / 0 Batches (0.0%)</strong>
         </div>
         <div class="progress-telemetry">
@@ -229,20 +48,67 @@
         <div id="progress-bar-fill" class="progress-fill" style="width: 0%"></div>
       </div>
 
-      <!-- Smart Status Banner -->
       <div class="smart-status-banner">
         <span class="pulse-indicator"></span>
-        <span id="smart-status-text">System ready. Select a workload preset and click Start Synchronization.</span>
+        <span id="smart-status-text">Catalog is up to date. Use "Simulate Supplier Feed" in the top bar to ingest new batches.</span>
       </div>
     </section>
 
-    <!-- Section 4: Visual Charts -->
+    <!-- Operational Metrics -->
+    <section class="metrics-grid">
+      <!-- Added -->
+      <div class="metric-card card-added">
+        <div class="metric-body">
+          <div class="metric-label">New Products Added</div>
+          <div id="metric-added" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-added">+0</span> in last feed</div>
+        </div>
+      </div>
+
+      <!-- Updated -->
+      <div class="metric-card card-updated">
+        <div class="metric-body">
+          <div class="metric-label">Price & Info Updates</div>
+          <div id="metric-updated" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-updated">+0</span> in last feed</div>
+        </div>
+      </div>
+
+      <!-- Withdrawn -->
+      <div class="metric-card card-withdrawn">
+        <div class="metric-body">
+          <div class="metric-label">Discontinued / Withdrawn</div>
+          <div id="metric-withdrawn" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-withdrawn">+0</span> in last feed</div>
+        </div>
+      </div>
+
+      <!-- Skipped -->
+      <div class="metric-card card-skipped">
+        <div class="metric-body">
+          <div class="metric-label">Duplicates Preserved</div>
+          <div id="metric-skipped" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-skipped">+0</span> redundant items</div>
+        </div>
+      </div>
+
+      <!-- Dead-Lettered -->
+      <div class="metric-card card-deadletter">
+        <div class="metric-body">
+          <div class="metric-label">Needs Attention (DLQ)</div>
+          <div id="metric-deadletter" class="metric-value">0</div>
+          <div class="metric-sub"><span id="delta-deadletter">+0</span> quarantined defects</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Visual Charts -->
     <section class="charts-grid">
       <!-- Chart 1: Donut Chart - Data Distribution -->
       <div class="card chart-card">
         <div class="chart-header">
           <div>
-            <h3 class="chart-title">Data Distribution</h3>
+            <h3 class="chart-title">Catalog Distribution</h3>
             <p class="chart-subtitle">Breakdown of processed supplier records by lifecycle state.</p>
           </div>
         </div>
@@ -270,7 +136,7 @@
       <div class="card chart-card">
         <div class="chart-header">
           <div>
-            <h3 class="chart-title">Data Integrity & System Health</h3>
+            <h3 class="chart-title">Data Quality & Compliance</h3>
             <p class="chart-subtitle">Real-time compliance with mathematical synchronization invariants.</p>
           </div>
         </div>
@@ -283,7 +149,7 @@
               </svg>
               <div class="gauge-text">
                 <strong id="health-pct-value">100%</strong>
-                <span>Success</span>
+                <span>Quality Score</span>
               </div>
             </div>
           </div>
@@ -307,17 +173,17 @@
       </div>
     </section>
 
-    <!-- Section 5: Data Explorers -->
+    <!-- Staff Workspace Data Tables -->
     <section class="card explorer-card">
       <div class="card-header">
         <div class="tab-group" role="tablist">
           <button class="tab-btn active" data-tab="tab-catalog" role="tab">Product Catalog (<span id="count-catalog-badge">0</span>)</button>
-          <button class="tab-btn" data-tab="tab-dlq" role="tab">Quarantined Records (<span id="count-dlq-badge">0</span>)</button>
-          <button class="tab-btn" data-tab="tab-history" role="tab">Sync History</button>
+          <button class="tab-btn" data-tab="tab-dlq" role="tab">Needs Attention / DLQ (<span id="count-dlq-badge">0</span>)</button>
+          <button class="tab-btn" data-tab="tab-history" role="tab">Sync Audit Log</button>
         </div>
       </div>
 
-      <!-- Explorer Tab 1: Catalog Products -->
+      <!-- Tab 1: Product Catalog -->
       <div id="tab-catalog" class="tab-content active" role="tabpanel">
         <div class="table-toolbar">
           <div class="filter-group">
@@ -361,7 +227,7 @@
         </div>
       </div>
 
-      <!-- Explorer Tab 2: Dead Letter Queue -->
+      <!-- Tab 2: Needs Attention / Dead Letter Queue -->
       <div id="tab-dlq" class="tab-content" role="tabpanel">
         <div class="table-toolbar">
           <div class="filter-group">
@@ -383,7 +249,7 @@
               </tr>
             </thead>
             <tbody id="dlq-table-body">
-              <tr><td colspan="6" class="table-empty">Zero quarantined records. All ingestion clean.</td></tr>
+              <tr><td colspan="6" class="table-empty">Zero quarantined records. Ingestion clean.</td></tr>
             </tbody>
           </table>
         </div>
@@ -398,7 +264,7 @@
         </div>
       </div>
 
-      <!-- Explorer Tab 3: Sync History -->
+      <!-- Tab 3: Sync History -->
       <div id="tab-history" class="tab-content" role="tabpanel">
         <div class="table-toolbar">
           <button id="btn-refresh-history" class="btn btn-sm btn-secondary">Refresh</button>
@@ -426,6 +292,147 @@
       </div>
     </section>
   </main>
+
+  <!-- Modal: Demo & Supplier Feed Simulation Setup -->
+  <div id="demo-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card modal-card-large">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">Supplier Feed Simulation & Demo Setup</h3>
+          <p class="modal-subtitle">Configure synthetic supplier feeds to test pipeline resilience and anomaly handling.</p>
+        </div>
+        <button id="btn-close-demo-modal" class="btn btn-sm btn-outline" aria-label="Close modal">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="tab-group" role="tablist">
+          <button class="tab-btn active" data-tab="tab-generator" role="tab">Quick Presets</button>
+          <button class="tab-btn" data-tab="tab-resume" role="tab">Resume Interrupted</button>
+          <button class="tab-btn" data-tab="tab-manual" role="tab">Custom Batch</button>
+        </div>
+
+        <!-- Sub-Tab 1: Presets -->
+        <div id="tab-generator" class="tab-content active" role="tabpanel">
+          <div class="quick-cards-grid">
+            <div class="preset-card active" data-preset="default">
+              <div class="preset-card-title">Standard Profile</div>
+              <div class="preset-card-desc">10 batches (1,000 records). Balanced workload for standard operations.</div>
+            </div>
+            <div class="preset-card" data-preset="clean">
+              <div class="preset-card-title">Clean Ingestion</div>
+              <div class="preset-card-desc">10 batches, 100% compliant records. Zero synthetic anomalies.</div>
+            </div>
+            <div class="preset-card" data-preset="stress">
+              <div class="preset-card-title">Fault Tolerance</div>
+              <div class="preset-card-desc">15 batches containing price defects and schema errors to verify quarantine.</div>
+            </div>
+            <div class="preset-card" data-preset="large">
+              <div class="preset-card-title">High Volume</div>
+              <div class="preset-card-desc">50 batches (10,000 records). High-throughput streaming verification.</div>
+            </div>
+          </div>
+
+          <div class="action-bar modal-action-bar">
+            <button type="button" id="btn-start-job" class="btn btn-primary btn-large">
+              <span class="btn-spinner hidden"></span>
+              <span>Start Synchronization</span>
+            </button>
+            <button type="button" id="btn-toggle-advanced" class="btn btn-outline">
+              <span id="advanced-toggle-label">Advanced Settings</span>
+            </button>
+            <button type="button" id="btn-cancel-job" class="btn btn-danger hidden">
+              <span>Stop Job</span>
+            </button>
+          </div>
+
+          <!-- Collapsible Advanced Settings -->
+          <div id="advanced-settings-panel" class="advanced-panel hidden">
+            <h4 class="advanced-title">Generator Parameters</h4>
+            <form id="generator-form" class="form-grid">
+              <div class="form-group">
+                <label for="input-seed">PRNG Seed:</label>
+                <div class="input-inline">
+                  <input type="number" id="input-seed" name="seed" value="42" min="0" required>
+                  <button type="button" id="btn-random-seed" class="btn btn-sm btn-secondary">Randomize</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="input-batches">Total Batches:</label>
+                <input type="number" id="input-batches" name="total_batches" value="10" min="1" max="1000" required>
+              </div>
+              <div class="form-group">
+                <label for="input-batch-size">Records per Batch:</label>
+                <input type="number" id="input-batch-size" name="batch_size" value="100" min="10" max="5000" required>
+              </div>
+              <div class="form-group">
+                <label for="input-update-ratio">Update Ratio: <span id="val-update-ratio">20%</span></label>
+                <input type="range" id="input-update-ratio" min="0" max="100" value="20" step="1">
+              </div>
+              <div class="form-group">
+                <label for="input-dup-ratio">Duplicate Ratio: <span id="val-dup-ratio">5%</span></label>
+                <input type="range" id="input-dup-ratio" min="0" max="100" value="5" step="1">
+              </div>
+              <div class="form-group">
+                <label for="input-ooo-ratio">Out-of-Order Ratio: <span id="val-ooo-ratio">10%</span></label>
+                <input type="range" id="input-ooo-ratio" min="0" max="100" value="10" step="1">
+              </div>
+              <div class="form-group">
+                <label for="input-withdrawn-ratio">Withdrawn Ratio: <span id="val-withdrawn-ratio">5%</span></label>
+                <input type="range" id="input-withdrawn-ratio" min="0" max="100" value="5" step="1">
+              </div>
+              <div class="form-group">
+                <label for="input-invalid-ratio">Schema Error Ratio: <span id="val-invalid-ratio">5%</span></label>
+                <input type="range" id="input-invalid-ratio" min="0" max="100" value="5" step="1">
+              </div>
+
+              <div class="form-footer">
+                <div id="ratio-validator" class="ratio-validator valid">
+                  Total Ratios: <span id="total-ratio-val">45%</span> (Max 100%)
+                </div>
+                <button type="button" id="btn-reset-form" class="btn btn-secondary">Reset to Default</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Sub-Tab 2: Resume Interrupted -->
+        <div id="tab-resume" class="tab-content" role="tabpanel">
+          <div class="resume-container">
+            <p class="section-desc">Resume an interrupted synchronization job from the last committed checkpoint without duplicate ingestion.</p>
+            <div class="resume-controls">
+              <div class="form-group resume-select-group">
+                <label for="select-interrupted-job">Select interrupted job:</label>
+                <select id="select-interrupted-job" class="form-select">
+                  <option value="">Searching for interrupted jobs...</option>
+                </select>
+              </div>
+              <button type="button" id="btn-refresh-interrupted" class="btn btn-secondary">Refresh</button>
+              <button type="button" id="btn-resume-job" class="btn btn-primary" disabled>
+                <span class="btn-spinner hidden"></span>
+                <span>Resume Job</span>
+              </button>
+            </div>
+            <div id="resume-job-details" class="job-meta-preview hidden"></div>
+          </div>
+        </div>
+
+        <!-- Sub-Tab 3: Custom JSON Batch -->
+        <div id="tab-manual" class="tab-content" role="tabpanel">
+          <div class="manual-container">
+            <p class="section-desc">Submit a custom JSON array of supplier records directly to the synchronization pipeline.</p>
+            <div class="textarea-actions">
+              <button type="button" id="btn-load-sample-json" class="btn btn-sm btn-outline">Load Sample</button>
+              <button type="button" id="btn-clear-json" class="btn btn-sm btn-outline">Clear</button>
+            </div>
+            <textarea id="manual-json-input" class="code-editor" placeholder="[&#10;  {&#10;    &quot;sku&quot;: &quot;PROD-101&quot;,&#10;    &quot;name&quot;: &quot;Minimalist Oak Desk&quot;,&#10;    &quot;price&quot;: 149.99,&#10;    &quot;status&quot;: &quot;ACTIVE&quot;,&#10;    &quot;timestamp&quot;: &quot;2026-10-22T10:00:00Z&quot;&#10;  }&#10;]"></textarea>
+            <div class="form-footer">
+              <span id="json-parse-status" class="status-msg"></span>
+              <button type="button" id="btn-submit-manual" class="btn btn-primary">Submit Batch</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal: Dead-Letter Issue Inspection -->
   <div id="payload-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
