@@ -1,0 +1,21 @@
+name: Verify PR Source Branch
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  verify-pr-source:
+    name: Verify Source Branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR Source Branch
+        run: |
+          echo "Target branch: ${{ github.base_ref }}"
+          echo "Source branch: ${{ github.head_ref }}"
+          if [ "${{ github.head_ref }}" != "dev" ]; then
+            echo "::error::Pull requests targeting 'main' are only allowed from the 'dev' branch. (Current source branch: '${{ github.head_ref }}')"
+            exit 1
+          fi
+          echo "Verified: Pull request is coming from 'dev'."
