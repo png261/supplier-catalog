@@ -12,7 +12,7 @@ import { ShopModal } from './components/ShopModal';
 import { ShopGatekeeper } from './components/ShopGatekeeper';
 import { Button } from './components/ui/button';
 import { Toaster, toast } from 'sonner';
-import { SlidersHorizontal, Play, RefreshCw, RotateCw, Square } from 'lucide-react';
+import { Play, RefreshCw, RotateCw, Square } from 'lucide-react';
 
 import {
   fetchCatalog,
@@ -179,6 +179,7 @@ export const AppContent: React.FC = () => {
   });
   const [historyPage, setHistoryPage] = useState<number>(1);
   const [historyLimit] = useState<number>(10);
+  const [historyStatus, setHistoryStatus] = useState<string>('');
 
   // --- Modal Open States ---
   const [isScenarioModalOpen, setIsScenarioModalOpen] = useState<boolean>(false);
@@ -410,7 +411,7 @@ export const AppContent: React.FC = () => {
     if (shopId) {
       loadHistory();
     }
-  }, [historyPage, shopId]);
+  }, [historyPage, historyStatus, shopId]);
 
   useEffect(() => {
     if (shopId) {
@@ -447,7 +448,7 @@ export const AppContent: React.FC = () => {
   const loadHistory = async () => {
     try {
       const offset = (historyPage - 1) * historyLimit;
-      const res = await fetchHistory(historyLimit, offset);
+      const res = await fetchHistory(historyLimit, offset, historyStatus);
       setHistory({ jobs: res.jobs || [], total: res.total || 0 });
     } catch (err) {
       console.error('Failed to load history:', err);
@@ -728,58 +729,50 @@ export const AppContent: React.FC = () => {
               </p>
             </div>
 
-            {/* Quick Scenario & Start Sync Launch Buttons */}
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsScenarioModalOpen(true)}
-                className="h-8 text-xs font-semibold border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5 mr-1.5 text-slate-500 dark:text-slate-400" />
-                Select Scenario
-              </Button>
-
-              {isSyncing ? (
-                <div className="flex items-center gap-1.5">
+            {/* Quick Action for Dashboard Overview */}
+            {activeTab === 'overview' && (
+              <div className="flex items-center gap-2">
+                {isSyncing ? (
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      disabled
+                      className="h-8 text-xs font-semibold bg-blue-600 text-white opacity-90 cursor-not-allowed"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      Syncing...
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCancelSync}
+                      className="h-8 text-xs font-semibold border-rose-300 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900/60 dark:text-rose-400"
+                    >
+                      <Square className="h-3 w-3 mr-1 fill-current" />
+                      Halt
+                    </Button>
+                  </div>
+                ) : isInterrupted ? (
                   <Button
                     size="sm"
-                    disabled
-                    className="h-8 text-xs font-semibold bg-blue-600 text-white opacity-90 cursor-not-allowed"
+                    onClick={handleStartSync}
+                    className="h-8 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
                   >
-                    <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                    Syncing...
+                    <RotateCw className="h-3.5 w-3.5 mr-1.5" />
+                    Resume Sync
                   </Button>
+                ) : (
                   <Button
-                    variant="outline"
                     size="sm"
-                    onClick={handleCancelSync}
-                    className="h-8 text-xs font-semibold border-rose-300 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900/60 dark:text-rose-400"
+                    onClick={handleStartSync}
+                    className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
                   >
-                    <Square className="h-3 w-3 mr-1 fill-current" />
-                    Halt
+                    <Play className="h-3.5 w-3.5 mr-1.5 fill-current" />
+                    Start Sync
                   </Button>
-                </div>
-              ) : isInterrupted ? (
-                <Button
-                  size="sm"
-                  onClick={handleStartSync}
-                  className="h-8 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
-                >
-                  <RotateCw className="h-3.5 w-3.5 mr-1.5" />
-                  Resume Sync
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  onClick={handleStartSync}
-                  className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
-                >
-                  <Play className="h-3.5 w-3.5 mr-1.5 fill-current" />
-                  Start Sync
-                </Button>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Dedicated Page View Content (Navigated via Sidebar) */}
@@ -869,7 +862,14 @@ export const AppContent: React.FC = () => {
                 total={history.total}
                 page={historyPage}
                 limit={historyLimit}
+                status={historyStatus}
+                onStatusChange={(st) => {
+                  setHistoryStatus(st);
+                  setHistoryPage(1);
+                }}
                 onPageChange={setHistoryPage}
+                onResumeJob={handleResumeInterrupted}
+                isSyncing={isSyncing}
               />
             )}
           </div>

@@ -8,7 +8,11 @@
 *.dylib
 *.test
 bin/
+# Cloudflare Wrangler local state
+.wrangler/
 dist/
+worker/dist/
+frontend/dist/
 
 # Test coverage profiles and reports
 *.out

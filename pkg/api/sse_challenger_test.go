@@ -940,10 +940,18 @@ func TestAdversarial_ResumedJob_MetricFidelity(t *testing.T) {
 	// Allow first few batches to commit then cancel
 	time.Sleep(15 * time.Millisecond)
 	handler.CancelActiveJob()
-	time.Sleep(200 * time.Millisecond)
 
-	interruptedJob, err := store.GetJob(context.Background(), jobID)
-	if err != nil {
+	var interruptedJob *domain.SyncJob
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		interruptedJob, err = store.GetJob(context.Background(), jobID)
+		if err == nil && interruptedJob != nil && interruptedJob.Status == domain.JobStatusInterrupted {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if err != nil || interruptedJob == nil {
 		t.Fatalf("failed to get interrupted job: %v", err)
 	}
 	t.Logf("Interrupted job: committed_batch_index=%d, status=%s, summary=%+v",
@@ -967,7 +975,7 @@ func TestAdversarial_ResumedJob_MetricFidelity(t *testing.T) {
 
 	// Wait for resume to complete all 50 batches
 	var finalJob *domain.SyncJob
-	deadline := time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		finalJob, err = store.GetJob(context.Background(), jobID)
 		if err == nil && finalJob.Status == domain.JobStatusCompleted {
