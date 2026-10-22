@@ -12,9 +12,7 @@ import { RemediationModal } from './components/RemediationModal';
 import { MetricDrilldownModal } from './components/MetricDrilldownModal';
 import { ShopModal } from './components/ShopModal';
 import { ShopGatekeeper } from './components/ShopGatekeeper';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/tabs';
 import { Button } from './components/ui/button';
-import { Badge } from './components/ui/badge';
 import { Toaster, toast } from 'sonner';
 import { SlidersHorizontal } from 'lucide-react';
 
@@ -49,9 +47,41 @@ export const AppContent: React.FC = () => {
   const [isShopModalOpen, setIsShopModalOpen] = useState<boolean>(false);
 
   // --- Sidebar & Layout Navigation ---
-  const [activeTab, setActiveTab] = useState<NavItemKey>('overview');
+  const [activeTab, setActiveTab] = useState<NavItemKey>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get('page');
+    if (p && ['overview', 'catalog', 'attention', 'history', 'scenarios'].includes(p)) {
+      return p as NavItemKey;
+    }
+    return 'overview';
+  });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+
+  const navigateToTab = (tab: NavItemKey) => {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    if (tab === 'overview') {
+      url.searchParams.delete('page');
+    } else {
+      url.searchParams.set('page', tab);
+    }
+    window.history.pushState({ page: tab }, '', url.toString());
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const p = params.get('page');
+      if (p && ['overview', 'catalog', 'attention', 'history', 'scenarios'].includes(p)) {
+        setActiveTab(p as NavItemKey);
+      } else {
+        setActiveTab('overview');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // --- Server Sent Events & Connection State ---
   const [sseConnected, setSseConnected] = useState<boolean>(false);
@@ -618,7 +648,7 @@ export const AppContent: React.FC = () => {
       {/* App Sidebar (shadcn-admin architecture) */}
       <AppSidebar
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={navigateToTab}
         openScenarioModal={(pre) => {
           setIsScenarioModalOpen(true);
         }}
@@ -646,8 +676,6 @@ export const AppContent: React.FC = () => {
           openScenarioModal={() => setIsScenarioModalOpen(true)}
           onResetDatabase={handleResetDb}
           activeJobId={activeJob ? activeJob.job_id : null}
-          sseConnected={sseConnected}
-          sseEventCount={sseEventCount}
         />
 
         {/* Content Body */}
@@ -685,39 +713,10 @@ export const AppContent: React.FC = () => {
             </div>
           </div>
 
-          {/* Top-level Tabs Bar (Matching satnaing/shadcn-admin) */}
-          <Tabs
-            value={activeTab}
-            onValueChange={(val) => setActiveTab(val as NavItemKey)}
-            className="w-full space-y-6"
-          >
-            <div className="overflow-x-auto pb-1">
-              <TabsList className="bg-slate-200/60 dark:bg-slate-800/80 p-1 rounded-lg">
-                <TabsTrigger value="overview" className="text-xs font-semibold px-3.5 py-1.5">
-                  Overview
-                </TabsTrigger>
-                <TabsTrigger value="catalog" className="text-xs font-semibold px-3.5 py-1.5">
-                  Live Catalog ({catalog.total})
-                </TabsTrigger>
-                <TabsTrigger value="attention" className="text-xs font-semibold px-3.5 py-1.5">
-                  Attention (DLQ)
-                  {dlq.total > 0 && (
-                    <Badge variant="destructive" className="ml-1.5 text-[10px] px-1.5 py-0 h-4">
-                      {dlq.total}
-                    </Badge>
-                  )}
-                </TabsTrigger>
-                <TabsTrigger value="history" className="text-xs font-semibold px-3.5 py-1.5">
-                  Sync History ({history.total})
-                </TabsTrigger>
-                <TabsTrigger value="scenarios" className="text-xs font-semibold px-3.5 py-1.5">
-                  Scenarios (5)
-                </TabsTrigger>
-              </TabsList>
-            </div>
-
-            {/* 1. DEDICATED OVERVIEW DASHBOARD VIEW (NO duplicate tables) */}
-            <TabsContent value="overview" className="space-y-6 m-0 focus-visible:outline-none">
+          {/* Dedicated Page View Content (Navigated via Sidebar) */}
+          <div className="w-full space-y-6">
+            {/* 1. DEDICATED OVERVIEW DASHBOARD VIEW */}
+            {activeTab === 'overview' && (
               <OverviewView
                 currentBatch={currentBatch}
                 totalBatches={totalBatches}
@@ -743,12 +742,12 @@ export const AppContent: React.FC = () => {
                 onJobSelect={setSelectedJobId}
                 onRefreshAnalytics={loadAnalytics}
                 onMetricCardClick={(cat) => setDrilldownCategory(cat)}
-                onNavigateToTab={(tab) => setActiveTab(tab as NavItemKey)}
+                onNavigateToTab={(tab) => navigateToTab(tab as NavItemKey)}
               />
-            </TabsContent>
+            )}
 
             {/* 2. DEDICATED LIVE CATALOG VIEW */}
-            <TabsContent value="catalog" className="space-y-6 m-0 focus-visible:outline-none">
+            {activeTab === 'catalog' && (
               <CatalogView
                 products={catalog.products}
                 total={catalog.total}
@@ -771,10 +770,10 @@ export const AppContent: React.FC = () => {
                   setCatalogPage(1);
                 }}
               />
-            </TabsContent>
+            )}
 
             {/* 3. DEDICATED ATTENTION / DLQ REMEDIATION VIEW */}
-            <TabsContent value="attention" className="space-y-6 m-0 focus-visible:outline-none">
+            {activeTab === 'attention' && (
               <AttentionView
                 issues={dlq.issues}
                 total={dlq.total}
@@ -788,10 +787,10 @@ export const AppContent: React.FC = () => {
                 onPageChange={setDlqPage}
                 onRemediateClick={(iss) => setActiveRemediationIssue(iss)}
               />
-            </TabsContent>
+            )}
 
             {/* 4. DEDICATED SYNC RUN AUDIT HISTORY VIEW */}
-            <TabsContent value="history" className="space-y-6 m-0 focus-visible:outline-none">
+            {activeTab === 'history' && (
               <HistoryView
                 jobs={history.jobs}
                 total={history.total}
@@ -799,10 +798,10 @@ export const AppContent: React.FC = () => {
                 limit={historyLimit}
                 onPageChange={setHistoryPage}
               />
-            </TabsContent>
+            )}
 
             {/* 5. DEDICATED SUPPLIER WORKLOAD SCENARIOS VIEW */}
-            <TabsContent value="scenarios" className="space-y-6 m-0 focus-visible:outline-none">
+            {activeTab === 'scenarios' && (
               <ScenariosView
                 stagedScenario={stagedScenario}
                 isSyncing={isSyncing}
@@ -813,8 +812,8 @@ export const AppContent: React.FC = () => {
                 onStartImmediately={handleStartImmediately}
                 onOpenScenarioModal={(key) => setIsScenarioModalOpen(true)}
               />
-            </TabsContent>
-          </Tabs>
+            )}
+          </div>
         </main>
 
         {/* Footer */}

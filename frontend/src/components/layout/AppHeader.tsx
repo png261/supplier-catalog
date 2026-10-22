@@ -19,8 +19,6 @@ interface AppHeaderProps {
   openScenarioModal: (preselectedScenario?: string) => void;
   onResetDatabase: () => void;
   activeJobId: string | null;
-  sseConnected: boolean;
-  sseEventCount: number;
   onSearchFocus?: () => void;
 }
 
@@ -30,8 +28,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   openScenarioModal,
   onResetDatabase,
   activeJobId,
-  sseConnected,
-  sseEventCount,
 }) => {
   const tabTitles: Record<NavItemKey, string> = {
     overview: "Dashboard Overview",
@@ -81,31 +77,8 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           </div>
         </div>
 
-        {/* Right: Actions, SSE Pill, Theme Toggle */}
+        {/* Right: Actions, Theme Toggle */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* SSE Telemetry Pill */}
-          <div
-            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
-              sseConnected
-                ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60"
-                : "bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800/60"
-            }`}
-            title={
-              sseConnected
-                ? `Live telemetry active (${sseEventCount} events received)`
-                : "Disconnected from engine SSE stream"
-            }
-          >
-            <span
-              className={`h-2 w-2 rounded-full ${
-                sseConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"
-              }`}
-            />
-            <span className="font-mono text-[11px]">
-              {sseConnected ? "SSE Connected" : "SSE Reconnecting"}
-            </span>
-          </div>
-
           {/* Active Job badge */}
           {activeJobId && (
             <Badge
