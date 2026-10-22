@@ -17,6 +17,10 @@ interface OverviewViewProps {
   elapsedTime: string;
   smartStatusText: string;
   smartStatusType: 'normal' | 'running' | 'warning' | 'success';
+  isSyncing?: boolean;
+  isInterrupted?: boolean;
+  onStartSync?: () => void;
+  onCancelSync?: () => void;
   analyticsRange: string;
   analyticsFrom: string;
   analyticsTo: string;
@@ -53,6 +57,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   elapsedTime,
   smartStatusText,
   smartStatusType,
+  isSyncing,
+  isInterrupted,
+  onStartSync,
+  onCancelSync,
   analyticsRange,
   analyticsFrom,
   analyticsTo,
@@ -79,6 +87,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         elapsedTime={elapsedTime}
         smartStatusText={smartStatusText}
         smartStatusType={smartStatusType}
+        isSyncing={isSyncing}
+        isInterrupted={isInterrupted}
+        onStartSync={onStartSync}
+        onCancelSync={onCancelSync}
       />
 
       {/* Operations Analytics Filter Bar */}

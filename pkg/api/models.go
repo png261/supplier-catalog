@@ -107,3 +107,32 @@ type MetricsResponse struct {
 	Metrics  domain.AggregatedMetrics `json:"metrics"`
 	SyncJobs []domain.SyncJob         `json:"sync_jobs"`
 }
+
+// ResolveDeadLetterRequest defines the payload for correcting a quarantined dead-letter product.
+type ResolveDeadLetterRequest struct {
+	SKU       string  `json:"sku" example:"SKU-FIXED-01"`
+	Name      string  `json:"name,omitempty" example:"Fixed Ergonomic Chair"`
+	Price     float64 `json:"price" example:"149.99"`
+	Status    string  `json:"status" example:"ACTIVE"`
+	Timestamp string  `json:"timestamp,omitempty" example:"2026-10-22T10:00:00Z"`
+}
+
+// JobCancelResponse represents the response payload when an active sync job is cancelled.
+type JobCancelResponse struct {
+	Status  string `json:"status" example:"cancelling"`
+	JobID   string `json:"job_id" example:"job-demo-01"`
+	Message string `json:"message" example:"cancellation signal sent successfully"`
+}
+
+// DatabaseResetResponse represents the response payload when the tenant database is reset.
+type DatabaseResetResponse struct {
+	Status  string `json:"status" example:"success"`
+	Message string `json:"message" example:"database reset to clean state"`
+}
+
+// ResolveDeadLetterResponse represents the response payload when a quarantined record is remediated.
+type ResolveDeadLetterResponse struct {
+	Status  string         `json:"status" example:"success"`
+	Message string         `json:"message" example:"product resolved and imported to catalog"`
+	Product domain.Product `json:"product"`
+}

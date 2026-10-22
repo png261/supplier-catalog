@@ -79,8 +79,8 @@ func AssetHandler(diskDir string) http.Handler {
 			return
 		}
 
-		// SPA Fallback: If not an API route and not a physical file, serve index.html
-		if !strings.HasPrefix(upath, "/api/") {
+		// SPA Fallback: If not an API route, not a Swagger route, and not a physical file, serve index.html
+		if !strings.HasPrefix(upath, "/api/") && !strings.HasPrefix(upath, "/swagger/") {
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 			r.URL.Path = "/"
 			fileServer.ServeHTTP(w, r)

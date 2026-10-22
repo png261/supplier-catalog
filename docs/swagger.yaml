@@ -1,0 +1,872 @@
+basePath: /
+definitions:
+  api.BatchInput:
+    properties:
+      batch_index:
+        type: integer
+      records:
+        items:
+          $ref: '#/definitions/api.BatchInputRecord'
+        type: array
+    type: object
+  api.BatchInputRecord:
+    properties:
+      name:
+        type: string
+      price:
+        type: number
+      sku:
+        type: string
+      status:
+        $ref: '#/definitions/domain.ProductStatus'
+      timestamp:
+        type: string
+    type: object
+  api.DatabaseResetResponse:
+    properties:
+      message:
+        example: database reset to clean state
+        type: string
+      status:
+        example: success
+        type: string
+    type: object
+  api.DeadLetterListResponse:
+    properties:
+      issues:
+        items:
+          $ref: '#/definitions/domain.DeadLetterRecord'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
+  api.ErrorCode:
+    enum:
+    - INVALID_REQUEST
+    - JOB_NOT_FOUND
+    - NOT_FOUND
+    - JOB_CONFLICT
+    - INTERNAL_ERROR
+    type: string
+    x-enum-varnames:
+    - ErrCodeInvalidRequest
+    - ErrCodeJobNotFound
+    - ErrCodeNotFound
+    - ErrCodeJobConflict
+    - ErrCodeInternalError
+  api.ErrorResponse:
+    properties:
+      code:
+        $ref: '#/definitions/api.ErrorCode'
+      error:
+        type: string
+    type: object
+  api.JobCancelResponse:
+    properties:
+      job_id:
+        example: job-demo-01
+        type: string
+      message:
+        example: cancellation signal sent successfully
+        type: string
+      status:
+        example: cancelling
+        type: string
+    type: object
+  api.JobDetailResponse:
+    properties:
+      checkpoints:
+        items:
+          $ref: '#/definitions/domain.BatchCheckpoint'
+        type: array
+      job:
+        $ref: '#/definitions/domain.SyncJob'
+    type: object
+  api.JobListResponse:
+    properties:
+      jobs:
+        items:
+          $ref: '#/definitions/domain.SyncJob'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
+  api.JobResumeRequest:
+    properties:
+      batch_size:
+        type: integer
+      seed:
+        type: integer
+      total_batches:
+        type: integer
+    type: object
+  api.JobStartRequest:
+    properties:
+      batch_size:
+        type: integer
+      batches:
+        items:
+          $ref: '#/definitions/api.BatchInput'
+        type: array
+      duplicate_ratio:
+        type: number
+      invalid_ratio:
+        type: number
+      job_id:
+        type: string
+      mode:
+        description: '"generator" or "batches" (default "generator")'
+        type: string
+      out_of_order_ratio:
+        type: number
+      seed:
+        type: integer
+      total_batches:
+        type: integer
+      update_ratio:
+        type: number
+      withdrawn_ratio:
+        type: number
+    type: object
+  api.MetricsResponse:
+    properties:
+      filter:
+        $ref: '#/definitions/domain.MetricsFilter'
+      metrics:
+        $ref: '#/definitions/domain.AggregatedMetrics'
+      sync_jobs:
+        items:
+          $ref: '#/definitions/domain.SyncJob'
+        type: array
+    type: object
+  api.ProductListResponse:
+    properties:
+      limit:
+        type: integer
+      offset:
+        type: integer
+      products:
+        items:
+          $ref: '#/definitions/domain.Product'
+        type: array
+      total:
+        type: integer
+    type: object
+  api.ResolveDeadLetterRequest:
+    properties:
+      name:
+        example: Fixed Ergonomic Chair
+        type: string
+      price:
+        example: 149.99
+        type: number
+      sku:
+        example: SKU-FIXED-01
+        type: string
+      status:
+        example: ACTIVE
+        type: string
+      timestamp:
+        example: "2026-10-22T10:00:00Z"
+        type: string
+    type: object
+  api.ResolveDeadLetterResponse:
+    properties:
+      message:
+        example: product resolved and imported to catalog
+        type: string
+      product:
+        $ref: '#/definitions/domain.Product'
+      status:
+        example: success
+        type: string
+    type: object
+  api.SyncJobResponse:
+    properties:
+      committed_batch_index:
+        type: integer
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      job_id:
+        type: string
+      status:
+        $ref: '#/definitions/domain.JobStatus'
+      summary:
+        $ref: '#/definitions/domain.ChangeSummary'
+      total_batches:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  domain.AggregatedMetrics:
+    properties:
+      avg_throughput:
+        type: number
+      completed_syncs:
+        type: integer
+      elapsed_seconds:
+        type: number
+      quality_score:
+        type: number
+      summary:
+        $ref: '#/definitions/domain.ChangeSummary'
+      total_processed:
+        type: integer
+      total_syncs:
+        type: integer
+    type: object
+  domain.BatchCheckpoint:
+    properties:
+      batch_index:
+        type: integer
+      committed_at:
+        type: string
+      items_count:
+        type: integer
+      job_id:
+        type: string
+      summary:
+        $ref: '#/definitions/domain.ChangeSummary'
+    type: object
+  domain.ChangeSummary:
+    properties:
+      added:
+        type: integer
+      dead_letter:
+        type: integer
+      skipped:
+        type: integer
+      updated:
+        type: integer
+      withdrawn:
+        type: integer
+    type: object
+  domain.DeadLetterRecord:
+    properties:
+      batch_index:
+        type: integer
+      created_at:
+        type: string
+      issue_id:
+        type: string
+      job_id:
+        type: string
+      raw_payload:
+        type: string
+      reason:
+        type: string
+      sku:
+        type: string
+    type: object
+  domain.JobStatus:
+    enum:
+    - PENDING
+    - RUNNING
+    - INTERRUPTED
+    - COMPLETED
+    - FAILED
+    type: string
+    x-enum-varnames:
+    - JobStatusPending
+    - JobStatusRunning
+    - JobStatusInterrupted
+    - JobStatusCompleted
+    - JobStatusFailed
+  domain.MetricsFilter:
+    properties:
+      from:
+        type: string
+      job_id:
+        type: string
+      time_range:
+        description: '"today", "yesterday", "7d", "all", "custom"'
+        type: string
+      to:
+        type: string
+    type: object
+  domain.Product:
+    properties:
+      name:
+        type: string
+      price:
+        type: number
+      sku:
+        type: string
+      status:
+        $ref: '#/definitions/domain.ProductStatus'
+      supplier_timestamp:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  domain.ProductStatus:
+    enum:
+    - ACTIVE
+    - WITHDRAWN
+    type: string
+    x-enum-varnames:
+    - StatusActive
+    - StatusWithdrawn
+  domain.SyncJob:
+    properties:
+      committed_batch_index:
+        description: -1 before first batch
+        type: integer
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      job_id:
+        type: string
+      status:
+        $ref: '#/definitions/domain.JobStatus'
+      summary:
+        $ref: '#/definitions/domain.ChangeSummary'
+      total_batches:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: dev@coderpush.com
+    name: Coderpush Engineering Team
+    url: https://coderpush.com
+  description: High-performance, fault-tolerant catalog synchronization engine with
+    SQLite multi-tenancy, real-time Server-Sent Events (SSE), and dead-letter quarantine
+    resolution.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: Resilient Catalog Synchronization Engine API
+  version: "1.0"
+paths:
+  /api/database/reset:
+    post:
+      description: Clears all products, jobs, checkpoints, and dead-letter issues
+        for the specified tenant. Blocked if a job is active.
+      parameters:
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Database reset to clean state
+          schema:
+            $ref: '#/definitions/api.DatabaseResetResponse'
+        "400":
+          description: Invalid request or shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "409":
+          description: Cannot reset database while a job is running
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Failed to reset database
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Reset catalog database
+      tags:
+      - Database
+  /api/dead-letter:
+    get:
+      description: Returns paginated dead-letter records with filtering by job ID
+        and quarantine reason.
+      parameters:
+      - description: Maximum records to return (default 20, min 1)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0, min 0)
+        in: query
+        name: offset
+        type: integer
+      - description: Filter records by Job ID
+        in: query
+        name: job_id
+        type: string
+      - description: Filter records by failure reason
+        in: query
+        name: reason
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Paginated list of dead-letter records
+          schema:
+            $ref: '#/definitions/api.DeadLetterListResponse'
+        "400":
+          description: Invalid limit, offset, or shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal database query error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List quarantined dead-letter records
+      tags:
+      - Dead Letter
+  /api/dead-letter/{id}/resolve:
+    post:
+      consumes:
+      - application/json
+      description: Remediates an invalid dead-letter record and imports the corrected
+        product into the catalog.
+      parameters:
+      - description: Dead-letter Issue ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      - description: Corrected product details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.ResolveDeadLetterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Product resolved and imported to catalog
+          schema:
+            $ref: '#/definitions/api.ResolveDeadLetterResponse'
+        "400":
+          description: Validation error (invalid price, status, or timestamp)
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Dead-letter issue not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal database error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Resolve quarantined dead-letter record
+      tags:
+      - Dead Letter
+  /api/events:
+    get:
+      description: Establishes a persistent Server-Sent Events (SSE) connection streaming
+        real-time job progress, status changes, and dead-letter notifications.
+      parameters:
+      - description: 'Isolated shop tenant ID (default: ''default'')'
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: Server-Sent Events text stream
+          schema:
+            type: string
+        "400":
+          description: Invalid shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Streaming unsupported (client connection is non-flusher)
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "503":
+          description: SSE Broker closed
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Stream real-time synchronization events (SSE)
+      tags:
+      - Events
+  /api/jobs:
+    get:
+      description: Returns a paginated list of catalog synchronization jobs, with
+        optional status filtering.
+      parameters:
+      - description: Maximum number of records to return (default 20, min 1)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0, min 0)
+        in: query
+        name: offset
+        type: integer
+      - description: Filter by job status (PENDING, RUNNING, INTERRUPTED, COMPLETED,
+          FAILED)
+        in: query
+        name: status
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Paginated list of synchronization jobs
+          schema:
+            $ref: '#/definitions/api.JobListResponse'
+        "400":
+          description: Invalid limit, offset, or status filter
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal database query error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List synchronization jobs
+      tags:
+      - Jobs
+    post:
+      consumes:
+      - application/json
+      description: Initiates a catalog synchronization job in background. Supports
+        synthetic data generation ("generator") or direct batch ingestion ("batches").
+      parameters:
+      - description: 'Isolated shop tenant ID (default: ''default'')'
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      - description: Synchronization job configuration and payload
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.JobStartRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Synchronization job accepted and running in background
+          schema:
+            $ref: '#/definitions/api.SyncJobResponse'
+        "400":
+          description: Invalid request payload, invalid ratios, or invalid shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "409":
+          description: A synchronization job is already running for this tenant
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal database or server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Start synchronization job
+      tags:
+      - Jobs
+  /api/jobs/{id}:
+    get:
+      description: Retrieves full status and checkpoint audit history for a specific
+        synchronization job.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Job metadata and committed batch checkpoints
+          schema:
+            $ref: '#/definitions/api.JobDetailResponse'
+        "400":
+          description: Missing job ID or invalid request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Sync job not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal database query error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get synchronization job details
+      tags:
+      - Jobs
+  /api/jobs/{id}/cancel:
+    post:
+      description: Sends a cancellation signal to stop a currently running synchronization
+        job.
+      parameters:
+      - description: Job ID to cancel
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cancellation signal sent successfully
+          schema:
+            $ref: '#/definitions/api.JobCancelResponse'
+        "400":
+          description: Missing job ID or invalid request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Job not currently running or active
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Cancel active synchronization job
+      tags:
+      - Jobs
+  /api/jobs/{id}/resume:
+    post:
+      consumes:
+      - application/json
+      description: Resumes an interrupted catalog synchronization job from its last
+        committed checkpoint.
+      parameters:
+      - description: Job ID to resume
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      - description: Optional generator parameters to override on resumption
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.JobResumeRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Job successfully resumed and executing in background
+          schema:
+            $ref: '#/definitions/api.SyncJobResponse'
+        "400":
+          description: Missing job ID, malformed body, or invalid config
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Sync job not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "409":
+          description: Job already running or already completed
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Resume interrupted synchronization job
+      tags:
+      - Jobs
+  /api/metrics:
+    get:
+      description: Computes aggregated synchronization performance metrics, quality
+        score, and matching sync runs.
+      parameters:
+      - description: Time preset (today, yesterday, 7d, last7days, all, custom) default
+          'today'
+        in: query
+        name: time_range
+        type: string
+      - description: Filter metrics by specific Job ID
+        in: query
+        name: job_id
+        type: string
+      - description: Custom start timestamp (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: from
+        type: string
+      - description: Custom end timestamp (RFC3339 or YYYY-MM-DD)
+        in: query
+        name: to
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Aggregated metrics and matching sync jobs
+          schema:
+            $ref: '#/definitions/api.MetricsResponse'
+        "400":
+          description: Invalid time_range, date format, or shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal database error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get synchronization metrics and analytics
+      tags:
+      - Metrics
+  /api/products:
+    get:
+      description: Retrieves a paginated list of catalog products, with optional status
+        filtering and text search.
+      parameters:
+      - description: Maximum records to return (default 20, min 1)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0, min 0)
+        in: query
+        name: offset
+        type: integer
+      - description: Filter by product status (ACTIVE or WITHDRAWN)
+        in: query
+        name: status
+        type: string
+      - description: Search substring in SKU or product name
+        in: query
+        name: search
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Paginated catalog products
+          schema:
+            $ref: '#/definitions/api.ProductListResponse'
+        "400":
+          description: Invalid limit, offset, status, or shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal database query error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List catalog products
+      tags:
+      - Products
+swagger: "2.0"

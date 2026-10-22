@@ -1,3 +1,17 @@
+// @title Resilient Catalog Synchronization Engine API
+// @version 1.0
+// @description High-performance, fault-tolerant catalog synchronization engine with SQLite multi-tenancy, real-time Server-Sent Events (SSE), and dead-letter quarantine resolution.
+// @termsOfService http://swagger.io/terms/
+
+// @contact.name Coderpush Engineering Team
+// @contact.url https://coderpush.com
+// @contact.email dev@coderpush.com
+
+// @license.name MIT
+// @license.url https://opensource.org/licenses/MIT
+
+// @host localhost:8080
+// @BasePath /
 package main
 
 import (
