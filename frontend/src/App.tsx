@@ -2,35 +2,21 @@ import React, { useState, useEffect, useRef } from 'react';
 import { AppSidebar, NavItemKey } from './components/layout/AppSidebar';
 import { AppHeader } from './components/layout/AppHeader';
 import { ThemeProvider } from './context/ThemeContext';
-import { StagedScenarioBar } from './components/StagedScenarioBar';
-import { ProgressBanner } from './components/ProgressBanner';
-import { AnalyticsFilterBar } from './components/AnalyticsFilterBar';
-import { MetricsGrid } from './components/MetricsGrid';
-import { ChartsSection } from './components/ChartsSection';
-import { ExplorerSection } from './components/ExplorerSection';
+import { OverviewView } from './components/views/OverviewView';
+import { CatalogView } from './components/views/CatalogView';
+import { AttentionView } from './components/views/AttentionView';
+import { HistoryView } from './components/views/HistoryView';
+import { ScenariosView } from './components/views/ScenariosView';
 import { DemoModal, SCENARIOS } from './components/DemoModal';
 import { RemediationModal } from './components/RemediationModal';
 import { MetricDrilldownModal } from './components/MetricDrilldownModal';
 import { ShopModal } from './components/ShopModal';
 import { ShopGatekeeper } from './components/ShopGatekeeper';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/tabs';
-import { Card, CardHeader, CardTitle, CardContent } from './components/ui/card';
 import { Button } from './components/ui/button';
 import { Badge } from './components/ui/badge';
 import { Toaster, toast } from 'sonner';
-import {
-  Play,
-  PlayCircle,
-  RotateCw,
-  SlidersHorizontal,
-  Flame,
-  Zap,
-  FileCode,
-  AlertTriangle,
-  CheckCircle2,
-  Package,
-  Layers,
-} from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 
 import {
   fetchCatalog,
@@ -45,7 +31,6 @@ import {
   remediateProduct,
   getActiveShopId,
   setActiveShopId,
-  clearActiveShopId,
   getSSEUrl,
 } from './services/api';
 
@@ -707,7 +692,11 @@ export const AppContent: React.FC = () => {
                 {activeTab === 'scenarios' && 'Supplier Workload Scenarios'}
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                Resilient catalog synchronization engine with SQLite WAL atomic transactions.
+                {activeTab === 'overview' && 'Comprehensive operations metrics, live ingestion telemetry, and SQLite WAL health.'}
+                {activeTab === 'catalog' && 'Search, filter, and inspect product catalog state synchronized from supplier feeds.'}
+                {activeTab === 'attention' && 'Invariant D dead-letter isolation: review and remediate defective supplier records.'}
+                {activeTab === 'history' && 'Immutable audit log of historical sync sessions and batch transaction checkpoints.'}
+                {activeTab === 'scenarios' && 'Select, configure, and benchmark synthetic workloads and direct custom JSON ingestion.'}
               </p>
             </div>
 
@@ -756,20 +745,9 @@ export const AppContent: React.FC = () => {
               </TabsList>
             </div>
 
-            {/* Tab 1: OVERVIEW DASHBOARD */}
+            {/* 1. DEDICATED OVERVIEW DASHBOARD VIEW (NO duplicate tables) */}
             <TabsContent value="overview" className="space-y-6 m-0 focus-visible:outline-none">
-              {/* Active Staged Scenario Bar */}
-              <StagedScenarioBar
-                scenario={stagedScenario}
-                isSyncing={isSyncing}
-                isInterrupted={isInterrupted}
-                onStartSync={handleStartSync}
-                onCancelSync={handleCancelSync}
-                onOpenScenarioModal={() => setIsScenarioModalOpen(true)}
-              />
-
-              {/* Feed Ingestion Progress */}
-              <ProgressBanner
+              <OverviewView
                 currentBatch={currentBatch}
                 totalBatches={totalBatches}
                 throughput={throughput}
@@ -777,15 +755,14 @@ export const AppContent: React.FC = () => {
                 elapsedTime={elapsedTime}
                 smartStatusText={smartStatusText}
                 smartStatusType={smartStatusType}
-              />
-
-              {/* Operations Analytics Filter Bar */}
-              <AnalyticsFilterBar
-                range={analyticsRange}
-                from={analyticsFrom}
-                to={analyticsTo}
+                analyticsRange={analyticsRange}
+                analyticsFrom={analyticsFrom}
+                analyticsTo={analyticsTo}
                 selectedJobId={selectedJobId}
-                syncJobs={analyticsData.sync_jobs || []}
+                analyticsData={analyticsData}
+                metrics={metrics}
+                deltas={deltas}
+                isRefreshingAnalytics={isRefreshingAnalytics}
                 onRangeChange={setAnalyticsRange}
                 onCustomDatesApply={(f, t) => {
                   setAnalyticsFrom(f);
@@ -793,228 +770,85 @@ export const AppContent: React.FC = () => {
                   loadAnalytics();
                 }}
                 onJobSelect={setSelectedJobId}
-                onRefresh={loadAnalytics}
-                isRefreshing={isRefreshingAnalytics}
-              />
-
-              {/* 5 Summary Metric Cards with Drilldowns */}
-              <MetricsGrid
-                metrics={metrics}
-                deltas={deltas}
-                onCardClick={(cat) => setDrilldownCategory(cat)}
-              />
-
-              {/* Recharts Donut & Velocity Charts */}
-              <ChartsSection
-                totals={analyticsData.totals}
-                timeSeries={analyticsData.time_series}
-              />
-
-              {/* Explorer Section with Catalog, DLQ, History */}
-              <ExplorerSection
-                catalog={catalog}
-                dlq={dlq}
-                history={history}
-                catalogPage={catalogPage}
-                catalogLimit={catalogLimit}
-                catalogSearch={catalogSearch}
-                catalogStatus={catalogStatus}
-                dlqPage={dlqPage}
-                dlqLimit={dlqLimit}
-                dlqReason={dlqReason}
-                historyPage={historyPage}
-                historyLimit={historyLimit}
-                activeTab="catalog"
-                onCatalogSearchChange={(s) => {
-                  setCatalogSearch(s);
-                  setCatalogPage(1);
-                }}
-                onCatalogStatusChange={(st) => {
-                  setCatalogStatus(st);
-                  setCatalogPage(1);
-                }}
-                onCatalogPageChange={setCatalogPage}
-                onDlqReasonChange={(r) => {
-                  setDlqReason(r);
-                  setDlqPage(1);
-                }}
-                onDlqPageChange={setDlqPage}
-                onHistoryPageChange={setHistoryPage}
-                onRemediateClick={(iss) => setActiveRemediationIssue(iss)}
+                onRefreshAnalytics={loadAnalytics}
+                onMetricCardClick={(cat) => setDrilldownCategory(cat)}
+                onNavigateToTab={(tab) => setActiveTab(tab as NavItemKey)}
               />
             </TabsContent>
 
-            {/* Tab 2: LIVE CATALOG */}
+            {/* 2. DEDICATED LIVE CATALOG VIEW */}
             <TabsContent value="catalog" className="space-y-6 m-0 focus-visible:outline-none">
-              <ExplorerSection
-                catalog={catalog}
-                dlq={dlq}
-                history={history}
-                catalogPage={catalogPage}
-                catalogLimit={catalogLimit}
-                catalogSearch={catalogSearch}
-                catalogStatus={catalogStatus}
-                dlqPage={dlqPage}
-                dlqLimit={dlqLimit}
-                dlqReason={dlqReason}
-                historyPage={historyPage}
-                historyLimit={historyLimit}
-                activeTab="catalog"
-                onCatalogSearchChange={(s) => {
+              <CatalogView
+                products={catalog.products}
+                total={catalog.total}
+                page={catalogPage}
+                limit={catalogLimit}
+                search={catalogSearch}
+                status={catalogStatus}
+                onSearchChange={(s) => {
                   setCatalogSearch(s);
                   setCatalogPage(1);
                 }}
-                onCatalogStatusChange={(st) => {
+                onStatusChange={(st) => {
                   setCatalogStatus(st);
                   setCatalogPage(1);
                 }}
-                onCatalogPageChange={setCatalogPage}
-                onDlqReasonChange={(r) => {
-                  setDlqReason(r);
-                  setDlqPage(1);
+                onPageChange={setCatalogPage}
+                onResetFilters={() => {
+                  setCatalogSearch('');
+                  setCatalogStatus('');
+                  setCatalogPage(1);
                 }}
-                onDlqPageChange={setDlqPage}
-                onHistoryPageChange={setHistoryPage}
-                onRemediateClick={(iss) => setActiveRemediationIssue(iss)}
               />
             </TabsContent>
 
-            {/* Tab 3: ATTENTION / DLQ */}
+            {/* 3. DEDICATED ATTENTION / DLQ REMEDIATION VIEW */}
             <TabsContent value="attention" className="space-y-6 m-0 focus-visible:outline-none">
-              <ExplorerSection
-                catalog={catalog}
-                dlq={dlq}
-                history={history}
-                catalogPage={catalogPage}
-                catalogLimit={catalogLimit}
-                catalogSearch={catalogSearch}
-                catalogStatus={catalogStatus}
-                dlqPage={dlqPage}
-                dlqLimit={dlqLimit}
-                dlqReason={dlqReason}
-                historyPage={historyPage}
-                historyLimit={historyLimit}
-                activeTab="dlq"
-                onCatalogSearchChange={(s) => {
-                  setCatalogSearch(s);
-                  setCatalogPage(1);
-                }}
-                onCatalogStatusChange={(st) => {
-                  setCatalogStatus(st);
-                  setCatalogPage(1);
-                }}
-                onCatalogPageChange={setCatalogPage}
-                onDlqReasonChange={(r) => {
+              <AttentionView
+                issues={dlq.issues}
+                total={dlq.total}
+                page={dlqPage}
+                limit={dlqLimit}
+                reason={dlqReason}
+                onReasonChange={(r) => {
                   setDlqReason(r);
                   setDlqPage(1);
                 }}
-                onDlqPageChange={setDlqPage}
-                onHistoryPageChange={setHistoryPage}
+                onPageChange={setDlqPage}
                 onRemediateClick={(iss) => setActiveRemediationIssue(iss)}
               />
             </TabsContent>
 
-            {/* Tab 4: SYNC RUN HISTORY */}
+            {/* 4. DEDICATED SYNC RUN AUDIT HISTORY VIEW */}
             <TabsContent value="history" className="space-y-6 m-0 focus-visible:outline-none">
-              <ExplorerSection
-                catalog={catalog}
-                dlq={dlq}
-                history={history}
-                catalogPage={catalogPage}
-                catalogLimit={catalogLimit}
-                catalogSearch={catalogSearch}
-                catalogStatus={catalogStatus}
-                dlqPage={dlqPage}
-                dlqLimit={dlqLimit}
-                dlqReason={dlqReason}
-                historyPage={historyPage}
-                historyLimit={historyLimit}
-                activeTab="history"
-                onCatalogSearchChange={(s) => {
-                  setCatalogSearch(s);
-                  setCatalogPage(1);
-                }}
-                onCatalogStatusChange={(st) => {
-                  setCatalogStatus(st);
-                  setCatalogPage(1);
-                }}
-                onCatalogPageChange={setCatalogPage}
-                onDlqReasonChange={(r) => {
-                  setDlqReason(r);
-                  setDlqPage(1);
-                }}
-                onDlqPageChange={setDlqPage}
-                onHistoryPageChange={setHistoryPage}
-                onRemediateClick={(iss) => setActiveRemediationIssue(iss)}
+              <HistoryView
+                jobs={history.jobs}
+                total={history.total}
+                page={historyPage}
+                limit={historyLimit}
+                onPageChange={setHistoryPage}
               />
             </TabsContent>
 
-            {/* Tab 5: SCENARIOS GALLERY */}
+            {/* 5. DEDICATED SUPPLIER WORKLOAD SCENARIOS VIEW */}
             <TabsContent value="scenarios" className="space-y-6 m-0 focus-visible:outline-none">
-              <StagedScenarioBar
-                scenario={stagedScenario}
+              <ScenariosView
+                stagedScenario={stagedScenario}
                 isSyncing={isSyncing}
                 isInterrupted={isInterrupted}
                 onStartSync={handleStartSync}
                 onCancelSync={handleCancelSync}
-                onOpenScenarioModal={() => setIsScenarioModalOpen(true)}
+                onSelectScenario={handleSelectScenario}
+                onStartImmediately={handleStartImmediately}
+                onOpenScenarioModal={(key) => setIsScenarioModalOpen(true)}
               />
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {SCENARIOS.map((sc) => {
-                  const isStaged = stagedScenario.key === sc.key;
-                  return (
-                    <Card
-                      key={sc.key}
-                      onClick={() => handleSelectScenario(sc)}
-                      className={`p-4 border transition-all cursor-pointer flex flex-col justify-between ${
-                        isStaged
-                          ? 'border-indigo-600 dark:border-indigo-500 bg-indigo-50/30 dark:bg-indigo-950/20 ring-1 ring-indigo-600'
-                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-sm text-slate-900 dark:text-slate-100">
-                            {sc.name}
-                          </span>
-                          {isStaged && (
-                            <Badge variant="success" className="text-[10px]">
-                              Active Staged
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
-                          {sc.desc}
-                        </p>
-                      </div>
-
-                      <div className="pt-4 border-t border-slate-100 dark:border-slate-800 mt-3 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                        <span className="font-mono">{sc.batches} batches</span>
-                        <Button
-                          size="xs"
-                          variant={isStaged ? 'default' : 'outline'}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStartImmediately(sc);
-                          }}
-                          className={isStaged ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : ''}
-                        >
-                          <Play className="h-3 w-3 mr-1 fill-current" />
-                          Run
-                        </Button>
-                      </div>
-                    </Card>
-                  );
-                })}
-              </div>
             </TabsContent>
           </Tabs>
         </main>
 
         {/* Footer */}
         <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-4 text-center text-xs text-slate-500 dark:text-slate-400 transition-colors">
-          Coderpush Supplier Catalog Engine • Template Inspired by shadcn-admin • SQLite WAL Mode
+          Coderpush Supplier Catalog Engine • Single-Responsibility Modular Architecture • SQLite WAL Mode
         </footer>
       </div>
 
