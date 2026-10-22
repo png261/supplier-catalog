@@ -10,9 +10,7 @@ import { RemediationModal } from './components/RemediationModal';
 import { MetricDrilldownModal } from './components/MetricDrilldownModal';
 import { ShopModal } from './components/ShopModal';
 import { ShopGatekeeper } from './components/ShopGatekeeper';
-import { Button } from './components/ui/button';
 import { Toaster, toast } from 'sonner';
-import { Play, RefreshCw, RotateCw, Square } from 'lucide-react';
 
 import {
   fetchCatalog,
@@ -713,60 +711,13 @@ export const AppContent: React.FC = () => {
         {/* Content Body */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 max-w-[1600px] w-full mx-auto">
           {/* Top Page Title Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-200/80 dark:border-slate-800">
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-                {activeTab === 'overview' && 'Dashboard'}
-                {activeTab === 'catalog' && 'Catalog'}
-                {activeTab === 'attention' && 'Quarantine'}
-                {activeTab === 'history' && 'History'}
-              </h1>
-            </div>
-
-            {/* Quick Action for Dashboard Overview */}
-            {activeTab === 'overview' && (
-              <div className="flex items-center gap-2">
-                {isSyncing ? (
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      size="sm"
-                      disabled
-                      className="h-8 text-xs font-semibold bg-blue-600 text-white opacity-90 cursor-not-allowed"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                      Syncing...
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleCancelSync}
-                      className="h-8 text-xs font-semibold border-rose-300 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900/60 dark:text-rose-400"
-                    >
-                      <Square className="h-3 w-3 mr-1 fill-current" />
-                      Halt
-                    </Button>
-                  </div>
-                ) : isInterrupted ? (
-                  <Button
-                    size="sm"
-                    onClick={handleStartSync}
-                    className="h-8 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
-                  >
-                    <RotateCw className="h-3.5 w-3.5 mr-1.5" />
-                    Resume Sync
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    onClick={handleStartSync}
-                    className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
-                  >
-                    <Play className="h-3.5 w-3.5 mr-1.5 fill-current" />
-                    Start Sync
-                  </Button>
-                )}
-              </div>
-            )}
+          <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+              {activeTab === 'overview' && 'Dashboard'}
+              {activeTab === 'catalog' && 'Catalog'}
+              {activeTab === 'attention' && 'Quarantine'}
+              {activeTab === 'history' && 'History'}
+            </h1>
           </div>
 
           {/* Dedicated Page View Content (Navigated via Sidebar) */}
