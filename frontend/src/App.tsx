@@ -904,16 +904,6 @@ export const AppContent: React.FC = () => {
 
         {/* Content Body */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 max-w-[1600px] w-full mx-auto">
-          {/* Top Page Title Bar */}
-          <div className="pb-2 border-b border-slate-200/80 dark:border-slate-800">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-              {activeTab === 'overview' && 'Dashboard'}
-              {activeTab === 'catalog' && 'Catalog'}
-              {activeTab === 'attention' && 'Quarantine'}
-              {activeTab === 'history' && 'History'}
-            </h1>
-          </div>
-
           {/* Dedicated Page View Content (Navigated via Sidebar) */}
           <div className="w-full space-y-6">
             {/* 1. DEDICATED OVERVIEW DASHBOARD VIEW */}

@@ -9,9 +9,8 @@ import {
   CheckCircle,
   AlertCircle,
   RefreshCw,
-  Play,
-  RotateCw,
   Square,
+  RotateCw,
 } from 'lucide-react';
 
 interface ProgressBannerProps {
@@ -46,113 +45,87 @@ export const ProgressBanner: React.FC<ProgressBannerProps> = ({
   const getSmartStatusIcon = () => {
     switch (smartStatusType) {
       case 'running':
-        return <RefreshCw className="h-4 w-4 text-blue-600 dark:text-blue-400 animate-spin shrink-0" />;
+        return <RefreshCw className="h-3.5 w-3.5 text-slate-700 animate-spin shrink-0" />;
       case 'warning':
-        return <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />;
+        return <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />;
       case 'success':
-        return <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />;
+        return <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" />;
       default:
-        return <span className="h-2 w-2 rounded-full bg-slate-400 shrink-0 ml-1 mr-1" />;
+        return <span className="h-1.5 w-1.5 rounded-full bg-slate-400 shrink-0" />;
     }
   };
 
   const getSmartStatusBg = () => {
     switch (smartStatusType) {
       case 'running':
-        return 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900/60 text-blue-900 dark:text-blue-200';
+        return 'bg-slate-50 border-slate-200 text-slate-800';
       case 'warning':
-        return 'bg-amber-50/80 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/60 text-amber-900 dark:text-amber-200';
+        return 'bg-amber-50/60 border-amber-200 text-amber-900';
       case 'success':
-        return 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900/60 text-emerald-900 dark:text-emerald-200';
+        return 'bg-emerald-50/50 border-emerald-200 text-emerald-900';
       default:
-        return 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300';
+        return 'bg-slate-50/60 border-slate-200/80 text-slate-600';
     }
   };
 
   return (
-    <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3.5 transition-colors">
-      {/* Header & Telemetry */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <Card className="p-4 border-slate-200/80 bg-white shadow-xs space-y-3">
+      {/* Telemetry Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            Feed Ingestion:
+          <span className="text-xs font-semibold text-slate-900 font-mono">
+            Batch {currentBatch}/{totalBatches}
           </span>
-          <span className="text-sm font-bold text-slate-900 dark:text-slate-100 font-mono">
-            Batch {currentBatch} of {totalBatches}
-          </span>
-          <span className="text-xs text-slate-400 dark:text-slate-500 font-mono">({percent}%)</span>
+          <span className="text-xs text-slate-400 font-mono">({percent}%)</span>
         </div>
 
-        {/* Telemetry Strip & Quick Action */}
-        <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs text-slate-600 dark:text-slate-400">
-          <div className="flex items-center gap-1.5 font-mono">
-            <Gauge className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-            <span className="font-semibold text-slate-800 dark:text-slate-200">{throughput}</span> rec/s
+        {/* Telemetry Strip */}
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs text-slate-500 font-mono">
+          <div className="flex items-center gap-1">
+            <Gauge className="h-3 w-3 text-slate-400" />
+            <span className="font-semibold text-slate-800">{throughput}</span> r/s
           </div>
-          <div className="flex items-center gap-1.5 font-mono">
-            <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-            ETA: <span className="font-semibold text-slate-800 dark:text-slate-200">{eta}</span>
+          <div className="flex items-center gap-1">
+            <Clock className="h-3 w-3 text-slate-400" />
+            ETA: <span className="font-semibold text-slate-800">{eta}</span>
           </div>
-          <div className="flex items-center gap-1.5 font-mono">
-            <Hourglass className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-            Elapsed: <span className="font-semibold text-slate-800 dark:text-slate-200">{elapsedTime}</span>
+          <div className="flex items-center gap-1">
+            <Hourglass className="h-3 w-3 text-slate-400" />
+            <span className="font-semibold text-slate-800">{elapsedTime}</span>
           </div>
 
-          {onStartSync && (
-            <div className="flex items-center gap-1.5 pl-2 sm:border-l sm:border-slate-200 dark:sm:border-slate-700">
-              {isSyncing ? (
-                <>
-                  <Button
-                    size="sm"
-                    disabled
-                    className="h-7 px-2.5 text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:border-blue-800 dark:text-blue-300"
-                  >
-                    <RefreshCw className="h-3 w-3 mr-1 animate-spin text-blue-600 dark:text-blue-400" />
-                    Syncing
-                  </Button>
-                  {onCancelSync && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={onCancelSync}
-                      className="h-7 px-2 text-xs font-medium border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-400"
-                    >
-                      <Square className="h-2.5 w-2.5 mr-1 fill-current" />
-                      Halt
-                    </Button>
-                  )}
-                </>
-              ) : isInterrupted ? (
-                <Button
-                  size="sm"
-                  onClick={onStartSync}
-                  className="h-7 px-3 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
-                >
-                  <RotateCw className="h-3 w-3 mr-1" />
-                  Resume Sync
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  onClick={onStartSync}
-                  className="h-7 px-3 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
-                >
-                  <Play className="h-3 w-3 mr-1 fill-current" />
-                  Start Sync
-                </Button>
-              )}
-            </div>
+          {/* Quick halt / resume if active */}
+          {isSyncing && onCancelSync && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onCancelSync}
+              className="h-6 px-2 text-[11px] font-medium border-rose-200 text-rose-600 hover:bg-rose-50"
+            >
+              <Square className="h-2 w-2 mr-1 fill-current" />
+              Halt
+            </Button>
+          )}
+          {isInterrupted && onStartSync && (
+            <Button
+              size="sm"
+              onClick={onStartSync}
+              className="h-6 px-2.5 text-[11px] font-medium bg-slate-900 hover:bg-slate-800 text-white shadow-none"
+            >
+              <RotateCw className="h-2.5 w-2.5 mr-1" />
+              Resume
+            </Button>
           )}
         </div>
       </div>
 
       {/* Progress Bar */}
-      <Progress value={percent} className="h-2 bg-slate-100 dark:bg-slate-800" />
+      <Progress value={percent} className="h-1.5 bg-slate-100" />
 
-      {/* Smart Status Banner */}
-      <div className={`p-2.5 rounded-lg border text-xs flex items-center gap-2.5 transition-colors ${getSmartStatusBg()}`}>
+      {/* Status Line */}
+      <div className={`px-2.5 py-1.5 rounded-md border text-xs flex items-center gap-2 ${getSmartStatusBg()}`}>
         {getSmartStatusIcon()}
-        <span className="font-medium flex-1 leading-relaxed">{smartStatusText}</span>
+        <span className="font-normal flex-1 truncate">{smartStatusText}</span>
       </div>
     </Card>
   );

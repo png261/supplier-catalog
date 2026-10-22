@@ -51,26 +51,26 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   return (
     <div className="space-y-4">
       {/* View Header & Filter Bar */}
-      <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <History className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+      <Card className="p-3.5 sm:p-4 border-slate-200/80 bg-white shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-slate-700" />
+            <h2 className="text-base font-semibold text-slate-900 tracking-tight">
               History
             </h2>
-            <Badge variant="secondary" className="font-mono text-xs font-semibold">
+            <Badge variant="secondary" className="font-mono text-xs font-medium px-2 py-0 h-5">
               {formatNumber(total)}
             </Badge>
           </div>
 
           {/* Status Filter Badges */}
           {onStatusChange && (
-            <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-lg">
+            <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-0.5 rounded-md">
               <Button
                 variant={status === '' || status === 'ALL' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => onStatusChange('')}
-                className="h-7 px-2.5 text-xs font-medium"
+                className="h-6 px-2 text-xs font-medium"
               >
                 All
               </Button>
@@ -78,11 +78,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                 variant={status === 'INTERRUPTED' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => onStatusChange('INTERRUPTED')}
-                className={`h-7 px-2.5 text-xs font-medium ${
-                  status === 'INTERRUPTED'
-                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                    : 'text-amber-700 dark:text-amber-400'
-                }`}
+                className="h-6 px-2 text-xs font-medium"
               >
                 Interrupted
               </Button>
@@ -90,11 +86,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                 variant={status === 'COMPLETED' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => onStatusChange('COMPLETED')}
-                className={`h-7 px-2.5 text-xs font-medium ${
-                  status === 'COMPLETED'
-                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                    : 'text-emerald-700 dark:text-emerald-400'
-                }`}
+                className="h-6 px-2 text-xs font-medium"
               >
                 Completed
               </Button>

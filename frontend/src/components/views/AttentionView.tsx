@@ -40,16 +40,16 @@ export const AttentionView: React.FC<AttentionViewProps> = ({
   return (
     <div className="space-y-4">
       {/* View Header */}
-      <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <ShieldAlert className="h-4 w-4 text-rose-600 dark:text-rose-400" />
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+      <Card className="p-3.5 sm:p-4 border-slate-200/80 bg-white shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 text-slate-700" />
+            <h2 className="text-base font-semibold text-slate-900 tracking-tight">
               Quarantine
             </h2>
             <Badge
               variant={total > 0 ? 'destructive' : 'secondary'}
-              className="font-mono text-xs font-semibold"
+              className="font-mono text-xs font-medium px-2 py-0 h-5"
             >
               {formatNumber(total)}
             </Badge>
@@ -57,11 +57,11 @@ export const AttentionView: React.FC<AttentionViewProps> = ({
 
           {/* Reason Filter */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Type:</span>
+            <span className="text-xs text-slate-400 font-medium">Type:</span>
             <select
               value={reason}
               onChange={(e) => onReasonChange(e.target.value)}
-              className="h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300 font-medium shadow-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="h-8 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 font-medium shadow-none focus:outline-none focus:ring-1 focus:ring-slate-400"
             >
               <option value="">All Reasons</option>
               <option value="NEGATIVE_OR_ZERO_PRICE">Invalid Price (≤ 0)</option>

@@ -9,9 +9,8 @@ import {
 } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Label } from './ui/label';
 import { Badge } from './ui/badge';
-import { Store, Sparkles, History, ShieldCheck, ArrowRight } from 'lucide-react';
+import { Store, Sparkles, ArrowRight } from 'lucide-react';
 import { getRecentShops } from '../services/api';
 
 interface ShopModalProps {
@@ -32,9 +31,9 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   const recentShops = getRecentShops();
 
   const handleRandomize = () => {
-    const prefixes = ['shop', 'store', 'outlet', 'boutique', 'mall'];
+    const prefixes = ['shop', 'store', 'mart', 'brand'];
     const p = prefixes[Math.floor(Math.random() * prefixes.length)];
-    const num = Math.floor(1000 + Math.random() * 9000);
+    const num = Math.floor(100 + Math.random() * 900);
     const newId = `${p}-${num}`;
     setInputShopId(newId);
     setError(null);
@@ -48,7 +47,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
       return;
     }
     if (!/^[a-z0-9_-]{1,64}$/.test(clean)) {
-      setError('Shop name can only contain letters, numbers, hyphens (-), or underscores (_), up to 64 characters.');
+      setError('Lowercase letters, numbers, hyphens or underscores only.');
       return;
     }
     setError(null);
@@ -58,35 +57,26 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-sm p-6 border-slate-200 bg-white">
+        <DialogHeader className="space-y-1">
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700">
-              <Store className="h-5 w-5" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
+              <Store className="h-4 w-4" />
             </div>
             <div>
-              <DialogTitle className="text-lg font-bold">Isolated Shop Demo Sandbox</DialogTitle>
+              <DialogTitle className="text-base font-semibold text-slate-900">
+                Switch Tenant
+              </DialogTitle>
               <DialogDescription className="text-xs text-slate-500">
-                Each shop operates as an isolated SQLite tenant with 100% data separation.
+                Current: <span className="font-mono font-medium text-slate-700">{currentShopId || 'default'}</span>
               </DialogDescription>
             </div>
           </div>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4 py-2">
-          {/* Isolation Guarantee Banner */}
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 text-xs text-emerald-900 flex items-start gap-2">
-            <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
-            <span>
-              <strong>Zero-impact sandbox:</strong> Batch sync operations, dead-letter quarantine reviews, or database resets apply solely to this shop tenant.
-            </span>
-          </div>
-
+        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
           {/* Shop Input Field */}
-          <div className="space-y-2">
-            <Label htmlFor="shop-id" className="text-xs font-semibold text-slate-700">
-              Shop Name / Tenant ID
-            </Label>
+          <div className="space-y-1.5">
             <div className="flex gap-2">
               <Input
                 id="shop-id"
@@ -95,37 +85,38 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   setInputShopId(e.target.value);
                   setError(null);
                 }}
-                placeholder="e.g. nike-store-88, tech-mart"
-                className="font-mono text-sm"
+                placeholder="Tenant ID (e.g. store-1)"
+                className="h-9 text-xs font-mono bg-white border-slate-200"
+                autoFocus
               />
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={handleRandomize}
-                className="shrink-0 gap-1 text-xs"
-                title="Generate random shop name"
+                className="h-9 px-2.5 text-xs text-slate-600 border-slate-200 hover:bg-slate-50"
+                title="Generate random name"
               >
-                <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                Randomize
+                <Sparkles className="h-3.5 w-3.5 text-slate-500" />
               </Button>
             </div>
-            {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
+            {error && <p className="text-[11px] text-rose-600 font-medium">{error}</p>}
           </div>
 
           {/* Recent Shops List */}
           {recentShops.length > 0 && (
-            <div className="space-y-1.5 pt-1">
-              <div className="flex items-center gap-1 text-xs text-slate-500 font-medium">
-                <History className="h-3.5 w-3.5" />
-                <span>Your recent shops:</span>
-              </div>
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-medium text-slate-400">Recent:</span>
               <div className="flex flex-wrap gap-1.5">
                 {recentShops.map((s) => (
                   <Badge
                     key={s}
                     variant={s === currentShopId ? 'default' : 'outline'}
-                    className="cursor-pointer hover:bg-slate-100 font-mono text-[11px] py-1 px-2.5 transition-colors"
+                    className={`cursor-pointer text-[11px] font-mono py-0.5 px-2 transition-colors ${
+                      s === currentShopId
+                        ? 'bg-slate-900 text-white border-transparent'
+                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600 font-normal'
+                    }`}
                     onClick={() => {
                       setInputShopId(s);
                       onSelectShop(s);
@@ -139,18 +130,23 @@ export const ShopModal: React.FC<ShopModalProps> = ({
             </div>
           )}
 
-          <DialogFooter className="pt-2 sm:justify-between">
+          <DialogFooter className="pt-2 sm:justify-end gap-2">
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={() => onOpenChange(false)}
+              className="h-8 text-xs text-slate-600 border-slate-200 hover:bg-slate-50"
             >
               Cancel
             </Button>
-            <Button type="submit" size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700">
-              Enter Shop
-              <ArrowRight className="h-3.5 w-3.5" />
+            <Button
+              type="submit"
+              size="sm"
+              className="h-8 text-xs font-medium bg-slate-900 hover:bg-slate-800 text-white shadow-none"
+            >
+              Switch
+              <ArrowRight className="h-3.5 w-3.5 ml-1" />
             </Button>
           </DialogFooter>
         </form>

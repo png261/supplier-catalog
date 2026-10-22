@@ -45,34 +45,34 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   return (
     <div className="space-y-4">
       {/* View Header & Toolbar */}
-      <Card className="p-4 sm:p-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <Package className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+      <Card className="p-3.5 sm:p-4 border-slate-200/80 bg-white shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Package className="h-4 w-4 text-slate-700" />
+            <h2 className="text-base font-semibold text-slate-900 tracking-tight">
               Catalog
             </h2>
-            <Badge variant="secondary" className="font-mono text-xs font-semibold">
+            <Badge variant="secondary" className="font-mono text-xs font-medium px-2 py-0 h-5">
               {formatNumber(total)}
             </Badge>
           </div>
 
           {/* Search & Status Filters */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400 dark:text-slate-500" />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full sm:w-60">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
               <Input
                 placeholder="Search SKU or Name..."
                 value={search}
                 onChange={(e) => onSearchChange(e.target.value)}
-                className="pl-8 h-9 text-xs bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                className="pl-8 h-8 text-xs bg-white border-slate-200"
               />
             </div>
 
             <select
               value={status}
               onChange={(e) => onStatusChange(e.target.value)}
-              className="h-9 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-700 dark:text-slate-300 font-medium shadow-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="h-8 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 font-medium shadow-none focus:outline-none focus:ring-1 focus:ring-slate-400"
             >
               <option value="">All Statuses</option>
               <option value="ACTIVE">ACTIVE only</option>
