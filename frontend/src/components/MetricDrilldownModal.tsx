@@ -165,7 +165,7 @@ export const MetricDrilldownModal: React.FC<MetricDrilldownModalProps> = ({
                           {p.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-slate-500 font-mono text-[11px]">{formatDateTime(p.last_updated_at)}</TableCell>
+                      <TableCell className="text-slate-500 font-mono text-[11px]">{formatDateTime(p.updated_at || p.last_updated_at || p.supplier_timestamp)}</TableCell>
                     </TableRow>
                   ))
                 )}
