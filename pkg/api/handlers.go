@@ -125,7 +125,18 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/events", h.handleEvents)
 }
 
-// handleEvents handles GET /api/events (SSE streaming per tenant).
+// @Summary Stream real-time synchronization events (SSE)
+// @Description Establishes a persistent Server-Sent Events (SSE) connection streaming real-time job progress, status changes, and dead-letter notifications.
+// @Tags Events
+// @Produce text/event-stream
+// @Param X-Shop-Id header string false "Isolated shop tenant ID (default: 'default')"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {string} string "Server-Sent Events text stream"
+// @Failure 400 {object} ErrorResponse "Invalid shop ID"
+// @Failure 500 {object} ErrorResponse "Streaming unsupported (client connection is non-flusher)"
+// @Failure 503 {object} ErrorResponse "SSE Broker closed"
+// @Router /api/events [get]
 func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 	tenant, err := h.resolveTenant(r)
 	if err != nil {
@@ -152,7 +163,18 @@ func (h *Handler) CancelActiveJob() {
 	}
 }
 
-// handleCancelJob handles POST /api/jobs/{id}/cancel.
+// @Summary Cancel active synchronization job
+// @Description Sends a cancellation signal to stop a currently running synchronization job.
+// @Tags Jobs
+// @Produce json
+// @Param id path string true "Job ID to cancel"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {object} JobCancelResponse "Cancellation signal sent successfully"
+// @Failure 400 {object} ErrorResponse "Missing job ID or invalid request"
+// @Failure 404 {object} ErrorResponse "Job not currently running or active"
+// @Router /api/jobs/{id}/cancel [post]
 func (h *Handler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {
@@ -176,14 +198,25 @@ func (h *Handler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	tenant.Unlock()
 
 	cancel()
-	h.writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "cancelling",
-		"job_id":  jobID,
-		"message": "cancellation signal sent successfully",
+	h.writeJSON(w, http.StatusOK, JobCancelResponse{
+		Status:  "cancelling",
+		JobID:   jobID,
+		Message: "cancellation signal sent successfully",
 	})
 }
 
-// handleResetDatabase handles POST /api/database/reset.
+// @Summary Reset catalog database
+// @Description Clears all products, jobs, checkpoints, and dead-letter issues for the specified tenant. Blocked if a job is active.
+// @Tags Database
+// @Produce json
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {object} DatabaseResetResponse "Database reset to clean state"
+// @Failure 400 {object} ErrorResponse "Invalid request or shop ID"
+// @Failure 409 {object} ErrorResponse "Cannot reset database while a job is running"
+// @Failure 500 {object} ErrorResponse "Failed to reset database"
+// @Router /api/database/reset [post]
 func (h *Handler) handleResetDatabase(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tenant, err := h.resolveTenant(r)
@@ -206,9 +239,9 @@ func (h *Handler) handleResetDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "success",
-		"message": "database reset to clean state",
+	h.writeJSON(w, http.StatusOK, DatabaseResetResponse{
+		Status:  "success",
+		Message: "database reset to clean state",
 	})
 }
 
@@ -227,7 +260,20 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, message string, 
 	})
 }
 
-// handleStartJob handles POST /api/jobs.
+// @Summary Start synchronization job
+// @Description Initiates a catalog synchronization job in background. Supports synthetic data generation ("generator") or direct batch ingestion ("batches").
+// @Tags Jobs
+// @Accept json
+// @Produce json
+// @Param X-Shop-Id header string false "Isolated shop tenant ID (default: 'default')"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Param request body JobStartRequest false "Synchronization job configuration and payload"
+// @Success 202 {object} SyncJobResponse "Synchronization job accepted and running in background"
+// @Failure 400 {object} ErrorResponse "Invalid request payload, invalid ratios, or invalid shop ID"
+// @Failure 409 {object} ErrorResponse "A synchronization job is already running for this tenant"
+// @Failure 500 {object} ErrorResponse "Internal database or server error"
+// @Router /api/jobs [post]
 func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -486,7 +532,22 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// handleResumeJob handles POST /api/jobs/{id}/resume.
+// @Summary Resume interrupted synchronization job
+// @Description Resumes an interrupted catalog synchronization job from its last committed checkpoint.
+// @Tags Jobs
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID to resume"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Param request body JobResumeRequest false "Optional generator parameters to override on resumption"
+// @Success 202 {object} SyncJobResponse "Job successfully resumed and executing in background"
+// @Failure 400 {object} ErrorResponse "Missing job ID, malformed body, or invalid config"
+// @Failure 404 {object} ErrorResponse "Sync job not found"
+// @Failure 409 {object} ErrorResponse "Job already running or already completed"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /api/jobs/{id}/resume [post]
 func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	jobID := r.PathValue("id")
@@ -674,7 +735,20 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// handleListJobs handles GET /api/jobs.
+// @Summary List synchronization jobs
+// @Description Returns a paginated list of catalog synchronization jobs, with optional status filtering.
+// @Tags Jobs
+// @Produce json
+// @Param limit query int false "Maximum number of records to return (default 20, min 1)"
+// @Param offset query int false "Pagination offset (default 0, min 0)"
+// @Param status query string false "Filter by job status (PENDING, RUNNING, INTERRUPTED, COMPLETED, FAILED)"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {object} JobListResponse "Paginated list of synchronization jobs"
+// @Failure 400 {object} ErrorResponse "Invalid limit, offset, or status filter"
+// @Failure 500 {object} ErrorResponse "Internal database query error"
+// @Router /api/jobs [get]
 func (h *Handler) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
@@ -749,7 +823,19 @@ func (h *Handler) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetJob handles GET /api/jobs/{id}.
+// @Summary Get synchronization job details
+// @Description Retrieves full status and checkpoint audit history for a specific synchronization job.
+// @Tags Jobs
+// @Produce json
+// @Param id path string true "Job ID"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {object} JobDetailResponse "Job metadata and committed batch checkpoints"
+// @Failure 400 {object} ErrorResponse "Missing job ID or invalid request"
+// @Failure 404 {object} ErrorResponse "Sync job not found"
+// @Failure 500 {object} ErrorResponse "Internal database query error"
+// @Router /api/jobs/{id} [get]
 func (h *Handler) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	jobID := r.PathValue("id")
@@ -789,7 +875,21 @@ func (h *Handler) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleListDeadLetter handles GET /api/dead-letter.
+// @Summary List quarantined dead-letter records
+// @Description Returns paginated dead-letter records with filtering by job ID and quarantine reason.
+// @Tags Dead Letter
+// @Produce json
+// @Param limit query int false "Maximum records to return (default 20, min 1)"
+// @Param offset query int false "Pagination offset (default 0, min 0)"
+// @Param job_id query string false "Filter records by Job ID"
+// @Param reason query string false "Filter records by failure reason"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {object} DeadLetterListResponse "Paginated list of dead-letter records"
+// @Failure 400 {object} ErrorResponse "Invalid limit, offset, or shop ID"
+// @Failure 500 {object} ErrorResponse "Internal database query error"
+// @Router /api/dead-letter [get]
 func (h *Handler) handleListDeadLetter(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
@@ -840,16 +940,21 @@ func (h *Handler) handleListDeadLetter(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ResolveDeadLetterRequest defines the payload for correcting a quarantined dead-letter product.
-type ResolveDeadLetterRequest struct {
-	SKU       string  `json:"sku"`
-	Name      string  `json:"name"`
-	Price     float64 `json:"price"`
-	Status    string  `json:"status"`
-	Timestamp string  `json:"timestamp"`
-}
-
-// handleResolveDeadLetter handles POST /api/dead-letter/{id}/resolve.
+// @Summary Resolve quarantined dead-letter record
+// @Description Remediates an invalid dead-letter record and imports the corrected product into the catalog.
+// @Tags Dead Letter
+// @Accept json
+// @Produce json
+// @Param id path string true "Dead-letter Issue ID"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Param request body ResolveDeadLetterRequest true "Corrected product details"
+// @Success 200 {object} ResolveDeadLetterResponse "Product resolved and imported to catalog"
+// @Failure 400 {object} ErrorResponse "Validation error (invalid price, status, or timestamp)"
+// @Failure 404 {object} ErrorResponse "Dead-letter issue not found"
+// @Failure 500 {object} ErrorResponse "Internal database error"
+// @Router /api/dead-letter/{id}/resolve [post]
 func (h *Handler) handleResolveDeadLetter(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	issueID := r.PathValue("id")
@@ -925,14 +1030,28 @@ func (h *Handler) handleResolveDeadLetter(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	h.writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "success",
-		"message": "product resolved and imported to catalog",
-		"product": prod,
+	h.writeJSON(w, http.StatusOK, ResolveDeadLetterResponse{
+		Status:  "success",
+		Message: "product resolved and imported to catalog",
+		Product: *prod,
 	})
 }
 
-// handleListProducts handles GET /api/products.
+// @Summary List catalog products
+// @Description Retrieves a paginated list of catalog products, with optional status filtering and text search.
+// @Tags Products
+// @Produce json
+// @Param limit query int false "Maximum records to return (default 20, min 1)"
+// @Param offset query int false "Pagination offset (default 0, min 0)"
+// @Param status query string false "Filter by product status (ACTIVE or WITHDRAWN)"
+// @Param search query string false "Search substring in SKU or product name"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {object} ProductListResponse "Paginated catalog products"
+// @Failure 400 {object} ErrorResponse "Invalid limit, offset, status, or shop ID"
+// @Failure 500 {object} ErrorResponse "Internal database query error"
+// @Router /api/products [get]
 func (h *Handler) handleListProducts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
@@ -988,7 +1107,21 @@ func (h *Handler) handleListProducts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetMetrics handles GET /api/metrics.
+// @Summary Get synchronization metrics and analytics
+// @Description Computes aggregated synchronization performance metrics, quality score, and matching sync runs.
+// @Tags Metrics
+// @Produce json
+// @Param time_range query string false "Time preset (today, yesterday, 7d, last7days, all, custom) default 'today'"
+// @Param job_id query string false "Filter metrics by specific Job ID"
+// @Param from query string false "Custom start timestamp (RFC3339 or YYYY-MM-DD)"
+// @Param to query string false "Custom end timestamp (RFC3339 or YYYY-MM-DD)"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {object} MetricsResponse "Aggregated metrics and matching sync jobs"
+// @Failure 400 {object} ErrorResponse "Invalid time_range, date format, or shop ID"
+// @Failure 500 {object} ErrorResponse "Internal database error"
+// @Router /api/metrics [get]
 func (h *Handler) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()

@@ -9,6 +9,7 @@ SHELL := /usr/bin/env bash
 # Go & Build Configuration
 # ------------------------------------------------------------------------------
 GO ?= go
+SWAG := $(shell command -v swag 2>/dev/null || echo $(shell go env GOPATH)/bin/swag)
 GOFLAGS ?=
 CGO_ENABLED ?= 0
 
@@ -119,6 +120,19 @@ ingest-demo: ## Ingest all 4 narrative demo fixture batches into running server
 	@echo "==> Ingesting sample fixture batches against running catalog server..."
 	@bash scripts/ingest-fixtures.sh
 
+##@ API Documentation
+.PHONY: swagger docs
+swagger: ## Generate declarative Swagger 2.0 / OpenAPI documentation using swaggo/swag
+	@echo "==> Generating API documentation with swag..."
+	@if ! command -v $(SWAG) >/dev/null 2>&1 && [ ! -x "$(SWAG)" ]; then \
+		echo "ℹ️  swag not found, installing..."; \
+		$(GO) install github.com/swaggo/swag/cmd/swag@v1.16.4; \
+	fi
+	$(SWAG) init -g cmd/server/main.go --parseInternal
+	@echo "✅ Swagger documentation generated in docs/"
+
+docs: swagger ## Alias for swagger target
+
 ##@ Testing & Quality Assurance
 .PHONY: test test-race coverage lint fmt vet
 test: ## Execute unit and integration tests with race detector
@@ -131,7 +145,7 @@ test-race: ## Execute 5-iteration race stress tests (go test -race -count=5 ./..
 
 coverage: ## Execute coverage gate (scripts/check-coverage.sh >= 90%) and generate HTML report
 	@echo "==> Generating coverage profile (mode=atomic)..."
-	$(GO) test -coverprofile=$(COVERAGE_FILE) -covermode=atomic -coverpkg=./pkg/... ./...
+	$(GO) test -count=1 -coverprofile=$(COVERAGE_FILE) -covermode=atomic -coverpkg=./pkg/... ./...
 	@echo "==> Verifying statement coverage threshold (>= $(COVERAGE_THRESHOLD)%)..."
 	@if [ -x "./scripts/check-coverage.sh" ]; then \
 		./scripts/check-coverage.sh $(COVERAGE_FILE) $(COVERAGE_THRESHOLD); \

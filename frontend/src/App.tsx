@@ -12,7 +12,7 @@ import { ShopModal } from './components/ShopModal';
 import { ShopGatekeeper } from './components/ShopGatekeeper';
 import { Button } from './components/ui/button';
 import { Toaster, toast } from 'sonner';
-import { SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal, Play, RefreshCw, RotateCw, Square } from 'lucide-react';
 
 import {
   fetchCatalog,
@@ -728,7 +728,7 @@ export const AppContent: React.FC = () => {
               </p>
             </div>
 
-            {/* Quick Scenario Launch Button */}
+            {/* Quick Scenario & Start Sync Launch Buttons */}
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -739,6 +739,46 @@ export const AppContent: React.FC = () => {
                 <SlidersHorizontal className="h-3.5 w-3.5 mr-1.5 text-slate-500 dark:text-slate-400" />
                 Select Scenario
               </Button>
+
+              {isSyncing ? (
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    size="sm"
+                    disabled
+                    className="h-8 text-xs font-semibold bg-blue-600 text-white opacity-90 cursor-not-allowed"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    Syncing...
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancelSync}
+                    className="h-8 text-xs font-semibold border-rose-300 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900/60 dark:text-rose-400"
+                  >
+                    <Square className="h-3 w-3 mr-1 fill-current" />
+                    Halt
+                  </Button>
+                </div>
+              ) : isInterrupted ? (
+                <Button
+                  size="sm"
+                  onClick={handleStartSync}
+                  className="h-8 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
+                >
+                  <RotateCw className="h-3.5 w-3.5 mr-1.5" />
+                  Resume Sync
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={handleStartSync}
+                  className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
+                >
+                  <Play className="h-3.5 w-3.5 mr-1.5 fill-current" />
+                  Start Sync
+                </Button>
+              )}
             </div>
           </div>
 
@@ -754,6 +794,10 @@ export const AppContent: React.FC = () => {
                 elapsedTime={elapsedTime}
                 smartStatusText={smartStatusText}
                 smartStatusType={smartStatusType}
+                isSyncing={isSyncing}
+                isInterrupted={isInterrupted}
+                onStartSync={handleStartSync}
+                onCancelSync={handleCancelSync}
                 analyticsRange={analyticsRange}
                 analyticsFrom={analyticsFrom}
                 analyticsTo={analyticsTo}

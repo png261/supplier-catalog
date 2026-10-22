@@ -3,10 +3,13 @@ package api
 import (
 	"net/http"
 
+	_ "coderpush/docs"
 	"coderpush/pkg/domain"
 	"coderpush/pkg/storage"
 	catalogSync "coderpush/pkg/sync"
 	"coderpush/web"
+
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
 // ServerOption configures server behavior.
@@ -34,6 +37,9 @@ func NewServer(store storage.Storage, eng catalogSync.Engine, broker *Broker, st
 
 	rootMux := http.NewServeMux()
 	handler.RegisterRoutes(rootMux)
+	rootMux.Handle("/swagger/", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
 	rootMux.Handle("/", web.AssetHandler(staticDir))
 
 	return Recoverer(Logging(CORS(rootMux)))
