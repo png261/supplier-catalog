@@ -14,7 +14,6 @@ import {
 } from 'recharts';
 import { formatNumber } from '../lib/utils';
 import { PieChart as PieIcon, TrendingUp } from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
 
 interface ChartsSectionProps {
   totals: {
@@ -40,8 +39,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
   totals,
   timeSeries,
 }) => {
-  const { actualTheme } = useTheme();
-  const isDark = actualTheme === 'dark';
+  const isDark = false; // Light mode only
 
   const pieData = [
     { name: 'Active Catalog', value: totals.active_products, color: '#10b981' },

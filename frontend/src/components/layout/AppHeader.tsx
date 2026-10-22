@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
-import { ThemeToggle } from "../ThemeToggle";
 import { NavItemKey } from "./AppSidebar";
 
 interface AppHeaderProps {
@@ -88,9 +87,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               Sync In Flight
             </Badge>
           )}
-
-          {/* Theme Toggle Component */}
-          <ThemeToggle />
 
           {/* Reset Database Button */}
           <Button

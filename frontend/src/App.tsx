@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AppSidebar, NavItemKey } from './components/layout/AppSidebar';
 import { AppHeader } from './components/layout/AppHeader';
-import { ThemeProvider } from './context/ThemeContext';
 import { OverviewView } from './components/views/OverviewView';
 import { CatalogView } from './components/views/CatalogView';
 import { AttentionView } from './components/views/AttentionView';
@@ -840,11 +839,7 @@ export const AppContent: React.FC = () => {
 };
 
 export const App: React.FC = () => {
-  return (
-    <ThemeProvider defaultTheme="light" storageKey="catalog-engine-theme">
-      <AppContent />
-    </ThemeProvider>
-  );
+  return <AppContent />;
 };
 
 export default App;
