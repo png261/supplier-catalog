@@ -241,5 +241,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy frontend/dist --project-name supplier-catalog-frontend
+          command: pages deploy frontend/dist --project-name supplier-catalog-frontend --branch main
 
