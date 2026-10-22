@@ -19,6 +19,18 @@ import (
 	catalogSync "coderpush/pkg/sync"
 )
 
+// HandlerOption configures Handler behavior.
+type HandlerOption func(*Handler)
+
+// WithHandlerDataDir configures the persistent base data directory for multi-tenant shop databases.
+func WithHandlerDataDir(dataDir string) HandlerOption {
+	return func(h *Handler) {
+		if h.tenantManager != nil {
+			h.tenantManager.baseDir = dataDir
+		}
+	}
+}
+
 // Handler serves REST API and control plane endpoints.
 type Handler struct {
 	storage       storage.Storage
@@ -28,16 +40,74 @@ type Handler struct {
 	activeJobID   string
 	activeCancel  context.CancelFunc
 	activeConfigs map[string]generator.Config
+	tenantManager *TenantManager
+}
+
+// Ensure Handler implements tenantOps for the default tenant.
+var _ tenantOps = (*Handler)(nil)
+
+func (h *Handler) GetID() string                             { return "default" }
+func (h *Handler) GetStorage() storage.Storage               { return h.storage }
+func (h *Handler) GetEngine() catalogSync.Engine             { return h.engine }
+func (h *Handler) GetBroker() *Broker                        { return h.broker }
+func (h *Handler) Lock()                                     { h.mu.Lock() }
+func (h *Handler) Unlock()                                   { h.mu.Unlock() }
+func (h *Handler) GetActiveJobID() string                    { return h.activeJobID }
+func (h *Handler) SetActiveJobID(id string)                  { h.activeJobID = id }
+func (h *Handler) GetActiveCancel() context.CancelFunc       { return h.activeCancel }
+func (h *Handler) SetActiveCancel(cancel context.CancelFunc) { h.activeCancel = cancel }
+
+func (h *Handler) GetActiveConfig(jobID string) (generator.Config, bool) {
+	if h.activeConfigs == nil {
+		return generator.Config{}, false
+	}
+	cfg, ok := h.activeConfigs[jobID]
+	return cfg, ok
+}
+
+func (h *Handler) SetActiveConfig(jobID string, cfg generator.Config) {
+	if h.activeConfigs == nil {
+		h.activeConfigs = make(map[string]generator.Config)
+	}
+	h.activeConfigs[jobID] = cfg
+}
+
+func (h *Handler) RemoveActiveConfig(jobID string) {
+	if h.activeConfigs != nil {
+		delete(h.activeConfigs, jobID)
+	}
+}
+
+func (h *Handler) ResetActive() {
+	h.activeJobID = ""
+	h.activeCancel = nil
+}
+
+// resolveTenant resolves either the default tenant or the dynamic shop tenant from HTTP request.
+func (h *Handler) resolveTenant(r *http.Request) (tenantOps, error) {
+	shopID := ExtractShopID(r)
+	if shopID == "" || shopID == "default" {
+		return h, nil
+	}
+	if h.tenantManager == nil {
+		return h, nil
+	}
+	return h.tenantManager.GetOrCreate(shopID)
 }
 
 // NewHandler initializes a new API Handler.
-func NewHandler(store storage.Storage, eng catalogSync.Engine, broker *Broker) *Handler {
-	return &Handler{
+func NewHandler(store storage.Storage, eng catalogSync.Engine, broker *Broker, opts ...HandlerOption) *Handler {
+	h := &Handler{
 		storage:       store,
 		engine:        eng,
 		broker:        broker,
 		activeConfigs: make(map[string]generator.Config),
 	}
+	h.tenantManager = NewTenantManager(".", h)
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // RegisterRoutes registers all API endpoints on the given ServeMux.
@@ -52,7 +122,17 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/dead-letter/{id}/resolve", h.handleResolveDeadLetter)
 	mux.HandleFunc("GET /api/products", h.handleListProducts)
 	mux.HandleFunc("GET /api/metrics", h.handleGetMetrics)
-	mux.HandleFunc("GET /api/events", h.broker.ServeHTTP)
+	mux.HandleFunc("GET /api/events", h.handleEvents)
+}
+
+// handleEvents handles GET /api/events (SSE streaming per tenant).
+func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s","code":"INVALID_SHOP_ID"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	tenant.GetBroker().ServeHTTP(w, r)
 }
 
 // Routes returns an http.Handler with all API routes registered.
@@ -80,14 +160,20 @@ func (h *Handler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.mu.Lock()
-	if h.activeJobID != jobID || h.activeCancel == nil {
-		h.mu.Unlock()
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	tenant.Lock()
+	if tenant.GetActiveJobID() != jobID || tenant.GetActiveCancel() == nil {
+		tenant.Unlock()
 		h.writeError(w, http.StatusNotFound, fmt.Sprintf("job %s is not currently running or active", jobID), ErrCodeJobNotFound)
 		return
 	}
-	cancel := h.activeCancel
-	h.mu.Unlock()
+	cancel := tenant.GetActiveCancel()
+	tenant.Unlock()
 
 	cancel()
 	h.writeJSON(w, http.StatusOK, map[string]any{
@@ -100,16 +186,22 @@ func (h *Handler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 // handleResetDatabase handles POST /api/database/reset.
 func (h *Handler) handleResetDatabase(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	h.mu.Lock()
-	if h.activeJobID != "" {
-		activeID := h.activeJobID
-		h.mu.Unlock()
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	tenant.Lock()
+	if tenant.GetActiveJobID() != "" {
+		activeID := tenant.GetActiveJobID()
+		tenant.Unlock()
 		h.writeError(w, http.StatusConflict, fmt.Sprintf("cannot reset database while job %s is running", activeID), ErrCodeJobConflict)
 		return
 	}
-	h.mu.Unlock()
+	tenant.Unlock()
 
-	if err := h.storage.Reset(ctx); err != nil {
+	if err := tenant.GetStorage().Reset(ctx); err != nil {
 		h.writeError(w, http.StatusInternalServerError, "failed to reset database: "+err.Error(), ErrCodeInternalError)
 		return
 	}
@@ -138,6 +230,12 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, message string, 
 // handleStartJob handles POST /api/jobs.
 func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
 
 	// 1. Parse request body and validate inputs prior to locking
 	var req JobStartRequest
@@ -250,25 +348,25 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Synchronized Active Job Verification, Storage Creation & State Transition
-	h.mu.Lock()
+	tenant.Lock()
 
 	// Check 2a: In-memory active job (fast path)
-	if h.activeJobID != "" {
-		activeID := h.activeJobID
-		h.mu.Unlock()
+	if tenant.GetActiveJobID() != "" {
+		activeID := tenant.GetActiveJobID()
+		tenant.Unlock()
 		h.writeError(w, http.StatusConflict, fmt.Sprintf("a synchronization job is already running: %s", activeID), ErrCodeJobConflict)
 		return
 	}
 
 	// Check 2b: Persistent storage active job
-	active, err := h.storage.GetActiveJob(ctx)
+	active, err := tenant.GetStorage().GetActiveJob(ctx)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, domain.ErrNotFound) {
-		h.mu.Unlock()
+		tenant.Unlock()
 		h.writeError(w, http.StatusInternalServerError, "failed to check active jobs: "+err.Error(), ErrCodeInternalError)
 		return
 	}
 	if active != nil {
-		h.mu.Unlock()
+		tenant.Unlock()
 		h.writeError(w, http.StatusConflict, fmt.Sprintf("a synchronization job is already running: %s", active.JobID), ErrCodeJobConflict)
 		return
 	}
@@ -285,20 +383,20 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:           now,
 	}
 
-	if err := h.storage.CreateJob(ctx, job); err != nil {
-		h.mu.Unlock()
+	if err := tenant.GetStorage().CreateJob(ctx, job); err != nil {
+		tenant.Unlock()
 		h.writeError(w, http.StatusInternalServerError, "failed to create sync job: "+err.Error(), ErrCodeInternalError)
 		return
 	}
 
 	// 4. Mark job active in memory while holding lock
 	bgCtx, cancel := context.WithCancel(context.Background())
-	h.activeJobID = jobID
-	h.activeCancel = cancel
+	tenant.SetActiveJobID(jobID)
+	tenant.SetActiveCancel(cancel)
 	if req.Mode == "generator" {
-		h.activeConfigs[jobID] = cfg
+		tenant.SetActiveConfig(jobID, cfg)
 	}
-	h.mu.Unlock()
+	tenant.Unlock()
 
 	// 5. Return 202 Accepted
 	h.writeJSON(w, http.StatusAccepted, SyncJobResponse{
@@ -312,7 +410,7 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// 6. Broadcast job_started event
-	h.broker.Publish(Event{
+	tenant.GetBroker().Publish(Event{
 		Type:  "job_started",
 		JobID: jobID,
 		Data: map[string]any{
@@ -328,12 +426,11 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer cancel()
 		defer func() {
-			h.mu.Lock()
-			if h.activeJobID == jobID {
-				h.activeJobID = ""
-				h.activeCancel = nil
+			tenant.Lock()
+			if tenant.GetActiveJobID() == jobID {
+				tenant.ResetActive()
 			}
-			h.mu.Unlock()
+			tenant.Unlock()
 		}()
 
 		var stream <-chan domain.Batch
@@ -352,7 +449,7 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 			stream = gen.StreamBatches(bgCtx, jobID)
 		}
 
-		finalJob, err := h.engine.RunJob(bgCtx, jobID, stream)
+		finalJob, err := tenant.GetEngine().RunJob(bgCtx, jobID, stream)
 		if err != nil {
 			var committedIdx int = -1
 			var sum domain.ChangeSummary
@@ -360,7 +457,7 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 				committedIdx = finalJob.CommittedBatchIndex
 				sum = finalJob.Summary
 			}
-			h.broker.Publish(Event{
+			tenant.GetBroker().Publish(Event{
 				Type:  "job_interrupted",
 				JobID: jobID,
 				Data: map[string]any{
@@ -375,7 +472,7 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.broker.Publish(Event{
+		tenant.GetBroker().Publish(Event{
 			Type:  "job_completed",
 			JobID: jobID,
 			Data: map[string]any{
@@ -398,6 +495,12 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
 	// 1. Parse optional resume config BEFORE locking
 	var resumeReq JobResumeRequest
 	if r.Body != nil && r.ContentLength != 0 {
@@ -408,33 +511,33 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Synchronized Active Job Verification, State Check & Status Transition
-	h.mu.Lock()
+	tenant.Lock()
 
 	// Check 2a: In-memory active job (fast path)
-	if h.activeJobID != "" {
-		activeID := h.activeJobID
-		h.mu.Unlock()
+	if tenant.GetActiveJobID() != "" {
+		activeID := tenant.GetActiveJobID()
+		tenant.Unlock()
 		h.writeError(w, http.StatusConflict, fmt.Sprintf("job %s is already running", activeID), ErrCodeJobConflict)
 		return
 	}
 
 	// Check 2b: Persistent storage active job
-	active, err := h.storage.GetActiveJob(ctx)
+	active, err := tenant.GetStorage().GetActiveJob(ctx)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, domain.ErrNotFound) {
-		h.mu.Unlock()
+		tenant.Unlock()
 		h.writeError(w, http.StatusInternalServerError, "failed checking active jobs: "+err.Error(), ErrCodeInternalError)
 		return
 	}
 	if active != nil {
-		h.mu.Unlock()
+		tenant.Unlock()
 		h.writeError(w, http.StatusConflict, fmt.Sprintf("job %s is already running", active.JobID), ErrCodeJobConflict)
 		return
 	}
 
 	// Check 2c: Fetch target job
-	job, err := h.storage.GetJob(ctx, jobID)
+	job, err := tenant.GetStorage().GetJob(ctx, jobID)
 	if err != nil {
-		h.mu.Unlock()
+		tenant.Unlock()
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "sync job not found: "+jobID, ErrCodeJobNotFound)
 			return
@@ -445,18 +548,18 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 
 	// Check 2d: Verify target job state
 	if job.Status == domain.JobStatusCompleted {
-		h.mu.Unlock()
+		tenant.Unlock()
 		h.writeError(w, http.StatusConflict, "job is already completed and cannot be resumed", ErrCodeJobConflict)
 		return
 	}
 	if job.Status == domain.JobStatusRunning {
-		h.mu.Unlock()
+		tenant.Unlock()
 		h.writeError(w, http.StatusConflict, fmt.Sprintf("job %s is already running", jobID), ErrCodeJobConflict)
 		return
 	}
 
 	// 3. Resolve and validate generator config for resumption
-	cfg, ok := h.activeConfigs[jobID]
+	cfg, ok := tenant.GetActiveConfig(jobID)
 	if !ok {
 		cfg = generator.DefaultConfig()
 		cfg.TotalBatches = job.TotalBatches
@@ -472,24 +575,24 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := cfg.Validate(); err != nil {
-		h.mu.Unlock()
+		tenant.Unlock()
 		h.writeError(w, http.StatusBadRequest, "invalid resume config: "+err.Error(), ErrCodeInvalidRequest)
 		return
 	}
 
 	// 4. CRITICAL: Atomically transition job status to RUNNING in storage while holding lock
-	if err := h.storage.UpdateJobStatus(ctx, jobID, domain.JobStatusRunning); err != nil {
-		h.mu.Unlock()
+	if err := tenant.GetStorage().UpdateJobStatus(ctx, jobID, domain.JobStatusRunning); err != nil {
+		tenant.Unlock()
 		h.writeError(w, http.StatusInternalServerError, "failed to update job status: "+err.Error(), ErrCodeInternalError)
 		return
 	}
 
 	// 5. Mark job active in memory while holding lock
 	bgCtx, cancel := context.WithCancel(context.Background())
-	h.activeJobID = jobID
-	h.activeCancel = cancel
-	h.activeConfigs[jobID] = cfg
-	h.mu.Unlock()
+	tenant.SetActiveJobID(jobID)
+	tenant.SetActiveCancel(cancel)
+	tenant.SetActiveConfig(jobID, cfg)
+	tenant.Unlock()
 
 	// 6. Respond 202 Accepted
 	now := time.Now().UTC()
@@ -504,7 +607,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// 7. Broadcast job_started event for resumption
-	h.broker.Publish(Event{
+	tenant.GetBroker().Publish(Event{
 		Type:  "job_started",
 		JobID: jobID,
 		Data: map[string]any{
@@ -521,12 +624,11 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer cancel()
 		defer func() {
-			h.mu.Lock()
-			if h.activeJobID == jobID {
-				h.activeJobID = ""
-				h.activeCancel = nil
+			tenant.Lock()
+			if tenant.GetActiveJobID() == jobID {
+				tenant.ResetActive()
 			}
-			h.mu.Unlock()
+			tenant.Unlock()
 		}()
 
 		gen, err := generator.New(cfg)
@@ -535,7 +637,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 		}
 		stream := gen.StreamBatches(bgCtx, jobID)
 
-		finalJob, err := h.engine.ResumeJob(bgCtx, jobID, stream)
+		finalJob, err := tenant.GetEngine().ResumeJob(bgCtx, jobID, stream)
 		if err != nil {
 			var committedIdx int = -1
 			var sum domain.ChangeSummary
@@ -543,7 +645,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 				committedIdx = finalJob.CommittedBatchIndex
 				sum = finalJob.Summary
 			}
-			h.broker.Publish(Event{
+			tenant.GetBroker().Publish(Event{
 				Type:  "job_interrupted",
 				JobID: jobID,
 				Data: map[string]any{
@@ -558,7 +660,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.broker.Publish(Event{
+		tenant.GetBroker().Publish(Event{
 			Type:  "job_completed",
 			JobID: jobID,
 			Data: map[string]any{
@@ -576,6 +678,12 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
+
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
 
 	limit := 20
 	if lStr := q.Get("limit"); lStr != "" {
@@ -612,7 +720,7 @@ func (h *Handler) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	jobs, total, err := h.storage.ListJobs(ctx, limit, offset)
+	jobs, total, err := tenant.GetStorage().ListJobs(ctx, limit, offset)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "failed to query sync jobs: "+err.Error(), ErrCodeInternalError)
 		return
@@ -650,7 +758,13 @@ func (h *Handler) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.storage.GetJob(ctx, jobID)
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	job, err := tenant.GetStorage().GetJob(ctx, jobID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "sync job not found: "+jobID, ErrCodeJobNotFound)
@@ -660,7 +774,7 @@ func (h *Handler) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	checkpoints, err := h.storage.GetBatchCheckpoints(ctx, jobID)
+	checkpoints, err := tenant.GetStorage().GetBatchCheckpoints(ctx, jobID)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "failed to retrieve checkpoints: "+err.Error(), ErrCodeInternalError)
 		return
@@ -679,6 +793,12 @@ func (h *Handler) handleGetJob(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleListDeadLetter(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
+
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
 
 	limit := 20
 	if lStr := q.Get("limit"); lStr != "" {
@@ -703,7 +823,7 @@ func (h *Handler) handleListDeadLetter(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(q.Get("job_id"))
 	reason := strings.TrimSpace(q.Get("reason"))
 
-	issues, total, err := h.storage.ListDeadLetterRecords(ctx, jobID, reason, limit, offset)
+	issues, total, err := tenant.GetStorage().ListDeadLetterRecords(ctx, jobID, reason, limit, offset)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "failed to list dead-letter records: "+err.Error(), ErrCodeInternalError)
 		return
@@ -735,6 +855,12 @@ func (h *Handler) handleResolveDeadLetter(w http.ResponseWriter, r *http.Request
 	issueID := r.PathValue("id")
 	if strings.TrimSpace(issueID) == "" {
 		h.writeError(w, http.StatusBadRequest, "issue ID is required in URL path", ErrCodeInvalidRequest)
+		return
+	}
+
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
 		return
 	}
 
@@ -790,7 +916,7 @@ func (h *Handler) handleResolveDeadLetter(w http.ResponseWriter, r *http.Request
 		UpdatedAt:         time.Now().UTC(),
 	}
 
-	if err := h.storage.ResolveDeadLetter(ctx, issueID, prod); err != nil {
+	if err := tenant.GetStorage().ResolveDeadLetter(ctx, issueID, prod); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "dead letter issue not found", ErrCodeNotFound)
 			return
@@ -810,6 +936,12 @@ func (h *Handler) handleResolveDeadLetter(w http.ResponseWriter, r *http.Request
 func (h *Handler) handleListProducts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
+
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
 
 	limit := 20
 	if lStr := q.Get("limit"); lStr != "" {
@@ -839,7 +971,7 @@ func (h *Handler) handleListProducts(w http.ResponseWriter, r *http.Request) {
 
 	search := q.Get("search")
 
-	products, total, err := h.storage.ListProducts(ctx, status, search, limit, offset)
+	products, total, err := tenant.GetStorage().ListProducts(ctx, status, search, limit, offset)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "failed to list products: "+err.Error(), ErrCodeInternalError)
 		return
@@ -860,6 +992,12 @@ func (h *Handler) handleListProducts(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
+
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
 
 	timeRange := strings.TrimSpace(strings.ToLower(q.Get("time_range")))
 	jobID := strings.TrimSpace(q.Get("job_id"))
@@ -921,7 +1059,7 @@ func (h *Handler) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	agg, jobs, err := h.storage.GetMetrics(ctx, filter)
+	agg, jobs, err := tenant.GetStorage().GetMetrics(ctx, filter)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "failed to retrieve metrics: "+err.Error(), ErrCodeInternalError)
 		return

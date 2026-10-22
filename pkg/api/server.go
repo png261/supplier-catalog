@@ -9,9 +9,28 @@ import (
 	"coderpush/web"
 )
 
+// ServerOption configures server behavior.
+type ServerOption func(*serverConfig)
+
+type serverConfig struct {
+	dataDir string
+}
+
+// WithDataDir configures the persistent base data directory for multi-tenant shop databases.
+func WithDataDir(dataDir string) ServerOption {
+	return func(cfg *serverConfig) {
+		cfg.dataDir = dataDir
+	}
+}
+
 // NewServer builds and returns the complete HTTP handler stack combining REST API and static frontend assets.
-func NewServer(store storage.Storage, eng catalogSync.Engine, broker *Broker, staticDir string) http.Handler {
-	handler := NewHandler(store, eng, broker)
+func NewServer(store storage.Storage, eng catalogSync.Engine, broker *Broker, staticDir string, opts ...ServerOption) http.Handler {
+	cfg := &serverConfig{dataDir: "."}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	handler := NewHandler(store, eng, broker, WithHandlerDataDir(cfg.dataDir))
 
 	rootMux := http.NewServeMux()
 	handler.RegisterRoutes(rootMux)

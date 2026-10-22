@@ -88,8 +88,14 @@ func Run(ctx context.Context, opts *ServerOptions, stdout, stderr io.Writer) err
 	progressHook := api.NewProgressHook(broker)
 	engine := catalogSync.NewEngine(store, catalogSync.WithProgressHook(progressHook))
 
-	// Construct HTTP handler stack
-	serverHandler := api.NewServer(store, engine, broker, opts.StaticDir)
+	// Construct HTTP handler stack with multi-tenant data directory
+	dataDir := "data"
+	if envData := os.Getenv("DATA_DIR"); envData != "" {
+		dataDir = envData
+	} else if opts.DBPath != ":memory:" && opts.DBPath != "" {
+		dataDir = filepath.Dir(opts.DBPath)
+	}
+	serverHandler := api.NewServer(store, engine, broker, opts.StaticDir, api.WithDataDir(dataDir))
 
 	httpServer := &http.Server{
 		Addr:              fmt.Sprintf(":%d", opts.Port),

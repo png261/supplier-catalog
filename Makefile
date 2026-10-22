@@ -69,8 +69,17 @@ help: ## Display this self-documenting help menu
 	@echo ""
 
 ##@ Build & Execution
-.PHONY: build build-server build-generator
-build: build-server build-generator ## Compile both server and generator standalone binaries into bin/
+.PHONY: build build-server build-generator build-frontend
+build: build-frontend build-server build-generator ## Compile frontend and both server and generator standalone binaries into bin/
+
+build-frontend: ## Build modern shadcn/ui React frontend into web/static/
+	@echo "==> Building frontend assets (Vite + React + Tailwind + shadcn/ui)..."
+	@if [ -d "frontend" ] && command -v npm >/dev/null 2>&1; then \
+		(cd frontend && npm run build); \
+		echo "✅ Frontend build complete: web/static/"; \
+	else \
+		echo "ℹ️  Node/npm not detected; using pre-bundled assets in web/static/"; \
+	fi
 
 build-server: ## Compile standalone HTTP server binary (bin/server)
 	@echo "==> Building server binary (CGO_ENABLED=$(CGO_ENABLED))..."
@@ -180,6 +189,11 @@ docker-down: ## Stop and remove docker compose containers and networks
 
 docker-logs: ## Tail docker compose container logs
 	$(COMPOSE) logs -f
+
+##@ Cloud Deployment (Fly.io)
+.PHONY: deploy-fly
+deploy-fly: ## Deploy to Fly.io with multi-tenant SQLite persistent volume
+	@./scripts/deploy_fly.sh
 
 ##@ Housekeeping
 .PHONY: clean
