@@ -121,18 +121,20 @@ body {
 
 .header-brand {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.brand-icon {
-  font-size: 1.5rem;
+  flex-direction: column;
+  gap: 0.15rem;
 }
 
 .brand-title {
   font-size: 1.15rem;
   font-weight: 700;
   letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.brand-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
 }
 
 .header-status {
@@ -284,9 +286,9 @@ body {
 
 .preset-card {
   background-color: var(--bg-surface);
-  border: 2px solid var(--border-subtle);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: 1.15rem 1rem;
+  padding: 1.15rem 1.15rem;
   cursor: pointer;
   position: relative;
   transition: all var(--transition-fast);
@@ -298,24 +300,18 @@ body {
 
 .preset-card:hover {
   border-color: var(--border-strong);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-sm);
+  background-color: var(--bg-card-hover);
+  transform: translateY(-1px);
 }
 
 .preset-card.active {
   border-color: var(--border-focus);
   background-color: var(--bg-card-hover);
-  box-shadow: 0 0 0 1px var(--border-focus), var(--shadow-md);
-}
-
-.preset-card-icon {
-  font-size: 1.6rem;
-  line-height: 1;
-  margin-bottom: 0.25rem;
+  box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 .preset-card-title {
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -324,20 +320,6 @@ body {
   font-size: 0.78rem;
   color: var(--text-secondary);
   line-height: 1.4;
-}
-
-.preset-card-badge {
-  position: absolute;
-  top: 0.65rem;
-  right: 0.65rem;
-  font-size: 0.65rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  padding: 0.15rem 0.45rem;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.15);
-  color: #3b82f6;
-  border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
 .action-bar {
@@ -583,7 +565,7 @@ input[type="range"] {
 }
 
 /* ==========================================================================
-   Live Metric Cards (5 Core Invariants)
+   Key Operational Metrics
    ========================================================================== */
 .metrics-grid {
   display: grid;
@@ -595,10 +577,10 @@ input[type="range"] {
   background-color: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: 1rem;
+  padding: 1.15rem 1.25rem;
   display: flex;
-  align-items: center;
-  gap: 0.85rem;
+  flex-direction: column;
+  gap: 0.3rem;
   transition: transform var(--transition-fast), border-color var(--transition-fast);
 }
 
@@ -607,33 +589,28 @@ input[type="range"] {
   border-color: var(--border-strong);
 }
 
-.metric-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  font-weight: 700;
-  font-family: var(--font-mono);
-}
+.card-added { border-top: 3px solid var(--color-added); }
+.card-updated { border-top: 3px solid var(--color-updated); }
+.card-withdrawn { border-top: 3px solid var(--color-withdrawn); }
+.card-skipped { border-top: 3px solid var(--color-skipped); }
+.card-deadletter { border-top: 3px solid var(--color-deadletter); }
 
 .metric-body {
   display: flex;
   flex-direction: column;
+  gap: 0.2rem;
 }
 
 .metric-label {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
 }
 
 .metric-value {
-  font-size: 1.6rem;
+  font-size: 1.65rem;
   font-weight: 700;
   font-family: var(--font-mono);
   line-height: 1.2;
@@ -644,20 +621,10 @@ input[type="range"] {
   color: var(--text-secondary);
 }
 
-/* Metric Colors */
-.card-added .metric-icon { background-color: var(--color-added-bg); color: var(--color-added); }
 .card-added .metric-value { color: var(--color-added); }
-
-.card-updated .metric-icon { background-color: var(--color-updated-bg); color: var(--color-updated); }
 .card-updated .metric-value { color: var(--color-updated); }
-
-.card-withdrawn .metric-icon { background-color: var(--color-withdrawn-bg); color: var(--color-withdrawn); }
 .card-withdrawn .metric-value { color: var(--color-withdrawn); }
-
-.card-skipped .metric-icon { background-color: var(--color-skipped-bg); color: var(--color-skipped); }
 .card-skipped .metric-value { color: var(--color-skipped); }
-
-.card-deadletter .metric-icon { background-color: var(--color-deadletter-bg); color: var(--color-deadletter); }
 .card-deadletter .metric-value { color: var(--color-deadletter); }
 
 /* ==========================================================================

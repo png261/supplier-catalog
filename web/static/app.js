@@ -1,6 +1,6 @@
 /**
- * Coderpush Catalog Sync Engine — Non-Tech Friendly Operations Dashboard
- * Zero external dependencies: pure vanilla ES6+ JavaScript, SVG charts & Canvas.
+ * Coderpush Catalog Sync Engine — High-Reliability Operations Dashboard
+ * Pure vanilla ES6+ JavaScript, SVG charts & Canvas. Zero external runtime dependencies.
  */
 
 (function () {
@@ -28,33 +28,33 @@
     recordsProcessed: 0,
 
     // Explorers
-    dlq: { items: [], total: 0, limit: 10, offset: 0, filterJob: '', filterReason: '' },
+    dlq: { items: [], total: 0, limit: 10, offset: 0, filterReason: '' },
     catalog: { items: [], total: 0, limit: 10, offset: 0, search: '', status: '' },
     history: { jobs: [] },
   };
 
-  // --- Preset Configurations ---
+  // --- Workload Presets ---
   const PRESETS = {
-    default: { seed: 42, batches: 10, size: 100, update: 20, dup: 5, ooo: 10, with: 5, inv: 5, name: 'Đồng Bộ Tiêu Chuẩn' },
-    clean:   { seed: 101, batches: 10, size: 100, update: 20, dup: 0, ooo: 0, with: 0, inv: 0, name: 'Dữ Liệu Chuẩn 100%' },
-    stress:  { seed: 999, batches: 15, size: 150, update: 15, dup: 10, ooo: 15, with: 10, inv: 15, name: 'Kiểm Thử Bất Thường' },
-    large:   { seed: 777, batches: 50, size: 200, update: 20, dup: 5, ooo: 10, with: 5, inv: 5, name: 'Đồng Bộ Khối Lượng Lớn' },
+    default: { seed: 42, batches: 10, size: 100, update: 20, dup: 5, ooo: 10, with: 5, inv: 5, name: 'Standard Profile' },
+    clean:   { seed: 101, batches: 10, size: 100, update: 20, dup: 0, ooo: 0, with: 0, inv: 0, name: 'Clean Ingestion' },
+    stress:  { seed: 999, batches: 15, size: 150, update: 15, dup: 10, ooo: 15, with: 10, inv: 15, name: 'Fault Tolerance' },
+    large:   { seed: 777, batches: 50, size: 200, update: 20, dup: 5, ooo: 10, with: 5, inv: 5, name: 'High Volume' },
   };
 
   // --- DOM Element References ---
   const el = {
     themeToggle: document.getElementById('theme-toggle'),
-    themeIcon: document.getElementById('theme-icon'),
+    themeLabel: document.getElementById('theme-label'),
     activeJobBadge: document.getElementById('active-job-badge'),
     activeJobText: document.getElementById('active-job-text'),
     sseStatus: document.getElementById('sse-status'),
     sseStatusText: document.getElementById('sse-status-text'),
 
-    // Non-tech Control & Preset Cards
+    // Workload Presets & Controls
     presetCards: document.querySelectorAll('.preset-card'),
     btnStartJob: document.getElementById('btn-start-job'),
     btnToggleAdvanced: document.getElementById('btn-toggle-advanced'),
-    advancedToggleIcon: document.getElementById('advanced-toggle-icon'),
+    advancedToggleLabel: document.getElementById('advanced-toggle-label'),
     advancedSettingsPanel: document.getElementById('advanced-settings-panel'),
     btnCancelJob: document.getElementById('btn-cancel-job'),
 
@@ -171,8 +171,8 @@
     state.theme = theme;
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('cp_theme', theme);
-    if (el.themeIcon) {
-      el.themeIcon.textContent = theme === 'dark' ? '🌙' : '☀';
+    if (el.themeLabel) {
+      el.themeLabel.textContent = theme === 'dark' ? 'Light Mode' : 'Dark Mode';
     }
     renderDonutChart();
   }
@@ -210,7 +210,7 @@
     if (!el.toastContainer) return;
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = `<span>${message}</span>`;
+    toast.textContent = message;
     el.toastContainer.appendChild(toast);
     setTimeout(() => {
       toast.style.opacity = '0';
@@ -220,7 +220,7 @@
     }, 4000);
   }
 
-  // --- Smart Non-Tech Status Banner ---
+  // --- Smart Status Banner ---
   function updateSmartStatus(message, statusType = 'normal') {
     if (el.smartStatusText) {
       el.smartStatusText.textContent = message;
@@ -245,7 +245,7 @@
     }
   }
 
-  // --- Visual Chart 1: Donut Chart Rendering ---
+  // --- Chart 1: Donut Chart Rendering ---
   function renderDonutChart() {
     if (!el.donutSvg) return;
 
@@ -268,7 +268,7 @@
     if (el.legValSkipped) el.legValSkipped.textContent = `${skipped.toLocaleString()} (${calcPct(skipped)}%)`;
     if (el.legValDeadletter) el.legValDeadletter.textContent = `${deadLetter.toLocaleString()} (${calcPct(deadLetter)}%)`;
 
-    // SVG Circle circumferences: r = 70 => C = 2 * PI * 70 ≈ 439.82297
+    // SVG Circle circumferences: r = 70 => C = 2 * PI * 70 ≈ 439.82
     const C = 439.82;
     el.donutSvg.innerHTML = '';
 
@@ -306,7 +306,7 @@
     });
   }
 
-  // --- Visual Chart 2: System Health Gauge Rendering ---
+  // --- Chart 2: System Health Gauge Rendering ---
   function updateHealthGauge() {
     if (!el.gaugeFill) return;
 
@@ -332,10 +332,10 @@
         el.healthStatusBadge.className = 'health-status-badge badge-success';
       }
       if (el.healthStatusTitle) {
-        el.healthStatusTitle.textContent = 'Hệ thống an toàn tuyệt đối';
+        el.healthStatusTitle.textContent = 'Optimal Integrity (100%)';
       }
       if (el.healthStatusDesc) {
-        el.healthStatusDesc.textContent = 'Toàn bộ giao dịch đều tuân thủ nghiêm ngặt 5 Invariants toán học. Không có sai lệch hay xung đột dữ liệu.';
+        el.healthStatusDesc.textContent = 'All committed records strictly satisfy mathematical invariants with zero database corruption.';
       }
     } else if (successRate >= 90.0) {
       el.gaugeFill.style.stroke = 'var(--color-withdrawn)';
@@ -343,10 +343,10 @@
         el.healthStatusBadge.className = 'health-status-badge badge-warning';
       }
       if (el.healthStatusTitle) {
-        el.healthStatusTitle.textContent = `Cách ly an toàn (${deadLetter.toLocaleString()} bản ghi)`;
+        el.healthStatusTitle.textContent = `Isolated Defects (${deadLetter.toLocaleString()} records)`;
       }
       if (el.healthStatusDesc) {
-        el.healthStatusDesc.textContent = 'Các bản ghi vi phạm quy tắc (giá âm hoặc thiếu SKU) đã được cách ly vào hàng đợi DLQ. Luồng dữ liệu chính được bảo vệ trọn vẹn.';
+        el.healthStatusDesc.textContent = 'Non-compliant records (negative prices or missing SKUs) were safely quarantined. Core catalog remains clean.';
       }
     } else {
       el.gaugeFill.style.stroke = 'var(--color-deadletter)';
@@ -354,27 +354,27 @@
         el.healthStatusBadge.className = 'health-status-badge badge-danger';
       }
       if (el.healthStatusTitle) {
-        el.healthStatusTitle.textContent = `Cần lưu ý: Tỷ lệ lỗi ${(100 - successRate).toFixed(1)}%`;
+        el.healthStatusTitle.textContent = `High Defect Rate (${(100 - successRate).toFixed(1)}%)`;
       }
       if (el.healthStatusDesc) {
-        el.healthStatusDesc.textContent = 'Tỷ lệ bản ghi sai quy cách từ đối tác cao bất thường. Đề nghị kiểm tra chi tiết trong tab "Dữ Liệu Cần Kiểm Tra".';
+        el.healthStatusDesc.textContent = 'Abnormal supplier defect rate detected. Review individual items in Quarantined Records.';
       }
     }
 
-    // Update Average Speed in Health Card
+    // Update Telemetry in Health Card
     if (state.jobStartTime && el.statElapsedTime && el.statAvgSpeed) {
       const elapsedSec = (Date.now() - state.jobStartTime) / 1000;
       if (elapsedSec > 0.5) {
         const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
-        const ss = String(Math.floor(elapsedSec % 60)).padStart(2, '0');
+        const ss = String(elapsedSec % 60).padStart(2, '0');
         el.statElapsedTime.textContent = `${mm}:${ss}`;
         const avg = Math.round(total / elapsedSec);
-        el.statAvgSpeed.textContent = `${avg} sp/giây`;
+        el.statAvgSpeed.textContent = `${avg} rec/s`;
       }
     }
   }
 
-  // --- Non-Tech Preset Cards Interaction ---
+  // --- Workload Presets Interaction ---
   function applyPreset(key) {
     const p = PRESETS[key];
     if (!p) return;
@@ -396,25 +396,21 @@
       const presetKey = card.getAttribute('data-preset');
       applyPreset(presetKey);
       const title = card.querySelector('.preset-card-title') ? card.querySelector('.preset-card-title').textContent : presetKey;
-      updateSmartStatus(`Đã chọn "${title}". Bấm "Bắt Đầu Đồng Bộ Ngay" để kích hoạt cập nhật.`, 'normal');
+      updateSmartStatus(`Selected profile "${title}". Click Start Synchronization to begin.`, 'normal');
     });
   });
 
-  // --- Advanced Panel Accordion Toggle ---
+  // --- Advanced Panel Toggle ---
   if (el.btnToggleAdvanced && el.advancedSettingsPanel) {
     el.btnToggleAdvanced.addEventListener('click', () => {
       const isHidden = el.advancedSettingsPanel.classList.toggle('hidden');
-      if (el.advancedToggleIcon) {
-        el.advancedToggleIcon.textContent = isHidden ? '▼' : '▲';
-      }
-      const labelSpan = el.btnToggleAdvanced.querySelector('span');
-      if (labelSpan) {
-        labelSpan.textContent = isHidden ? '⚙️ Tùy Chỉnh Nâng Cao' : '⚙️ Thu Gọn Tùy Chỉnh';
+      if (el.advancedToggleLabel) {
+        el.advancedToggleLabel.textContent = isHidden ? 'Advanced Settings' : 'Hide Advanced';
       }
     });
   }
 
-  // --- Form Ratio Validator ---
+  // --- Ratio Validator ---
   function updateRatios() {
     if (!el.inputUpdateRatio) return;
     const updateVal = parseInt(el.inputUpdateRatio.value, 10);
@@ -435,7 +431,7 @@
     if (total > 100) {
       if (el.ratioValidator) {
         el.ratioValidator.className = 'ratio-validator invalid';
-        el.totalRatioVal.textContent = `${total}% (VƯỢT QUÁ 100%)`;
+        el.totalRatioVal.textContent = `${total}% (Exceeds 100%)`;
       }
       if (el.btnStartJob) el.btnStartJob.disabled = true;
     } else {
@@ -512,7 +508,7 @@
 
     if (el.sseStatus) {
       el.sseStatus.className = 'badge badge-sse sse-connecting';
-      el.sseStatusText.textContent = 'Đang kết nối thời gian thực...';
+      el.sseStatusText.textContent = 'Connecting...';
     }
 
     state.eventSource = new EventSource('/api/events');
@@ -522,7 +518,7 @@
       state.lastPingTimestamp = Date.now();
       if (el.sseStatus) {
         el.sseStatus.className = 'badge badge-sse sse-connected';
-        el.sseStatusText.textContent = 'Kết nối trực tiếp';
+        el.sseStatusText.textContent = 'Live';
       }
     };
 
@@ -530,11 +526,10 @@
       state.sseConnected = false;
       if (el.sseStatus) {
         el.sseStatus.className = 'badge badge-sse sse-disconnected';
-        el.sseStatusText.textContent = 'Đang thử kết nối lại...';
+        el.sseStatusText.textContent = 'Reconnecting...';
       }
     };
 
-    // Keepalive ping watchdog: reconnect if no ping or message in 35s
     clearInterval(state.pingWatchdogTimer);
     state.pingWatchdogTimer = setInterval(() => {
       if (Date.now() - state.lastPingTimestamp > 35000 && state.sseConnected) {
@@ -542,7 +537,6 @@
       }
     }, 5000);
 
-    // Register Event Listeners
     state.eventSource.addEventListener('job_started', (e) => {
       state.lastPingTimestamp = Date.now();
       try {
@@ -605,17 +599,17 @@
 
     if (el.activeJobBadge) {
       el.activeJobBadge.className = 'badge badge-job status-running';
-      el.activeJobText.textContent = `Đang đồng bộ (${job.job_id.substring(0, 12)}...)`;
+      el.activeJobText.textContent = `Running (${job.job_id.substring(0, 12)}...)`;
     }
     if (el.btnStartJob) el.btnStartJob.disabled = true;
     if (el.btnResumeJob) el.btnResumeJob.disabled = true;
     if (el.btnCancelJob) el.btnCancelJob.classList.remove('hidden');
 
     if (el.progressBarFill) el.progressBarFill.style.width = '0%';
-    if (el.batchProgressText) el.batchProgressText.textContent = `0 / ${state.totalBatches} Đợt hàng (0.0%)`;
+    if (el.batchProgressText) el.batchProgressText.textContent = `0 / ${state.totalBatches} Batches (0.0%)`;
 
-    updateSmartStatus(`Đã bắt đầu tiến trình đồng bộ #${job.job_id.substring(0, 8)}. Hệ thống đang nạp các lô hàng...`, 'running');
-    showToast(`Bắt đầu đồng bộ danh mục (${state.totalBatches} đợt hàng)`, 'info');
+    updateSmartStatus(`Started synchronization job #${job.job_id.substring(0, 8)}. Ingesting supplier batches...`, 'running');
+    showToast(`Started synchronization (${state.totalBatches} batches)`, 'info');
   }
 
   function handleProgress(data) {
@@ -639,47 +633,47 @@
 
     const pct = totalBatches > 0 ? (((batchIndex + 1) / totalBatches) * 100).toFixed(1) : '0.0';
     if (el.progressBarFill) el.progressBarFill.style.width = `${pct}%`;
-    if (el.batchProgressText) el.batchProgressText.textContent = `${batchIndex + 1} / ${totalBatches} Đợt hàng (${pct}%)`;
+    if (el.batchProgressText) el.batchProgressText.textContent = `${batchIndex + 1} / ${totalBatches} Batches (${pct}%)`;
 
     if (state.jobStartTime && el.telemetrySpeed && el.telemetryEta) {
       const elapsedSec = (Date.now() - state.jobStartTime) / 1000;
       const totalRecs = state.metrics.added + state.metrics.updated + state.metrics.withdrawn + state.metrics.skipped + state.metrics.deadLetter;
       if (elapsedSec > 0.5) {
         const speed = Math.round(totalRecs / elapsedSec);
-        el.telemetrySpeed.textContent = `${speed} bản ghi/giây`;
+        el.telemetrySpeed.textContent = `${speed} rec/s`;
         const batchesRemaining = totalBatches - (batchIndex + 1);
         if (batchesRemaining > 0 && batchIndex > 0) {
           const avgBatchTime = elapsedSec / (batchIndex + 1);
           const etaSec = Math.round(batchesRemaining * avgBatchTime);
-          el.telemetryEta.textContent = `${etaSec} giây`;
+          el.telemetryEta.textContent = `${etaSec}s`;
         } else {
-          el.telemetryEta.textContent = 'Sắp hoàn tất';
+          el.telemetryEta.textContent = 'Finishing';
         }
       }
     }
 
-    updateSmartStatus(`Đã hoàn tất đợt ${batchIndex + 1}/${totalBatches}: Thêm +${delta.added || 0}, Cập nhật ~${delta.updated || 0}, Ngừng bán -${delta.withdrawn || 0}, Giữ nguyên ↷${delta.skipped || 0}.`, 'running');
+    updateSmartStatus(`Batch ${batchIndex + 1}/${totalBatches} committed: Added +${delta.added || 0}, Updated ~${delta.updated || 0}, Withdrawn -${delta.withdrawn || 0}, Duplicates skipped ${delta.skipped || 0}.`, 'running');
   }
 
   function handleDeadLetter(issue) {
     loadDLQ();
-    updateSmartStatus(`Phát hiện bản ghi không hợp lệ trong đợt ${issue.batch_index + 1}. Đã tự động cách ly an toàn vào hàng đợi.`, 'warning');
+    updateSmartStatus(`Defect detected in batch ${issue.batch_index + 1}. Safely quarantined to Dead-Letter Queue.`, 'warning');
   }
 
   function handleJobCompleted(data) {
     stopRuntimeTimer();
     if (el.activeJobBadge) {
       el.activeJobBadge.className = 'badge badge-job status-completed';
-      el.activeJobText.textContent = 'Hoàn tất đồng bộ';
+      el.activeJobText.textContent = 'Completed';
     }
     if (el.progressBarFill) el.progressBarFill.style.width = '100%';
-    if (el.batchProgressText) el.batchProgressText.textContent = `${state.totalBatches} / ${state.totalBatches} Đợt hàng (100%)`;
+    if (el.batchProgressText) el.batchProgressText.textContent = `${state.totalBatches} / ${state.totalBatches} Batches (100%)`;
     if (el.btnStartJob) el.btnStartJob.disabled = false;
     if (el.btnCancelJob) el.btnCancelJob.classList.add('hidden');
-    if (el.telemetryEta) el.telemetryEta.textContent = 'Đã xong';
+    if (el.telemetryEta) el.telemetryEta.textContent = 'Done';
 
-    updateSmartStatus('Toàn bộ các đợt hàng đã được đồng bộ thành công vào cơ sở dữ liệu!', 'success');
-    showToast('Đồng bộ danh mục thành công!', 'success');
+    updateSmartStatus('All supplier batches synchronized and committed successfully to storage.', 'success');
+    showToast('Synchronization completed successfully', 'success');
     loadCatalog();
     loadHistory();
     loadInterruptedJobs();
@@ -689,19 +683,19 @@
     stopRuntimeTimer();
     if (el.activeJobBadge) {
       el.activeJobBadge.className = 'badge badge-job status-interrupted';
-      el.activeJobText.textContent = 'Tạm dừng / Gián đoạn';
+      el.activeJobText.textContent = 'Interrupted';
     }
     if (el.btnStartJob) el.btnStartJob.disabled = false;
     if (el.btnCancelJob) el.btnCancelJob.classList.add('hidden');
-    if (el.telemetryEta) el.telemetryEta.textContent = 'Tạm dừng';
+    if (el.telemetryEta) el.telemetryEta.textContent = 'Paused';
 
-    updateSmartStatus(`Tiến trình đã được lưu an toàn tại đợt ${data.committed_batch_index + 1}. Bạn có thể tiếp tục bất cứ lúc nào qua tab "Phục Hồi".`, 'warning');
-    showToast('Tiến trình đồng bộ đã dừng và lưu checkpoint an toàn.', 'info');
+    updateSmartStatus(`Synchronization paused safely at batch ${data.committed_batch_index + 1}. Checkpoint saved.`, 'warning');
+    showToast('Job paused safely at last committed batch.', 'info');
     loadInterruptedJobs();
     loadHistory();
   }
 
-  // --- Start Sync Job (Non-Tech 1-Click Action) ---
+  // --- Start Sync Job ---
   async function triggerStartJob() {
     if (!el.btnStartJob) return;
     el.btnStartJob.disabled = true;
@@ -729,16 +723,16 @@
 
       const body = await resp.json();
       if (resp.status === 202 || resp.status === 200) {
-        showToast(`Đã khởi chạy tiến trình ${body.job_id}`, 'success');
+        showToast(`Synchronization started: ${body.job_id}`, 'success');
       } else if (resp.status === 409) {
-        showToast(body.error || 'Một tiến trình khác đang chạy!', 'error');
+        showToast(body.error || 'A synchronization job is already running!', 'error');
         el.btnStartJob.disabled = false;
       } else {
-        showToast(body.error || 'Không thể bắt đầu tiến trình', 'error');
+        showToast(body.error || 'Failed to start synchronization', 'error');
         el.btnStartJob.disabled = false;
       }
     } catch (err) {
-      showToast(`Lỗi mạng: ${err.message}`, 'error');
+      showToast(`Network error: ${err.message}`, 'error');
       el.btnStartJob.disabled = false;
     } finally {
       if (spinner) spinner.classList.add('hidden');
@@ -756,7 +750,7 @@
     });
   }
 
-  // --- Cancel Running Job Action ---
+  // --- Cancel Running Job ---
   if (el.btnCancelJob) {
     el.btnCancelJob.addEventListener('click', async () => {
       if (!state.activeJob || !state.activeJob.job_id) return;
@@ -765,12 +759,12 @@
           method: 'POST',
         });
         if (resp.ok) {
-          showToast('Đã gửi yêu cầu dừng tiến trình an toàn...', 'info');
+          showToast('Cancellation request sent. Stopping safely...', 'info');
         } else {
-          showToast('Không thể dừng tiến trình', 'error');
+          showToast('Failed to cancel job', 'error');
         }
       } catch (err) {
-        showToast(`Lỗi: ${err.message}`, 'error');
+        showToast(`Error: ${err.message}`, 'error');
       }
     });
   }
@@ -786,17 +780,17 @@
 
       el.selectInterruptedJob.innerHTML = '';
       if (jobs.length === 0) {
-        el.selectInterruptedJob.innerHTML = '<option value="">Không có đợt nào bị gián đoạn (Hệ thống sạch)</option>';
+        el.selectInterruptedJob.innerHTML = '<option value="">No interrupted jobs found (Clean state)</option>';
         if (el.btnResumeJob) el.btnResumeJob.disabled = true;
         if (el.resumeJobDetails) el.resumeJobDetails.classList.add('hidden');
         return;
       }
 
-      el.selectInterruptedJob.innerHTML = '<option value="">-- Chọn đợt đồng bộ dở dang để tiếp tục --</option>';
+      el.selectInterruptedJob.innerHTML = '<option value="">-- Select an interrupted job --</option>';
       jobs.forEach((j) => {
         const opt = document.createElement('option');
         opt.value = j.job_id;
-        opt.textContent = `Mã: ${j.job_id.substring(0, 16)}... | Đã ghi: ${j.committed_batch_index + 1}/${j.total_batches} đợt | ${new Date(j.created_at).toLocaleTimeString()}`;
+        opt.textContent = `Job: ${j.job_id.substring(0, 16)}... | Committed: ${j.committed_batch_index + 1}/${j.total_batches} batches | ${new Date(j.created_at).toLocaleTimeString()}`;
         opt.dataset.job = JSON.stringify(j);
         el.selectInterruptedJob.appendChild(opt);
       });
@@ -823,9 +817,9 @@
       if (el.resumeJobDetails) {
         el.resumeJobDetails.innerHTML = `
           <div class="code-block-wrapper">
-            <strong>Mã Tiến Trình:</strong> ${job.job_id}<br>
-            <strong>Điểm dừng an toàn:</strong> Đợt ${job.committed_batch_index + 1} / ${job.total_batches}<br>
-            <strong>Trạng thái:</strong> Toàn bộ dữ liệu trước điểm dừng đã được commit an toàn vào WAL.
+            <strong>Job ID:</strong> ${job.job_id}<br>
+            <strong>Last Checkpoint:</strong> Batch ${job.committed_batch_index + 1} / ${job.total_batches}<br>
+            <strong>Storage Integrity:</strong> All batches committed prior to interruption remain atomic in WAL storage.
           </div>
         `;
         el.resumeJobDetails.classList.remove('hidden');
@@ -849,13 +843,13 @@
         });
         const body = await resp.json();
         if (resp.status === 202 || resp.status === 200) {
-          showToast(`Đang tiếp tục tiến trình ${jobID}`, 'success');
+          showToast(`Resumed job ${jobID}`, 'success');
         } else {
-          showToast(body.error || 'Không thể phục hồi tiến trình', 'error');
+          showToast(body.error || 'Failed to resume job', 'error');
           el.btnResumeJob.disabled = false;
         }
       } catch (err) {
-        showToast(`Lỗi mạng: ${err.message}`, 'error');
+        showToast(`Network error: ${err.message}`, 'error');
         el.btnResumeJob.disabled = false;
       } finally {
         if (spinner) spinner.classList.add('hidden');
@@ -863,20 +857,20 @@
     });
   }
 
-  // --- Manual Custom Batch JSON ---
+  // --- Custom JSON Batch Submission ---
   if (el.btnLoadSampleJson) {
     el.btnLoadSampleJson.addEventListener('click', () => {
       const sample = [
         {
           sku: 'DESK-OAK-01',
-          name: 'Bàn Làm Việc Gỗ Sồi Tối Giản',
+          name: 'Minimalist Oak Desk',
           price: 199.99,
           status: 'ACTIVE',
           timestamp: new Date().toISOString(),
         },
         {
           sku: 'CHAIR-ERGONOMIC-02',
-          name: 'Ghế Công Thái Học Cao Cấp',
+          name: 'Ergonomic Precision Chair',
           price: 249.50,
           status: 'ACTIVE',
           timestamp: new Date().toISOString(),
@@ -897,18 +891,18 @@
     el.btnSubmitManual.addEventListener('click', async () => {
       const text = el.manualJsonInput.value.trim();
       if (!text) {
-        showToast('Vui lòng dán danh sách sản phẩm định dạng JSON', 'error');
+        showToast('Please provide a valid JSON array of supplier records', 'error');
         return;
       }
       let records;
       try {
         records = JSON.parse(text);
         if (!Array.isArray(records)) {
-          throw new Error('Dữ liệu JSON phải là một mảng [] danh sách sản phẩm');
+          throw new Error('Payload must be a JSON array [] of records');
         }
       } catch (err) {
         if (el.jsonParseStatus) {
-          el.jsonParseStatus.textContent = `Lỗi JSON: ${err.message}`;
+          el.jsonParseStatus.textContent = `Invalid JSON: ${err.message}`;
           el.jsonParseStatus.style.color = 'var(--color-deadletter)';
         }
         return;
@@ -927,19 +921,19 @@
         });
         const body = await resp.json();
         if (resp.status === 202 || resp.status === 200) {
-          showToast(`Đã nạp lô sản phẩm thủ công: ${body.job_id}`, 'success');
+          showToast(`Custom batch submitted: ${body.job_id}`, 'success');
           el.manualJsonInput.value = '';
           if (el.jsonParseStatus) el.jsonParseStatus.textContent = '';
         } else {
-          showToast(body.error || 'Lỗi gửi lô sản phẩm', 'error');
+          showToast(body.error || 'Failed to submit batch', 'error');
         }
       } catch (err) {
-        showToast(`Lỗi mạng: ${err.message}`, 'error');
+        showToast(`Network error: ${err.message}`, 'error');
       }
     });
   }
 
-  // --- Explorer: Dead-Letter Queue (Bản ghi lỗi cần kiểm tra) ---
+  // --- Explorer: Dead-Letter Queue Table ---
   async function loadDLQ() {
     if (!el.dlqTableBody) return;
     const reason = el.filterDlqReason ? el.filterDlqReason.value.trim() : '';
@@ -956,8 +950,8 @@
 
       el.dlqTableBody.innerHTML = '';
       if (issues.length === 0) {
-        el.dlqTableBody.innerHTML = '<tr><td colspan="6" class="table-empty">Tuyệt vời! Không có bản ghi nào bị lỗi hoặc cách ly.</td></tr>';
-        if (el.dlqPaginationInfo) el.dlqPaginationInfo.textContent = 'Hiển thị 0-0 trên 0';
+        el.dlqTableBody.innerHTML = '<tr><td colspan="6" class="table-empty">Zero quarantined records. Ingestion clean.</td></tr>';
+        if (el.dlqPaginationInfo) el.dlqPaginationInfo.textContent = 'Showing 0-0 of 0';
         if (el.btnDlqPrev) el.btnDlqPrev.disabled = true;
         if (el.btnDlqNext) el.btnDlqNext.disabled = true;
         return;
@@ -970,21 +964,21 @@
 
         tr.innerHTML = `
           <td><span class="code-badge" title="${issue.issue_id}">${shortIssueId}</span></td>
-          <td>Đợt ${issue.batch_index + 1}</td>
-          <td class="sku-cell">${issue.sku ? issue.sku : '<span class="defect-badge">[THIẾU SKU]</span>'}</td>
+          <td>Batch ${issue.batch_index + 1}</td>
+          <td class="sku-cell">${issue.sku ? issue.sku : '<span class="defect-badge">[EMPTY SKU]</span>'}</td>
           <td><span class="defect-badge">${issue.reason}</span></td>
           <td>${timeStr}</td>
-          <td><button class="btn btn-xs btn-outline btn-inspect" data-issue='${JSON.stringify(issue).replace(/'/g, '&apos;')}'>Xem Chi Tiết</button></td>
+          <td><button class="btn btn-xs btn-outline btn-inspect" data-issue='${JSON.stringify(issue).replace(/'/g, '&apos;')}'>Inspect</button></td>
         `;
         el.dlqTableBody.appendChild(tr);
       });
 
       const from = state.dlq.offset + 1;
       const to = Math.min(state.dlq.offset + state.dlq.limit, state.dlq.total);
-      if (el.dlqPaginationInfo) el.dlqPaginationInfo.textContent = `Hiển thị ${from}-${to} trên ${state.dlq.total}`;
+      if (el.dlqPaginationInfo) el.dlqPaginationInfo.textContent = `Showing ${from}-${to} of ${state.dlq.total}`;
       const curPage = Math.floor(state.dlq.offset / state.dlq.limit) + 1;
       const totalPages = Math.ceil(state.dlq.total / state.dlq.limit) || 1;
-      if (el.dlqPageNum) el.dlqPageNum.textContent = `Trang ${curPage} / ${totalPages}`;
+      if (el.dlqPageNum) el.dlqPageNum.textContent = `Page ${curPage} of ${totalPages}`;
 
       if (el.btnDlqPrev) el.btnDlqPrev.disabled = state.dlq.offset <= 0;
       if (el.btnDlqNext) el.btnDlqNext.disabled = state.dlq.offset + state.dlq.limit >= state.dlq.total;
@@ -1065,12 +1059,12 @@
     el.btnCopyPayload.addEventListener('click', () => {
       const code = el.modalPayloadCode.textContent;
       navigator.clipboard.writeText(code).then(() => {
-        showToast('Đã sao chép nội dung JSON vào khay nhớ tạm!', 'info');
+        showToast('JSON payload copied to clipboard', 'info');
       });
     });
   }
 
-  // --- Explorer: Catalog Products Table (Danh Mục Sản Phẩm) ---
+  // --- Explorer: Catalog Products Table ---
   let searchDebounceTimer = null;
   async function loadCatalog() {
     if (!el.catalogTableBody) return;
@@ -1088,8 +1082,8 @@
 
       el.catalogTableBody.innerHTML = '';
       if (products.length === 0) {
-        el.catalogTableBody.innerHTML = '<tr><td colspan="6" class="table-empty">Chưa có sản phẩm nào phù hợp với bộ lọc.</td></tr>';
-        if (el.catalogPaginationInfo) el.catalogPaginationInfo.textContent = 'Hiển thị 0-0 trên 0';
+        el.catalogTableBody.innerHTML = '<tr><td colspan="6" class="table-empty">No products match current filters.</td></tr>';
+        if (el.catalogPaginationInfo) el.catalogPaginationInfo.textContent = 'Showing 0-0 of 0';
         if (el.btnCatalogPrev) el.btnCatalogPrev.disabled = true;
         if (el.btnCatalogNext) el.btnCatalogNext.disabled = true;
         return;
@@ -1100,13 +1094,12 @@
         const priceStr = `$${Number(p.price).toFixed(2)}`;
         const supTimeStr = new Date(p.supplier_timestamp).toLocaleTimeString();
         const updTimeStr = new Date(p.updated_at).toLocaleTimeString();
-        const statusLabel = p.status === 'ACTIVE' ? 'ĐANG BÁN' : 'NGỪNG BÁN';
 
         tr.innerHTML = `
           <td class="sku-cell">${p.sku}</td>
           <td>${p.name}</td>
           <td><strong>${priceStr}</strong></td>
-          <td><span class="status-badge ${p.status}">${statusLabel}</span></td>
+          <td><span class="status-badge ${p.status}">${p.status}</span></td>
           <td>${supTimeStr}</td>
           <td>${updTimeStr}</td>
         `;
@@ -1115,10 +1108,10 @@
 
       const from = state.catalog.offset + 1;
       const to = Math.min(state.catalog.offset + state.catalog.limit, state.catalog.total);
-      if (el.catalogPaginationInfo) el.catalogPaginationInfo.textContent = `Hiển thị ${from}-${to} trên ${state.catalog.total.toLocaleString()} sản phẩm`;
+      if (el.catalogPaginationInfo) el.catalogPaginationInfo.textContent = `Showing ${from}-${to} of ${state.catalog.total.toLocaleString()}`;
       const curPage = Math.floor(state.catalog.offset / state.catalog.limit) + 1;
       const totalPages = Math.ceil(state.catalog.total / state.catalog.limit) || 1;
-      if (el.catalogPageNum) el.catalogPageNum.textContent = `Trang ${curPage} / ${totalPages}`;
+      if (el.catalogPageNum) el.catalogPageNum.textContent = `Page ${curPage} of ${totalPages}`;
 
       if (el.btnCatalogPrev) el.btnCatalogPrev.disabled = state.catalog.offset <= 0;
       if (el.btnCatalogNext) el.btnCatalogNext.disabled = state.catalog.offset + state.catalog.limit >= state.catalog.total;
@@ -1163,7 +1156,7 @@
     });
   }
 
-  // --- Explorer: History Table (Lịch Sử Các Đợt Đồng Bộ) ---
+  // --- Explorer: History Table ---
   async function loadHistory() {
     if (!el.historyTableBody) return;
     try {
@@ -1174,7 +1167,7 @@
 
       el.historyTableBody.innerHTML = '';
       if (jobs.length === 0) {
-        el.historyTableBody.innerHTML = '<tr><td colspan="8" class="table-empty">Chưa có lịch sử đồng bộ nào.</td></tr>';
+        el.historyTableBody.innerHTML = '<tr><td colspan="8" class="table-empty">No synchronization jobs recorded yet.</td></tr>';
         return;
       }
 
@@ -1182,14 +1175,10 @@
         const tr = document.createElement('tr');
         const s = j.summary || {};
         const timeStr = new Date(j.created_at).toLocaleString();
-        let statusBadge = j.status;
-        if (j.status === 'COMPLETED') statusBadge = 'HOÀN THÀNH';
-        else if (j.status === 'RUNNING') statusBadge = 'ĐANG CHẠY';
-        else if (j.status === 'INTERRUPTED') statusBadge = 'GIÁN ĐOẠN';
 
         tr.innerHTML = `
           <td><span class="code-badge">${j.job_id.substring(0, 16)}...</span></td>
-          <td><span class="status-badge ${j.status}">${statusBadge}</span></td>
+          <td><span class="status-badge ${j.status}">${j.status}</span></td>
           <td>${j.total_batches}</td>
           <td>${j.committed_batch_index + 1}</td>
           <td style="color:var(--color-added)">+${(s.added || 0).toLocaleString()}</td>

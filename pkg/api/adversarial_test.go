@@ -59,34 +59,26 @@ func TestAdversarial_JobConcurrency_Race(t *testing.T) {
 	var responseBodies = make([]string, numGoroutines)
 
 	// Prepare batches that take slight time to ensure overlap
+	var testBatches []BatchInput
+	for b := 0; b < 10; b++ {
+		var recs []BatchInputRecord
+		for r := 0; r < 5; r++ {
+			recs = append(recs, BatchInputRecord{
+				SKU:       fmt.Sprintf("CONC-%02d-%02d", b, r),
+				Name:      fmt.Sprintf("Concurrent Product %d-%d", b, r),
+				Price:     19.99 + float64(r),
+				Status:    domain.StatusActive,
+				Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+			})
+		}
+		testBatches = append(testBatches, BatchInput{
+			BatchIndex: b,
+			Records:    recs,
+		})
+	}
 	batchReq := JobStartRequest{
-		Mode: "batches",
-		Batches: []BatchInput{
-			{
-				BatchIndex: 0,
-				Records: []BatchInputRecord{
-					{
-						SKU:       "CONC-001",
-						Name:      "Concurrent Product 1",
-						Price:     19.99,
-						Status:    domain.StatusActive,
-						Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-					},
-				},
-			},
-			{
-				BatchIndex: 1,
-				Records: []BatchInputRecord{
-					{
-						SKU:       "CONC-002",
-						Name:      "Concurrent Product 2",
-						Price:     29.99,
-						Status:    domain.StatusActive,
-						Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-					},
-				},
-			},
-		},
+		Mode:    "batches",
+		Batches: testBatches,
 	}
 	reqBytes, _ := json.Marshal(batchReq)
 
