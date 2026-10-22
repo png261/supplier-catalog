@@ -788,6 +788,7 @@ func TestChallenger_Concurrency_SingleActiveJobMutex(t *testing.T) {
 	wg.Add(contenders)
 
 	startBarrier := make(chan struct{})
+	holdWinner := make(chan struct{})
 	successCount := 0
 	conflictCount := 0
 	var countMu sync.Mutex
@@ -797,14 +798,17 @@ func TestChallenger_Concurrency_SingleActiveJobMutex(t *testing.T) {
 			defer wg.Done()
 			<-startBarrier
 
-			// Each contender provides a buffered stream with batch 0 that closes immediately
+			// Each contender provides a stream with batch 0 that waits on holdWinner before closing
 			stream := make(chan domain.Batch, 1)
 			stream <- domain.Batch{
 				JobID:      jobID,
 				BatchIndex: 0,
 				Records:    []domain.SupplierUpdate{{SKU: "CONCUR-1", Name: "C1", Price: 10, Status: domain.StatusActive, Timestamp: now}},
 			}
-			close(stream)
+			go func() {
+				<-holdWinner
+				close(stream)
+			}()
 
 			_, err := engine.ResumeJob(ctx, jobID, stream)
 			countMu.Lock()
@@ -818,6 +822,9 @@ func TestChallenger_Concurrency_SingleActiveJobMutex(t *testing.T) {
 	}
 
 	close(startBarrier)
+	// Give contenders a window to contend while the winning stream is held open
+	time.Sleep(50 * time.Millisecond)
+	close(holdWinner)
 	wg.Wait()
 
 	if successCount != 1 {

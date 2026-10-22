@@ -36,35 +36,27 @@ func TestChallenger_JobCreation_20ConcurrentRequests(t *testing.T) {
 	statuses := make([]int, numGoroutines)
 	bodies := make([]string, numGoroutines)
 
-	// Direct batches payload that requires slight processing
+	// Direct batches payload that requires sufficient processing time to span concurrent burst
+	batches := make([]BatchInput, 30)
+	for b := 0; b < 30; b++ {
+		records := make([]BatchInputRecord, 5)
+		for r := 0; r < 5; r++ {
+			records[r] = BatchInputRecord{
+				SKU:       fmt.Sprintf("CHALLENGE-%03d-%03d", b, r),
+				Name:      fmt.Sprintf("Challenge Product %d-%d", b, r),
+				Price:     49.99,
+				Status:    domain.StatusActive,
+				Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+			}
+		}
+		batches[b] = BatchInput{
+			BatchIndex: b,
+			Records:    records,
+		}
+	}
 	payload := JobStartRequest{
-		Mode: "batches",
-		Batches: []BatchInput{
-			{
-				BatchIndex: 0,
-				Records: []BatchInputRecord{
-					{
-						SKU:       "CHALLENGE-001",
-						Name:      "Challenge Product 1",
-						Price:     49.99,
-						Status:    domain.StatusActive,
-						Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-					},
-				},
-			},
-			{
-				BatchIndex: 1,
-				Records: []BatchInputRecord{
-					{
-						SKU:       "CHALLENGE-002",
-						Name:      "Challenge Product 2",
-						Price:     99.99,
-						Status:    domain.StatusActive,
-						Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-					},
-				},
-			},
-		},
+		Mode:    "batches",
+		Batches: batches,
 	}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
