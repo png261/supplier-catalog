@@ -16,13 +16,23 @@ coverage.out
 coverage.html
 *.cov
 
-# SQLite database files and WAL logs
+# SQLite database files, WAL logs, and persistent state
 *.db
 *.db-wal
 *.db-shm
 *.sqlite
 *.sqlite3
 data/
+
+# Multi-Agent Orchestrator internal logs & dispatch
+.agents/
+
+# Video generation temporary artifacts & media files
+demo_artifacts/
+demo_artifacts_vi/
+*.aiff
+*.raw
+concat*.txt
 
 # Node.js and Husky
 node_modules/
@@ -33,6 +43,13 @@ yarn-error.log*
 
 # Operating System & IDE artifacts
 .DS_Store
+**/.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 .idea/
 .vscode/
 *.swp
