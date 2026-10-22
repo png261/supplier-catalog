@@ -21,7 +21,6 @@ import {
   SlidersHorizontal,
   Flame,
   Zap,
-  FileCode,
   Dices,
 } from 'lucide-react';
 
@@ -30,8 +29,8 @@ interface DemoModalProps {
   onOpenChange: (open: boolean) => void;
   stagedScenarioKey: string;
   interruptedJob: { job_id: string; committed_batch_index: number; total_batches: number } | null;
-  onSelectScenario: (scenario: TestScenario, customRecords?: any[]) => void;
-  onStartImmediately: (scenario: TestScenario, customRecords?: any[]) => void;
+  onSelectScenario: (scenario: TestScenario) => void;
+  onStartImmediately: (scenario: TestScenario) => void;
   onResumeInterrupted: (jobId: string) => void;
 }
 
@@ -111,45 +110,6 @@ export const SCENARIOS: TestScenario[] = [
     withdrawnRatio: 5,
     invalidRatio: 5,
   },
-  {
-    key: 'custom',
-    name: 'Custom Supplier Batch (Direct JSON)',
-    desc: 'Ad-hoc supplier verification. Paste or edit custom JSON records to ingest directly into the pipeline.',
-    batches: 1,
-    size: 3,
-    volume: 3,
-    quality: 'Direct JSON validation',
-    seed: 1,
-    updateRatio: 0,
-    dupRatio: 0,
-    oooRatio: 0,
-    withdrawnRatio: 0,
-    invalidRatio: 0,
-  },
-];
-
-const SAMPLE_JSON = [
-  {
-    sku: 'DESK-OAK-101',
-    name: 'Minimalist Solid Oak Desk',
-    price: 249.99,
-    status: 'ACTIVE',
-    timestamp: new Date().toISOString(),
-  },
-  {
-    sku: 'CHAIR-ERGONOMIC-202',
-    name: 'Ergonomic Precision Mesh Chair',
-    price: 189.50,
-    status: 'ACTIVE',
-    timestamp: new Date().toISOString(),
-  },
-  {
-    sku: 'LAMP-TASK-303',
-    name: 'Architectural LED Task Lamp',
-    price: 59.0,
-    status: 'ACTIVE',
-    timestamp: new Date().toISOString(),
-  },
 ];
 
 export const DemoModal: React.FC<DemoModalProps> = ({
@@ -163,8 +123,6 @@ export const DemoModal: React.FC<DemoModalProps> = ({
 }) => {
   const [selectedKey, setSelectedKey] = useState<string>(stagedScenarioKey || 'default');
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
-  const [jsonText, setJsonText] = useState<string>(JSON.stringify(SAMPLE_JSON, null, 2));
-  const [jsonError, setJsonError] = useState<string | null>(null);
 
   // Advanced form states
   const selectedScenario = SCENARIOS.find((s) => s.key === selectedKey) || SCENARIOS[0];
@@ -204,64 +162,39 @@ export const DemoModal: React.FC<DemoModalProps> = ({
     setInvalidRatio(s.invalidRatio);
   };
 
-  const getCustomRecords = () => {
-    if (selectedKey !== 'custom') return undefined;
-    try {
-      const parsed = JSON.parse(jsonText.trim());
-      if (!Array.isArray(parsed)) throw new Error('Must be an array of records');
-      setJsonError(null);
-      return parsed;
-    } catch (err: any) {
-      setJsonError(err.message);
-      return null;
-    }
-  };
-
   const handleApply = () => {
-    let customRecords: any[] | undefined = undefined;
-    if (selectedKey === 'custom') {
-      const records = getCustomRecords();
-      if (records === null) return;
-      customRecords = records;
-    }
     const target = SCENARIOS.find((s) => s.key === selectedKey) || SCENARIOS[0];
     const finalScenario: TestScenario = {
       ...target,
       seed,
-      batches: selectedKey === 'custom' ? 1 : batches,
-      size: selectedKey === 'custom' ? (customRecords?.length || 1) : batchSize,
-      volume: selectedKey === 'custom' ? (customRecords?.length || 1) : batches * batchSize,
+      batches,
+      size: batchSize,
+      volume: batches * batchSize,
       updateRatio,
       dupRatio,
       oooRatio,
       withdrawnRatio,
       invalidRatio,
     };
-    onSelectScenario(finalScenario, customRecords);
+    onSelectScenario(finalScenario);
     onOpenChange(false);
   };
 
   const handleStartNow = () => {
-    let customRecords: any[] | undefined = undefined;
-    if (selectedKey === 'custom') {
-      const records = getCustomRecords();
-      if (records === null) return;
-      customRecords = records;
-    }
     const target = SCENARIOS.find((s) => s.key === selectedKey) || SCENARIOS[0];
     const finalScenario: TestScenario = {
       ...target,
       seed,
-      batches: selectedKey === 'custom' ? 1 : batches,
-      size: selectedKey === 'custom' ? (customRecords?.length || 1) : batchSize,
-      volume: selectedKey === 'custom' ? (customRecords?.length || 1) : batches * batchSize,
+      batches,
+      size: batchSize,
+      volume: batches * batchSize,
       updateRatio,
       dupRatio,
       oooRatio,
       withdrawnRatio,
       invalidRatio,
     };
-    onStartImmediately(finalScenario, customRecords);
+    onStartImmediately(finalScenario);
     onOpenChange(false);
   };
 
@@ -275,8 +208,6 @@ export const DemoModal: React.FC<DemoModalProps> = ({
         return <Zap className="h-4 w-4 text-amber-500" />;
       case 'interrupted':
         return <AlertTriangle className="h-4 w-4 text-amber-600" />;
-      case 'custom':
-        return <FileCode className="h-4 w-4 text-blue-600" />;
       default:
         return <SlidersHorizontal className="h-4 w-4 text-slate-600" />;
     }
@@ -355,69 +286,16 @@ export const DemoModal: React.FC<DemoModalProps> = ({
           })}
         </div>
 
-        {/* Custom JSON Batch Panel (shown when 'custom' scenario is selected) */}
-        {selectedKey === 'custom' && (
-          <div className="p-3.5 rounded-lg border border-slate-200 bg-slate-50 space-y-2 animate-in fade-in-50">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                <FileCode className="h-3.5 w-3.5 text-blue-600" />
-                <span>Custom Supplier Records (JSON Array)</span>
-              </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="xs"
-                  onClick={() => {
-                    setJsonText(JSON.stringify(SAMPLE_JSON, null, 2));
-                    setJsonError(null);
-                  }}
-                  className="h-6 text-[11px]"
-                >
-                  Load Sample
-                </Button>
-                <Button
-                  variant="outline"
-                  size="xs"
-                  onClick={() => {
-                    setJsonText('');
-                    setJsonError(null);
-                  }}
-                  className="h-6 text-[11px]"
-                >
-                  Clear
-                </Button>
-              </div>
-            </div>
-
-            <textarea
-              value={jsonText}
-              onChange={(e) => {
-                setJsonText(e.target.value);
-                setJsonError(null);
-              }}
-              rows={5}
-              placeholder="[ { sku: 'PROD-101', name: 'Oak Desk', price: 149.99, status: 'ACTIVE', timestamp: '...' } ]"
-              className="w-full rounded-md border border-slate-200 bg-white p-2.5 font-mono text-xs text-slate-900 shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            {jsonError && (
-              <span className="text-[11px] font-semibold text-red-600">
-                Invalid JSON: {jsonError}
-              </span>
-            )}
-          </div>
-        )}
-
         {/* Advanced Settings Accordion */}
-        {selectedKey !== 'custom' && (
-          <div className="border-t border-slate-100 pt-2">
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 mb-2"
-            >
-              <SlidersHorizontal className="h-3 w-3" />
-              <span>{showAdvanced ? 'Hide Advanced Generator Parameters' : 'Show Advanced Generator Parameters'}</span>
-            </button>
+        <div className="border-t border-slate-100 pt-2">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 mb-2"
+          >
+            <SlidersHorizontal className="h-3 w-3" />
+            <span>{showAdvanced ? 'Hide Advanced Generator Parameters' : 'Show Advanced Generator Parameters'}</span>
+          </button>
 
             {showAdvanced && (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 p-3.5 rounded-lg border border-slate-200 bg-slate-50 text-xs animate-in fade-in-50">
@@ -532,7 +410,6 @@ export const DemoModal: React.FC<DemoModalProps> = ({
               </div>
             )}
           </div>
-        )}
 
         <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t border-slate-100">
           <Button
