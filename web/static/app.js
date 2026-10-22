@@ -14,7 +14,6 @@
     sseReconnectTimer: null,
     lastPingTimestamp: Date.now(),
     pingWatchdogTimer: null,
-    theme: localStorage.getItem('cp_theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
 
     // Live Metrics (5 Core Invariants)
     metrics: { added: 0, updated: 0, withdrawn: 0, skipped: 0, deadLetter: 0 },
@@ -43,8 +42,6 @@
 
   // --- DOM Element References ---
   const el = {
-    themeToggle: document.getElementById('theme-toggle'),
-    themeLabel: document.getElementById('theme-label'),
     activeJobBadge: document.getElementById('active-job-badge'),
     activeJobText: document.getElementById('active-job-text'),
     sseStatus: document.getElementById('sse-status'),
@@ -169,23 +166,6 @@
     // Toasts
     toastContainer: document.getElementById('toast-container'),
   };
-
-  // --- Theme Management ---
-  function applyTheme(theme) {
-    state.theme = theme;
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('cp_theme', theme);
-    if (el.themeLabel) {
-      el.themeLabel.textContent = theme === 'dark' ? 'Light Mode' : 'Dark Mode';
-    }
-    renderDonutChart();
-  }
-
-  if (el.themeToggle) {
-    el.themeToggle.addEventListener('click', () => {
-      applyTheme(state.theme === 'dark' ? 'light' : 'dark');
-    });
-  }
 
   // --- Tab Navigation ---
   document.querySelectorAll('.tab-group').forEach((group) => {
@@ -1276,7 +1256,6 @@
 
   // --- Initial Bootstrap ---
   function init() {
-    applyTheme(state.theme);
     applyPreset('default');
     renderDonutChart();
     updateHealthGauge();
