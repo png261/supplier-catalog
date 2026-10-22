@@ -619,6 +619,121 @@ input[type="range"] {
 .card-deadletter .metric-value { color: var(--color-deadletter); }
 
 /* ==========================================================================
+   Staged Test Scenario & Sync Control Bar
+   ========================================================================== */
+.staged-scenario-card {
+  padding: 1.25rem 1.5rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--border-focus);
+}
+
+.staged-card-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.staged-info-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 280px;
+}
+
+.staged-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.badge-scenario {
+  background-color: rgba(37, 99, 235, 0.08);
+  color: var(--border-focus);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+}
+
+.staged-tag {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.staged-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.staged-description {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.staged-stats-strip {
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+
+.staged-mini-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.staged-mini-label {
+  color: var(--text-muted);
+}
+
+.staged-mini-stat strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.status-ready {
+  color: var(--color-added) !important;
+}
+
+.status-syncing {
+  color: var(--color-running) !important;
+}
+
+.status-completed {
+  color: var(--color-completed) !important;
+}
+
+.staged-action-col {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.btn-sync-main {
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.55rem 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ==========================================================================
    Progress & Live Telemetry
    ========================================================================== */
 .progress-card {

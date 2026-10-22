@@ -40,6 +40,18 @@
       total: 0,
       searchTimer: null,
     },
+
+    // Active Staged Scenario
+    stagedScenario: {
+      key: 'default',
+      name: 'Standard Ingestion Profile',
+      desc: 'Balanced workload for regular operations (60% new items, 20% price updates, 5% duplicates, 10% out-of-order, 5% withdrawn, 5% invalid records).',
+      batches: 10,
+      size: 100,
+      volume: 1000,
+      quality: '5% anomalies (DLQ test)',
+      status: 'Ready to Sync',
+    },
   };
 
   // --- Workload Presets ---
@@ -68,6 +80,21 @@
     advancedSettingsPanel: document.getElementById('advanced-settings-panel'),
     btnResetDb: document.getElementById('btn-reset-db'),
     btnCancelJob: document.getElementById('btn-cancel-job'),
+    btnApplyScenario: document.getElementById('btn-apply-scenario'),
+
+    // Staged Scenario & Sync on Main Page
+    stagedScenarioTitle: document.getElementById('staged-scenario-title'),
+    stagedScenarioVolumeTag: document.getElementById('staged-scenario-volume-tag'),
+    stagedScenarioDescription: document.getElementById('staged-scenario-description'),
+    stagedStatVolume: document.getElementById('staged-stat-volume'),
+    stagedStatBatches: document.getElementById('staged-stat-batches'),
+    stagedStatQuality: document.getElementById('staged-stat-quality'),
+    stagedStatStatus: document.getElementById('staged-stat-status'),
+    btnReopenScenarios: document.getElementById('btn-reopen-scenarios'),
+    btnStartSyncMain: document.getElementById('btn-start-sync-main'),
+    mainSyncSpinner: document.getElementById('main-sync-spinner'),
+    mainSyncText: document.getElementById('main-sync-text'),
+    btnCancelSyncMain: document.getElementById('btn-cancel-sync-main'),
 
     // Control Form (Advanced)
     generatorForm: document.getElementById('generator-form'),
@@ -385,7 +412,56 @@
     }
   }
 
-  // --- Workload Presets Interaction ---
+  // --- Workload Presets & Scenario Management ---
+  const SCENARIO_DETAILS = {
+    default: {
+      name: 'Standard Ingestion Profile',
+      desc: 'Balanced workload for regular operations (60% new items, 20% price updates, 5% duplicates, 10% out-of-order, 5% withdrawn, 5% invalid records).',
+      batches: 10,
+      size: 100,
+      volume: 1000,
+      quality: '5% anomalies (DLQ test)',
+    },
+    clean: {
+      name: 'Clean Ingestion (Zero Defects)',
+      desc: '100% compliant supplier feed with zero schema errors or timestamp anomalies. Perfect baseline for error-free catalog additions and updates.',
+      batches: 10,
+      size: 100,
+      volume: 1000,
+      quality: '0% anomalies (100% compliant)',
+    },
+    stress: {
+      name: 'Fault Tolerance & DLQ Stress',
+      desc: 'High anomaly rate with negative prices, empty SKUs, and zero timestamps. Thoroughly tests dead-letter quarantine isolation without aborting batches.',
+      batches: 15,
+      size: 150,
+      volume: 2250,
+      quality: '15% anomalies (Heavy DLQ test)',
+    },
+    large: {
+      name: 'High-Volume Stress Load',
+      desc: 'High-throughput streaming feed with rapid interleaved batches to stress-test SQLite WAL concurrency, throughput, and memory stability.',
+      batches: 50,
+      size: 200,
+      volume: 10000,
+      quality: '5% anomalies (High throughput)',
+    },
+  };
+
+  function updateStagedScenarioUI() {
+    const s = state.stagedScenario;
+    if (el.stagedScenarioTitle) el.stagedScenarioTitle.textContent = s.name;
+    if (el.stagedScenarioVolumeTag) el.stagedScenarioVolumeTag.textContent = `${s.batches} Batches • ${s.volume.toLocaleString()} Records`;
+    if (el.stagedScenarioDescription) el.stagedScenarioDescription.textContent = s.desc;
+    if (el.stagedStatVolume) el.stagedStatVolume.textContent = `${s.volume.toLocaleString()} items`;
+    if (el.stagedStatBatches) el.stagedStatBatches.textContent = `${s.batches} batches (${s.size} / batch)`;
+    if (el.stagedStatQuality) el.stagedStatQuality.textContent = s.quality;
+    if (el.stagedStatStatus) {
+      el.stagedStatStatus.textContent = s.status;
+      el.stagedStatStatus.className = s.status === 'Ready to Sync' ? 'status-ready' : (s.status.includes('Sync') ? 'status-syncing' : 'status-completed');
+    }
+  }
+
   function applyPreset(key) {
     const p = PRESETS[key];
     if (!p) return;
@@ -398,6 +474,27 @@
     if (el.inputWithdrawnRatio) el.inputWithdrawnRatio.value = p.with;
     if (el.inputInvalidRatio) el.inputInvalidRatio.value = p.inv;
     updateRatios();
+
+    const detail = SCENARIO_DETAILS[key] || {
+      name: p.name,
+      desc: 'Configured synthetic workload profile.',
+      batches: p.batches,
+      size: p.size,
+      volume: p.batches * p.size,
+      quality: `${p.inv}% anomalies`,
+    };
+
+    state.stagedScenario = {
+      key: key,
+      name: detail.name,
+      desc: detail.desc,
+      batches: detail.batches,
+      size: detail.size,
+      volume: detail.volume,
+      quality: detail.quality,
+      status: 'Ready to Sync',
+    };
+    updateStagedScenarioUI();
   }
 
   el.presetCards.forEach((card) => {
@@ -406,8 +503,6 @@
       card.classList.add('active');
       const presetKey = card.getAttribute('data-preset');
       applyPreset(presetKey);
-      const title = card.querySelector('.preset-card-title') ? card.querySelector('.preset-card-title').textContent : presetKey;
-      updateSmartStatus(`Selected profile "${title}". Click Start Synchronization to begin.`, 'normal');
     });
   });
 
@@ -608,6 +703,14 @@
     updateMetricCards();
     startRuntimeTimer();
 
+    state.stagedScenario.status = 'Syncing...';
+    updateStagedScenarioUI();
+
+    if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = true;
+    if (el.mainSyncSpinner) el.mainSyncSpinner.classList.remove('hidden');
+    if (el.mainSyncText) el.mainSyncText.textContent = 'Syncing...';
+    if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.remove('hidden');
+
     if (el.activeJobBadge) {
       el.activeJobBadge.className = 'badge badge-job status-running';
       el.activeJobText.textContent = `Running (${job.job_id.substring(0, 12)}...)`;
@@ -673,6 +776,14 @@
 
   function handleJobCompleted(data) {
     stopRuntimeTimer();
+    state.stagedScenario.status = 'Synchronized';
+    updateStagedScenarioUI();
+
+    if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
+    if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
+    if (el.mainSyncText) el.mainSyncText.textContent = 'Sync Again';
+    if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
+
     if (el.activeJobBadge) {
       el.activeJobBadge.className = 'badge badge-job status-completed';
       el.activeJobText.textContent = 'Completed';
@@ -692,6 +803,14 @@
 
   function handleJobInterrupted(data) {
     stopRuntimeTimer();
+    state.stagedScenario.status = 'Interrupted';
+    updateStagedScenarioUI();
+
+    if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
+    if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
+    if (el.mainSyncText) el.mainSyncText.textContent = 'Resume Sync';
+    if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
+
     if (el.activeJobBadge) {
       el.activeJobBadge.className = 'badge badge-job status-interrupted';
       el.activeJobText.textContent = 'Interrupted';
@@ -725,10 +844,16 @@
 
   // --- Start Sync Job ---
   async function triggerStartJob() {
-    if (!el.btnStartJob) return;
-    el.btnStartJob.disabled = true;
-    const spinner = el.btnStartJob.querySelector('.btn-spinner');
+    if (el.btnStartJob) el.btnStartJob.disabled = true;
+    if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = true;
+    const spinner = el.btnStartJob ? el.btnStartJob.querySelector('.btn-spinner') : null;
     if (spinner) spinner.classList.remove('hidden');
+    if (el.mainSyncSpinner) el.mainSyncSpinner.classList.remove('hidden');
+    if (el.mainSyncText) el.mainSyncText.textContent = 'Syncing...';
+    if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.remove('hidden');
+
+    state.stagedScenario.status = 'Syncing...';
+    updateStagedScenarioUI();
 
     const payload = {
       mode: 'generator',
@@ -755,14 +880,32 @@
         if (el.demoModal) el.demoModal.classList.add('hidden');
       } else if (resp.status === 409) {
         showToast(body.error || 'A synchronization job is already running!', 'error');
-        el.btnStartJob.disabled = false;
+        if (el.btnStartJob) el.btnStartJob.disabled = false;
+        if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
+        if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
+        if (el.mainSyncText) el.mainSyncText.textContent = 'Start Sync';
+        if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
+        state.stagedScenario.status = 'Ready to Sync';
+        updateStagedScenarioUI();
       } else {
         showToast(body.error || 'Failed to start synchronization', 'error');
-        el.btnStartJob.disabled = false;
+        if (el.btnStartJob) el.btnStartJob.disabled = false;
+        if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
+        if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
+        if (el.mainSyncText) el.mainSyncText.textContent = 'Start Sync';
+        if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
+        state.stagedScenario.status = 'Ready to Sync';
+        updateStagedScenarioUI();
       }
     } catch (err) {
       showToast(`Network error: ${err.message}`, 'error');
-      el.btnStartJob.disabled = false;
+      if (el.btnStartJob) el.btnStartJob.disabled = false;
+      if (el.btnStartSyncMain) el.btnStartSyncMain.disabled = false;
+      if (el.mainSyncSpinner) el.mainSyncSpinner.classList.add('hidden');
+      if (el.mainSyncText) el.mainSyncText.textContent = 'Start Sync';
+      if (el.btnCancelSyncMain) el.btnCancelSyncMain.classList.add('hidden');
+      state.stagedScenario.status = 'Ready to Sync';
+      updateStagedScenarioUI();
     } finally {
       if (spinner) spinner.classList.add('hidden');
     }
@@ -770,6 +913,28 @@
 
   if (el.btnStartJob) {
     el.btnStartJob.addEventListener('click', triggerStartJob);
+  }
+
+  // Staged Scenario Execution Buttons on Main Page
+  if (el.btnStartSyncMain) {
+    el.btnStartSyncMain.addEventListener('click', triggerStartJob);
+  }
+  if (el.btnCancelSyncMain) {
+    el.btnCancelSyncMain.addEventListener('click', () => {
+      if (el.btnCancelJob) el.btnCancelJob.click();
+    });
+  }
+  if (el.btnReopenScenarios) {
+    el.btnReopenScenarios.addEventListener('click', openDemoModal);
+  }
+  if (el.btnApplyScenario) {
+    el.btnApplyScenario.addEventListener('click', () => {
+      closeDemoModal();
+      updateSmartStatus(`Scenario "${state.stagedScenario.name}" staged. Review feed parameters and click "Start Sync".`, 'normal');
+      showToast(`Staged "${state.stagedScenario.name}". Click Start Sync on main page.`, 'info');
+      if (el.batchProgressText) el.batchProgressText.textContent = `0 / ${state.stagedScenario.batches} Batches (Ready)`;
+      if (el.progressBarFill) el.progressBarFill.style.width = '0%';
+    });
   }
 
   if (el.generatorForm) {

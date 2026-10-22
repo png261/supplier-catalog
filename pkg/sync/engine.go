@@ -307,6 +307,11 @@ func (e *SyncEngine) processBatchTx(ctx context.Context, job *domain.SyncJob, ba
 		return fmt.Errorf("failed to update job progress for %s[%d]: %w", job.JobID, batch.BatchIndex, err)
 	}
 
+	// Verify context is still active prior to committing transaction
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	// 4. Commit transaction
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit batch %s[%d]: %w", job.JobID, batch.BatchIndex, err)

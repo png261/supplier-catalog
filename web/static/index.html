@@ -17,8 +17,8 @@
       </div>
     </div>
     <div class="header-actions">
-      <button id="btn-open-demo" class="btn btn-primary btn-sm">
-        <span>Simulate Supplier Feed</span>
+      <button id="btn-open-demo" class="btn btn-outline btn-sm">
+        <span>Test Scenarios</span>
       </button>
       <button id="btn-reset-db" class="btn btn-outline btn-sm" title="Clear all catalog and audit records">
         <span>Reset Database</span>
@@ -27,6 +27,53 @@
   </header>
 
   <main class="dashboard-container">
+    <!-- Staged Test Scenario & Feed Execution Bar -->
+    <section class="card staged-scenario-card">
+      <div class="staged-card-inner">
+        <div class="staged-info-col">
+          <div class="staged-tag-row">
+            <span class="badge badge-scenario">Staged Scenario</span>
+            <strong id="staged-scenario-title" class="staged-title">Standard Ingestion Profile</strong>
+            <span id="staged-scenario-volume-tag" class="staged-tag">10 Batches • 1,000 Records</span>
+          </div>
+          <p id="staged-scenario-description" class="staged-description">
+            Balanced workload for regular operations. Tests additions, price updates, duplicate preservation, out-of-order timestamps, and dead-letter quarantine.
+          </p>
+          <div class="staged-stats-strip">
+            <div class="staged-mini-stat">
+              <span class="staged-mini-label">Total Volume:</span>
+              <strong id="staged-stat-volume">1,000 items</strong>
+            </div>
+            <div class="staged-mini-stat">
+              <span class="staged-mini-label">Batches:</span>
+              <strong id="staged-stat-batches">10 batches (100 / batch)</strong>
+            </div>
+            <div class="staged-mini-stat">
+              <span class="staged-mini-label">Defect Ratio:</span>
+              <strong id="staged-stat-quality">5% anomalies (DLQ test)</strong>
+            </div>
+            <div class="staged-mini-stat">
+              <span class="staged-mini-label">Pipeline Status:</span>
+              <strong id="staged-stat-status" class="status-ready">Ready to Sync</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="staged-action-col">
+          <button type="button" id="btn-reopen-scenarios" class="btn btn-outline btn-sm">
+            <span>Change Scenario</span>
+          </button>
+          <button type="button" id="btn-start-sync-main" class="btn btn-primary btn-sync-main">
+            <span class="btn-spinner hidden" id="main-sync-spinner"></span>
+            <span id="main-sync-text">Start Sync</span>
+          </button>
+          <button type="button" id="btn-cancel-sync-main" class="btn btn-danger btn-sm hidden">
+            <span>Stop Sync</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
     <!-- Live Feed Ingestion Progress & Status -->
     <section class="card progress-card">
       <div class="progress-header">
@@ -290,19 +337,19 @@
     </section>
   </main>
 
-  <!-- Modal: Demo & Supplier Feed Simulation Setup -->
+  <!-- Modal: Test Scenarios Setup -->
   <div id="demo-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
     <div class="modal-card modal-card-large">
       <div class="modal-header">
         <div>
-          <h3 class="modal-title">Supplier Feed Simulation & Demo Setup</h3>
-          <p class="modal-subtitle">Configure synthetic supplier feeds to test pipeline resilience and anomaly handling.</p>
+          <h3 class="modal-title">Supplier Ingestion Test Scenarios</h3>
+          <p class="modal-subtitle">Select a test scenario to stage synthetic supplier feed data in the workspace, then click Start Sync on the main page.</p>
         </div>
         <button id="btn-close-demo-modal" class="btn btn-sm btn-outline" aria-label="Close modal">Close</button>
       </div>
       <div class="modal-body">
         <div class="tab-group" role="tablist">
-          <button class="tab-btn active" data-tab="tab-generator" role="tab">Quick Presets</button>
+          <button class="tab-btn active" data-tab="tab-generator" role="tab">Test Scenarios</button>
           <button class="tab-btn" data-tab="tab-resume" role="tab">Resume Interrupted</button>
           <button class="tab-btn" data-tab="tab-manual" role="tab">Custom Batch</button>
         </div>
@@ -311,30 +358,33 @@
         <div id="tab-generator" class="tab-content active" role="tabpanel">
           <div class="quick-cards-grid">
             <div class="preset-card active" data-preset="default">
-              <div class="preset-card-title">Standard Profile</div>
-              <div class="preset-card-desc">10 batches (1,000 records). Balanced workload for standard operations.</div>
+              <div class="preset-card-title">Standard Ingestion Profile</div>
+              <div class="preset-card-desc">10 batches (1,000 records). Balanced operational workload with updates, duplicates, and defects.</div>
             </div>
             <div class="preset-card" data-preset="clean">
-              <div class="preset-card-title">Clean Ingestion</div>
-              <div class="preset-card-desc">10 batches, 100% compliant records. Zero synthetic anomalies.</div>
+              <div class="preset-card-title">Clean Ingestion (Zero Defects)</div>
+              <div class="preset-card-desc">10 batches (1,000 records). 100% compliant supplier feed with zero synthetic anomalies.</div>
             </div>
             <div class="preset-card" data-preset="stress">
-              <div class="preset-card-title">Fault Tolerance</div>
-              <div class="preset-card-desc">15 batches containing price defects and schema errors to verify quarantine.</div>
+              <div class="preset-card-title">Fault Tolerance & DLQ Stress</div>
+              <div class="preset-card-desc">15 batches (2,250 records). Injects price defects, empty SKUs, and schema errors to verify quarantine.</div>
             </div>
             <div class="preset-card" data-preset="large">
-              <div class="preset-card-title">High Volume</div>
-              <div class="preset-card-desc">50 batches (10,000 records). High-throughput streaming verification.</div>
+              <div class="preset-card-title">High-Volume Stress Load</div>
+              <div class="preset-card-desc">50 batches (10,000 records). High-throughput streaming verification for pipeline stability.</div>
             </div>
           </div>
 
           <div class="action-bar modal-action-bar">
-            <button type="button" id="btn-start-job" class="btn btn-primary btn-large">
-              <span class="btn-spinner hidden"></span>
-              <span>Start Synchronization</span>
+            <button type="button" id="btn-apply-scenario" class="btn btn-primary btn-large">
+              <span>Apply Scenario & Stage Data</span>
             </button>
             <button type="button" id="btn-toggle-advanced" class="btn btn-outline">
               <span id="advanced-toggle-label">Advanced Settings</span>
+            </button>
+            <button type="button" id="btn-start-job" class="btn btn-outline btn-sm" title="Directly start sync without staging">
+              <span class="btn-spinner hidden"></span>
+              <span>Start Immediately</span>
             </button>
             <button type="button" id="btn-cancel-job" class="btn btn-danger hidden">
               <span>Stop Job</span>

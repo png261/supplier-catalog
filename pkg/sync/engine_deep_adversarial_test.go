@@ -677,15 +677,21 @@ func TestDeepAdversarial_AC1_AC2_RepeatedCrashRollbackLoop(t *testing.T) {
 	// Step 2: Crash Batch 1 ten times consecutively
 	for attempt := 1; attempt <= 10; attempt++ {
 		ctxCancel, cancel := context.WithCancel(context.Background())
-		streamFail := make(chan domain.Batch)
+		cancelled := false
 
-		go func() {
-			defer close(streamFail)
-			streamFail <- cursedBatch
-			cancel() // Abort transaction
-		}()
+		failEngine := catalogSync.NewEngine(store, catalogSync.WithTimeFunc(func() time.Time {
+			if !cancelled {
+				cancelled = true
+				cancel() // Trigger deterministic in-transaction abort
+			}
+			return baseTime.Add(time.Hour)
+		}))
 
-		_, err := engine.ResumeJob(ctxCancel, jobID, streamFail)
+		streamFail := make(chan domain.Batch, 1)
+		streamFail <- cursedBatch
+		close(streamFail)
+
+		_, err := failEngine.ResumeJob(ctxCancel, jobID, streamFail)
 		if err == nil {
 			t.Fatalf("attempt %d: expected cancellation error", attempt)
 		}
