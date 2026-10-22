@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
+import { Button } from './ui/button';
 import {
   PieChart,
   Pie,
@@ -11,9 +12,10 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
+  Brush,
 } from 'recharts';
 import { formatNumber } from '../lib/utils';
-import { PieChart as PieIcon, Package } from 'lucide-react';
+import { PieChart as PieIcon, Package, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 interface ChartsSectionProps {
   totals: {
@@ -35,6 +37,46 @@ interface ChartsSectionProps {
   }[];
 }
 
+function formatTimeTick(isoStr: string): string {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return isoStr;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function formatSubSecondTick(isoStr: string): string {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return isoStr;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0').slice(0, 2);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${ms}`;
+}
+
+function formatMultiDayTick(isoStr: string): string {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return isoStr;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatFullDateTime(isoStr: string): string {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return isoStr;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const day = pad(d.getDate());
+  const month = pad(d.getMonth() + 1);
+  const year = d.getFullYear();
+  const hours = pad(d.getHours());
+  const mins = pad(d.getMinutes());
+  const secs = pad(d.getSeconds());
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${day}/${month}/${year} ${hours}:${mins}:${secs}.${ms}`;
+}
+
 export const ChartsSection: React.FC<ChartsSectionProps> = ({
   totals,
   timeSeries,
@@ -50,23 +92,168 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
   const totalCatalogItems =
     totals.active_products + totals.withdrawn_products + totals.quarantined_issues;
 
-  // Prepare product timeSeries or sample product progression points
-  const chartData =
-    timeSeries && timeSeries.length > 0
-      ? timeSeries.map((p) => ({
-          name: `Batch ${p.batch_index + 1}`,
-          added: p.added,
-          updated: p.updated,
-          withdrawn: p.withdrawn,
-          defects: p.dead_letter,
-        }))
-      : [
-          { name: 'Batch 1', added: 120, updated: 35, withdrawn: 5, defects: 0 },
-          { name: 'Batch 2', added: 280, updated: 85, withdrawn: 15, defects: 2 },
-          { name: 'Batch 3', added: 450, updated: 140, withdrawn: 25, defects: 5 },
-          { name: 'Batch 4', added: 390, updated: 110, withdrawn: 18, defects: 1 },
-          { name: 'Batch 5', added: 520, updated: 165, withdrawn: 30, defects: 3 },
-        ];
+  const timeResolution = useMemo(() => {
+    if (!timeSeries || timeSeries.length < 2) return 'seconds';
+    const first = new Date(timeSeries[0].timestamp);
+    const last = new Date(timeSeries[timeSeries.length - 1].timestamp);
+    if (first.toDateString() !== last.toDateString()) {
+      return 'multi-day';
+    }
+    const diffMs = Math.abs(last.getTime() - first.getTime());
+    if (diffMs < 5000) {
+      return 'sub-second';
+    }
+    return 'seconds';
+  }, [timeSeries]);
+
+  const getTimeLabel = (timeStr: string) => {
+    if (timeResolution === 'multi-day') return formatMultiDayTick(timeStr);
+    if (timeResolution === 'sub-second') return formatSubSecondTick(timeStr);
+    return formatTimeTick(timeStr);
+  };
+
+  // Construct chart data points with time labels and fallback baseline
+  const chartData = useMemo(() => {
+    if (!timeSeries || timeSeries.length === 0) {
+      const now = Date.now();
+      return [
+        {
+          rawTime: new Date(now - 40000).toISOString(),
+          timeLabel: formatTimeTick(new Date(now - 40000).toISOString()),
+          fullTime: formatFullDateTime(new Date(now - 40000).toISOString()),
+          batchIndex: 0,
+          added: 120,
+          updated: 35,
+          withdrawn: 5,
+          defects: 0,
+        },
+        {
+          rawTime: new Date(now - 30000).toISOString(),
+          timeLabel: formatTimeTick(new Date(now - 30000).toISOString()),
+          fullTime: formatFullDateTime(new Date(now - 30000).toISOString()),
+          batchIndex: 1,
+          added: 280,
+          updated: 85,
+          withdrawn: 15,
+          defects: 2,
+        },
+        {
+          rawTime: new Date(now - 20000).toISOString(),
+          timeLabel: formatTimeTick(new Date(now - 20000).toISOString()),
+          fullTime: formatFullDateTime(new Date(now - 20000).toISOString()),
+          batchIndex: 2,
+          added: 450,
+          updated: 140,
+          withdrawn: 25,
+          defects: 5,
+        },
+        {
+          rawTime: new Date(now - 10000).toISOString(),
+          timeLabel: formatTimeTick(new Date(now - 10000).toISOString()),
+          fullTime: formatFullDateTime(new Date(now - 10000).toISOString()),
+          batchIndex: 3,
+          added: 390,
+          updated: 110,
+          withdrawn: 18,
+          defects: 1,
+        },
+        {
+          rawTime: new Date(now).toISOString(),
+          timeLabel: formatTimeTick(new Date(now).toISOString()),
+          fullTime: formatFullDateTime(new Date(now).toISOString()),
+          batchIndex: 4,
+          added: 520,
+          updated: 165,
+          withdrawn: 30,
+          defects: 3,
+        },
+      ];
+    }
+
+    const pts = timeSeries.map((p, idx) => {
+      const timeStr = p.timestamp || new Date().toISOString();
+      const timeLabel = getTimeLabel(timeStr);
+      const fullTime = formatFullDateTime(timeStr);
+      return {
+        rawTime: timeStr,
+        timeLabel,
+        fullTime,
+        batchIndex: typeof p.batch_index === 'number' ? p.batch_index : idx,
+        added: p.added,
+        updated: p.updated,
+        withdrawn: p.withdrawn,
+        defects: p.dead_letter,
+      };
+    });
+
+    // If only 1 point, prepend a start baseline so a continuous gradient curve is rendered
+    if (pts.length === 1) {
+      const single = pts[0];
+      const singleDate = new Date(single.rawTime);
+      const baselineDate = new Date(singleDate.getTime() - 1000);
+      const baselineTimeStr = baselineDate.toISOString();
+      return [
+        {
+          rawTime: baselineTimeStr,
+          timeLabel: getTimeLabel(baselineTimeStr),
+          fullTime: formatFullDateTime(baselineTimeStr) + ' (Sync Init)',
+          batchIndex: Math.max(0, single.batchIndex - 1),
+          added: 0,
+          updated: 0,
+          withdrawn: 0,
+          defects: 0,
+        },
+        single,
+      ];
+    }
+
+    return pts;
+  }, [timeSeries, timeResolution]);
+
+  // Zoom / Brush range state
+  const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number }>({
+    startIndex: 0,
+    endIndex: 0,
+  });
+
+  useEffect(() => {
+    if (chartData.length > 0) {
+      setBrushRange({
+        startIndex: 0,
+        endIndex: chartData.length - 1,
+      });
+    }
+  }, [chartData.length]);
+
+  const isZoomed =
+    chartData.length > 2 &&
+    (brushRange.startIndex > 0 || brushRange.endIndex < chartData.length - 1);
+
+  const handleZoomIn = () => {
+    const count = brushRange.endIndex - brushRange.startIndex + 1;
+    if (count <= 2) return;
+    const delta = Math.max(1, Math.floor(count * 0.25));
+    setBrushRange((prev) => ({
+      startIndex: Math.min(prev.startIndex + delta, prev.endIndex - 1),
+      endIndex: Math.max(prev.endIndex - delta, prev.startIndex + 1),
+    }));
+  };
+
+  const handleZoomOut = () => {
+    const count = brushRange.endIndex - brushRange.startIndex + 1;
+    const delta = Math.max(1, Math.floor(count * 0.35));
+    setBrushRange((prev) => ({
+      startIndex: Math.max(0, prev.startIndex - delta),
+      endIndex: Math.min(chartData.length - 1, prev.endIndex + delta),
+    }));
+  };
+
+  const handleResetZoom = () => {
+    setBrushRange({
+      startIndex: 0,
+      endIndex: chartData.length - 1,
+    });
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -166,31 +353,75 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
 
       {/* Area Chart: Product Changes & Synchronization Activity */}
       <Card className="lg:col-span-7 border-slate-200 bg-white shadow-xs flex flex-col">
-        <CardHeader className="p-4 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 space-y-0">
+        <CardHeader className="p-4 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 space-y-0">
           <CardTitle className="text-sm font-bold text-slate-900 flex items-center gap-2">
             <Package className="h-4 w-4 text-indigo-600" />
             <span>Product Ingestion & Updates Activity</span>
           </CardTitle>
-          <div className="flex items-center gap-3 text-xs">
-            <div className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-              <span className="text-slate-600 font-medium">Added</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-indigo-500"></span>
-              <span className="text-slate-600 font-medium">Updated</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-amber-500"></span>
-              <span className="text-slate-600 font-medium">Withdrawn</span>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Zoom Controls */}
+            {chartData.length > 2 && (
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-md p-0.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleZoomIn}
+                  disabled={brushRange.endIndex - brushRange.startIndex <= 1}
+                  className="h-6 w-6 p-0 text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+                  title="Zoom In"
+                  aria-label="Zoom In"
+                >
+                  <ZoomIn className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleZoomOut}
+                  disabled={!isZoomed}
+                  className="h-6 w-6 p-0 text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+                  title="Zoom Out"
+                  aria-label="Zoom Out"
+                >
+                  <ZoomOut className="h-3.5 w-3.5" />
+                </Button>
+                {isZoomed && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleResetZoom}
+                    className="h-6 px-1.5 text-[11px] text-indigo-600 font-medium hover:bg-indigo-50"
+                    title="Reset Zoom to 100%"
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    Reset
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* Legend */}
+            <div className="flex items-center gap-3 text-xs">
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+                <span className="text-slate-600 font-medium">Added</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-indigo-500"></span>
+                <span className="text-slate-600 font-medium">Updated</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-amber-500"></span>
+                <span className="text-slate-600 font-medium">Withdrawn</span>
+              </div>
             </div>
           </div>
         </CardHeader>
 
         <CardContent className="p-4 pt-1 flex-1 flex flex-col justify-center">
-          <div className="h-60 w-full">
+          <div className="h-[280px] w-full min-h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
                 <defs>
                   <linearGradient id="addedGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
@@ -211,7 +442,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   stroke="#f1f5f9"
                 />
                 <XAxis
-                  dataKey="name"
+                  dataKey="timeLabel"
                   tickLine={false}
                   axisLine={{ stroke: '#cbd5e1' }}
                   tick={{ fill: '#64748b', fontSize: 11 }}
@@ -223,17 +454,42 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   tickFormatter={(v) => `${v}`}
                 />
                 <RechartsTooltip
-                  formatter={(val: number, name: string) => [
-                    `${formatNumber(val)} products`,
-                    name,
-                  ]}
-                  contentStyle={{
-                    backgroundColor: '#0f172a',
-                    borderRadius: '6px',
-                    color: '#ffffff',
-                    fontSize: '12px',
-                    border: 'none',
-                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload || !payload.length) return null;
+                    const data = payload[0].payload;
+                    return (
+                      <div className="bg-slate-900 text-white rounded-md p-2.5 shadow-lg text-xs space-y-1.5 border border-slate-700 min-w-[170px]">
+                        <div className="font-semibold text-slate-200 border-b border-slate-700 pb-1 flex items-center justify-between gap-2">
+                          <span>{data.fullTime || label}</span>
+                          {typeof data.batchIndex === 'number' && (
+                            <span className="text-[10px] text-slate-400 font-mono">#{data.batchIndex + 1}</span>
+                          )}
+                        </div>
+                        <div className="space-y-1 pt-0.5">
+                          <div className="flex items-center justify-between text-emerald-400">
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                              <span>Added</span>
+                            </span>
+                            <span className="font-mono font-bold">{formatNumber(data.added || 0)}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-indigo-400">
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-400"></span>
+                              <span>Updated</span>
+                            </span>
+                            <span className="font-mono font-bold">{formatNumber(data.updated || 0)}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-amber-400">
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+                              <span>Withdrawn</span>
+                            </span>
+                            <span className="font-mono font-bold">{formatNumber(data.withdrawn || 0)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
                   }}
                 />
                 <Area
@@ -263,6 +519,22 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   fillOpacity={1}
                   fill="url(#withdrawnGradient)"
                 />
+                {chartData.length > 2 && (
+                  <Brush
+                    dataKey="timeLabel"
+                    height={24}
+                    stroke="#6366f1"
+                    fill="#f8fafc"
+                    startIndex={brushRange.startIndex}
+                    endIndex={brushRange.endIndex}
+                    onChange={(range: any) => {
+                      if (typeof range.startIndex === 'number' && typeof range.endIndex === 'number') {
+                        setBrushRange({ startIndex: range.startIndex, endIndex: range.endIndex });
+                      }
+                    }}
+                    travellerWidth={8}
+                  />
+                )}
               </AreaChart>
             </ResponsiveContainer>
           </div>

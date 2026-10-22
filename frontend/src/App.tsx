@@ -601,6 +601,56 @@ export const AppContent: React.FC = () => {
         skipped: summary.skipped || 0,
         dead_letter: summary.dead_letter || 0,
       });
+      // Prepare time series: if a specific job or single run is selected, fetch batch checkpoints for rich timeline
+      let timeSeriesData: TimeSeriesPoint[] = [];
+
+      if (selectedJobId !== 'all') {
+        try {
+          const jobRes = await fetchJob(selectedJobId);
+          if (jobRes?.checkpoints && jobRes.checkpoints.length > 0) {
+            timeSeriesData = jobRes.checkpoints.map((cp: any) => ({
+              timestamp: cp.committed_at || new Date().toISOString(),
+              batch_index: cp.batch_index,
+              added: cp.summary?.added || 0,
+              updated: cp.summary?.updated || 0,
+              withdrawn: cp.summary?.withdrawn || 0,
+              skipped: cp.summary?.skipped || 0,
+              dead_letter: cp.summary?.dead_letter || 0,
+              processing_speed: 0,
+            }));
+          }
+        } catch (_) {}
+      } else if (res.sync_jobs && res.sync_jobs.length === 1) {
+        try {
+          const jobRes = await fetchJob(res.sync_jobs[0].job_id);
+          if (jobRes?.checkpoints && jobRes.checkpoints.length > 0) {
+            timeSeriesData = jobRes.checkpoints.map((cp: any) => ({
+              timestamp: cp.committed_at || new Date().toISOString(),
+              batch_index: cp.batch_index,
+              added: cp.summary?.added || 0,
+              updated: cp.summary?.updated || 0,
+              withdrawn: cp.summary?.withdrawn || 0,
+              skipped: cp.summary?.skipped || 0,
+              dead_letter: cp.summary?.dead_letter || 0,
+              processing_speed: 0,
+            }));
+          }
+        } catch (_) {}
+      }
+
+      if (timeSeriesData.length === 0) {
+        timeSeriesData = (res.sync_jobs || []).slice().reverse().map((j: any, idx: number) => ({
+          timestamp: j.completed_at || j.created_at || new Date().toISOString(),
+          batch_index: idx,
+          added: j.summary?.added || 0,
+          updated: j.summary?.updated || 0,
+          withdrawn: j.summary?.withdrawn || 0,
+          skipped: j.summary?.skipped || 0,
+          dead_letter: j.summary?.dead_letter || 0,
+          processing_speed: 0,
+        }));
+      }
+
       setAnalyticsData({
         period: res.filter?.time_range || 'today',
         job_id: selectedJobId,
@@ -616,16 +666,7 @@ export const AppContent: React.FC = () => {
           defect_rate: 100 - (res.metrics?.quality_score || 100),
         },
         summary: summary,
-        time_series: (res.sync_jobs || []).slice(0, 10).reverse().map((j: any, idx: number) => ({
-          timestamp: j.created_at || new Date().toISOString(),
-          batch_index: idx,
-          added: j.summary?.added || 0,
-          updated: j.summary?.updated || 0,
-          withdrawn: j.summary?.withdrawn || 0,
-          skipped: j.summary?.skipped || 0,
-          dead_letter: j.summary?.dead_letter || 0,
-          processing_speed: 0,
-        })),
+        time_series: timeSeriesData,
         sync_jobs: res.sync_jobs || [],
       });
     } catch (err) {
