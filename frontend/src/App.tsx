@@ -37,6 +37,7 @@ import {
   AnalyticsResponse,
   TestScenario,
   JobStatus,
+  TimeSeriesPoint,
 } from './types';
 
 export const AppContent: React.FC = () => {
@@ -230,6 +231,7 @@ export const AppContent: React.FC = () => {
         setCurrentBatch(0);
         setTotalBatches(data.total_batches || 10);
         setDeltas({ added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 });
+        setAnalyticsData((prev) => ({ ...prev, time_series: [] }));
         jobStartTimeRef.current = Date.now();
         startRuntimeTimer();
         setSmartStatusText(`Sync job ${data.job_id} started. Streaming batches from supplier...`);
@@ -257,6 +259,28 @@ export const AppContent: React.FC = () => {
             withdrawn: data.batch_summary.withdrawn || 0,
             skipped: data.batch_summary.skipped || 0,
             dead_letter: data.batch_summary.dead_letter || 0,
+          });
+
+          // Append batch product metrics to time_series for real-time chart progression
+          const pt: TimeSeriesPoint = {
+            timestamp: new Date().toISOString(),
+            batch_index: data.batch_index,
+            added: data.batch_summary.added || 0,
+            updated: data.batch_summary.updated || 0,
+            withdrawn: data.batch_summary.withdrawn || 0,
+            skipped: data.batch_summary.skipped || 0,
+            dead_letter: data.batch_summary.dead_letter || 0,
+            processing_speed: 0,
+          };
+          setAnalyticsData((prev) => {
+            const series = [...prev.time_series];
+            const idx = series.findIndex((p) => p.batch_index === data.batch_index);
+            if (idx >= 0) {
+              series[idx] = pt;
+            } else {
+              series.push(pt);
+            }
+            return { ...prev, time_series: series };
           });
         }
 
@@ -481,7 +505,16 @@ export const AppContent: React.FC = () => {
           defect_rate: 100 - (res.metrics?.quality_score || 100),
         },
         summary: summary,
-        time_series: [],
+        time_series: (res.sync_jobs || []).slice(0, 10).reverse().map((j: any, idx: number) => ({
+          timestamp: j.created_at || new Date().toISOString(),
+          batch_index: idx,
+          added: j.summary?.added || 0,
+          updated: j.summary?.updated || 0,
+          withdrawn: j.summary?.withdrawn || 0,
+          skipped: j.summary?.skipped || 0,
+          dead_letter: j.summary?.dead_letter || 0,
+          processing_speed: 0,
+        })),
         sync_jobs: res.sync_jobs || [],
       });
     } catch (err) {

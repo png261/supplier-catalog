@@ -13,7 +13,7 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { formatNumber } from '../lib/utils';
-import { PieChart as PieIcon, TrendingUp } from 'lucide-react';
+import { PieChart as PieIcon, Package } from 'lucide-react';
 
 interface ChartsSectionProps {
   totals: {
@@ -50,21 +50,22 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
   const totalCatalogItems =
     totals.active_products + totals.withdrawn_products + totals.quarantined_issues;
 
-  // Prepare timeSeries or mock points if empty
+  // Prepare product timeSeries or sample product progression points
   const chartData =
     timeSeries && timeSeries.length > 0
       ? timeSeries.map((p) => ({
-          name: `B-${p.batch_index + 1}`,
-          throughput: p.processing_speed || (p.added + p.updated + p.withdrawn + p.skipped + p.dead_letter) * 10,
-          events: p.added + p.updated + p.withdrawn + p.skipped + p.dead_letter,
+          name: `Batch ${p.batch_index + 1}`,
+          added: p.added,
+          updated: p.updated,
+          withdrawn: p.withdrawn,
           defects: p.dead_letter,
         }))
       : [
-          { name: 'B-1', throughput: 120, events: 12, defects: 0 },
-          { name: 'B-2', throughput: 280, events: 28, defects: 1 },
-          { name: 'B-3', throughput: 450, events: 45, defects: 0 },
-          { name: 'B-4', throughput: 390, events: 39, defects: 2 },
-          { name: 'B-5', throughput: 520, events: 52, defects: 0 },
+          { name: 'Batch 1', added: 120, updated: 35, withdrawn: 5, defects: 0 },
+          { name: 'Batch 2', added: 280, updated: 85, withdrawn: 15, defects: 2 },
+          { name: 'Batch 3', added: 450, updated: 140, withdrawn: 25, defects: 5 },
+          { name: 'Batch 4', added: 390, updated: 110, withdrawn: 18, defects: 1 },
+          { name: 'Batch 5', added: 520, updated: 165, withdrawn: 30, defects: 3 },
         ];
 
   return (
@@ -163,16 +164,27 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
         </CardContent>
       </Card>
 
-      {/* Area Chart: Ingestion Velocity & Throughput */}
-      <Card className="lg:col-span-7 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col transition-colors">
-        <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-            <span>Ingestion Velocity & Throughput (rec/s)</span>
+      {/* Area Chart: Product Changes & Synchronization Activity */}
+      <Card className="lg:col-span-7 border-slate-200 bg-white shadow-xs flex flex-col">
+        <CardHeader className="p-4 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 space-y-0">
+          <CardTitle className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <Package className="h-4 w-4 text-indigo-600" />
+            <span>Product Ingestion & Updates Activity</span>
           </CardTitle>
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-            WAL Concurrency Stream
-          </span>
+          <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+              <span className="text-slate-600 font-medium">Added</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-indigo-500"></span>
+              <span className="text-slate-600 font-medium">Updated</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-amber-500"></span>
+              <span className="text-slate-600 font-medium">Withdrawn</span>
+            </div>
+          </div>
         </CardHeader>
 
         <CardContent className="p-4 pt-1 flex-1 flex flex-col justify-center">
@@ -180,45 +192,76 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="velocityGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.0} />
+                  <linearGradient id="addedGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                  </linearGradient>
+                  <linearGradient id="updatedGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
+                  </linearGradient>
+                  <linearGradient id="withdrawnGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid
                   strokeDasharray="3 3"
                   vertical={false}
-                  stroke={isDark ? '#334155' : '#e2e8f0'}
+                  stroke="#f1f5f9"
                 />
                 <XAxis
                   dataKey="name"
                   tickLine={false}
-                  axisLine={{ stroke: isDark ? '#475569' : '#cbd5e1' }}
-                  tick={{ fill: isDark ? '#94a3b8' : '#64748b', fontSize: 11 }}
+                  axisLine={{ stroke: '#cbd5e1' }}
+                  tick={{ fill: '#64748b', fontSize: 11 }}
                 />
                 <YAxis
                   tickLine={false}
-                  axisLine={{ stroke: isDark ? '#475569' : '#cbd5e1' }}
-                  tick={{ fill: isDark ? '#94a3b8' : '#64748b', fontSize: 11 }}
+                  axisLine={{ stroke: '#cbd5e1' }}
+                  tick={{ fill: '#64748b', fontSize: 11 }}
                   tickFormatter={(v) => `${v}`}
                 />
                 <RechartsTooltip
-                  formatter={(val: number) => [`${formatNumber(val)} rec/s`, 'Throughput']}
+                  formatter={(val: number, name: string) => [
+                    `${formatNumber(val)} products`,
+                    name,
+                  ]}
                   contentStyle={{
-                    backgroundColor: isDark ? '#1e293b' : '#0f172a',
+                    backgroundColor: '#0f172a',
                     borderRadius: '6px',
                     color: '#ffffff',
                     fontSize: '12px',
-                    border: isDark ? '1px solid #334155' : 'none',
+                    border: 'none',
+                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
                   }}
                 />
                 <Area
                   type="monotone"
-                  dataKey="throughput"
-                  stroke="#3b82f6"
+                  dataKey="added"
+                  name="Products Added"
+                  stroke="#10b981"
                   strokeWidth={2}
                   fillOpacity={1}
-                  fill="url(#velocityGradient)"
+                  fill="url(#addedGradient)"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="updated"
+                  name="Price / Name Updated"
+                  stroke="#6366f1"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#updatedGradient)"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="withdrawn"
+                  name="Withdrawn Products"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#withdrawnGradient)"
                 />
               </AreaChart>
             </ResponsiveContainer>
