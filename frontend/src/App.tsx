@@ -440,13 +440,37 @@ export const AppContent: React.FC = () => {
         to: analyticsRange === 'custom' ? analyticsTo : undefined,
         jobId: selectedJobId !== 'all' ? selectedJobId : undefined,
       });
-      setAnalyticsData(res);
-      setMetrics({
-        added: res.totals.active_products || 0,
+      const summary = res.metrics?.summary || {
+        added: 0,
         updated: 0,
-        withdrawn: res.totals.withdrawn_products || 0,
+        withdrawn: 0,
         skipped: 0,
-        dead_letter: res.totals.quarantined_issues || 0,
+        dead_letter: 0,
+      };
+      setMetrics({
+        added: summary.added || 0,
+        updated: summary.updated || 0,
+        withdrawn: summary.withdrawn || 0,
+        skipped: summary.skipped || 0,
+        dead_letter: summary.dead_letter || 0,
+      });
+      setAnalyticsData({
+        period: res.filter?.time_range || 'today',
+        job_id: selectedJobId,
+        time_range: { start: res.filter?.from || '', end: res.filter?.to || '' },
+        totals: {
+          total_jobs: res.metrics?.total_syncs || 0,
+          active_products: summary.added || 0,
+          withdrawn_products: summary.withdrawn || 0,
+          quarantined_issues: summary.dead_letter || 0,
+          total_events_processed: res.metrics?.total_processed || 0,
+          total_events_succeeded:
+            (res.metrics?.total_processed || 0) - (summary.dead_letter || 0),
+          defect_rate: 100 - (res.metrics?.quality_score || 100),
+        },
+        summary: summary,
+        time_series: [],
+        sync_jobs: res.sync_jobs || [],
       });
     } catch (err) {
       console.error('Failed to load analytics:', err);
