@@ -41,6 +41,15 @@
       searchTimer: null,
     },
 
+    // Analytics Filtering
+    analytics: {
+      timeRange: 'today',
+      from: null,
+      to: null,
+      selectedJobId: '',
+      syncJobs: [],
+    },
+
     // Active Staged Scenario
     stagedScenario: {
       key: 'default',
@@ -131,6 +140,17 @@
     btnClearJson: document.getElementById('btn-clear-json'),
     btnSubmitManual: document.getElementById('btn-submit-manual'),
     jsonParseStatus: document.getElementById('json-parse-status'),
+
+    // Analytics Filter Controls
+    analyticsFilterBadge: document.getElementById('analytics-filter-badge'),
+    analyticsFilterSubtitle: document.getElementById('analytics-filter-subtitle'),
+    rangePills: document.querySelectorAll('#analytics-range-pills .btn-pill'),
+    selectSyncRun: document.getElementById('select-sync-run'),
+    btnRefreshAnalytics: document.getElementById('btn-refresh-analytics'),
+    customRangeRow: document.getElementById('custom-range-row'),
+    inputRangeFrom: document.getElementById('input-range-from'),
+    inputRangeTo: document.getElementById('input-range-to'),
+    btnApplyCustomRange: document.getElementById('btn-apply-custom-range'),
 
     // Metric Values
     metricAdded: document.getElementById('metric-added'),
@@ -600,6 +620,165 @@
     updateHealthGauge();
   }
 
+  // --- Analytics & Filter Engine ---
+  async function loadAnalyticsMetrics() {
+    let url = `/api/metrics?time_range=${encodeURIComponent(state.analytics.timeRange)}`;
+    if (state.analytics.selectedJobId) {
+      url += `&job_id=${encodeURIComponent(state.analytics.selectedJobId)}`;
+    }
+    if (state.analytics.from) {
+      url += `&from=${encodeURIComponent(state.analytics.from)}`;
+    }
+    if (state.analytics.to) {
+      url += `&to=${encodeURIComponent(state.analytics.to)}`;
+    }
+
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      const m = data.metrics || {};
+      const summary = m.summary || {};
+      const jobs = data.sync_jobs || [];
+      state.analytics.syncJobs = jobs;
+
+      // Update state metrics with aggregated values
+      state.metrics.added = summary.added || 0;
+      state.metrics.updated = summary.updated || 0;
+      state.metrics.withdrawn = summary.withdrawn || 0;
+      state.metrics.skipped = summary.skipped || 0;
+      state.metrics.deadLetter = summary.dead_letter || 0;
+
+      updateMetricCards();
+
+      // If no job is currently running, populate telemetry with aggregated performance
+      if (!state.activeJob || state.activeJob.status !== 'RUNNING') {
+        if (el.statElapsedTime) {
+          const sec = Math.round(m.elapsed_seconds || 0);
+          const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+          const ss = String(sec % 60).padStart(2, '0');
+          el.statElapsedTime.textContent = `${mm}:${ss}`;
+        }
+        if (el.statAvgSpeed) {
+          el.statAvgSpeed.textContent = `${Math.round(m.avg_throughput || 0)} rec/s`;
+        }
+      }
+
+      // Update Subtitle & Badges
+      if (state.analytics.selectedJobId) {
+        const shortId = state.analytics.selectedJobId.slice(0, 8);
+        if (el.analyticsFilterBadge) el.analyticsFilterBadge.textContent = `Sync Run #${shortId}`;
+        if (el.analyticsFilterSubtitle) {
+          el.analyticsFilterSubtitle.textContent = `Showing Sync Run: #${state.analytics.selectedJobId.slice(0, 16)}... (${(m.total_processed || 0).toLocaleString()} items • ${summary.dead_letter || 0} defects)`;
+        }
+      } else {
+        const labels = {
+          today: 'Today',
+          yesterday: 'Yesterday',
+          '7d': 'Last 7 Days',
+          all: 'All Time',
+          custom: 'Custom Range',
+        };
+        const curLabel = labels[state.analytics.timeRange] || 'Filtered';
+        if (el.analyticsFilterBadge) el.analyticsFilterBadge.textContent = curLabel;
+        if (el.analyticsFilterSubtitle) {
+          el.analyticsFilterSubtitle.textContent = `Showing: ${curLabel} (${m.total_syncs || 0} sync runs, ${(m.total_processed || 0).toLocaleString()} total records processed)`;
+        }
+      }
+
+      // Populate Sync Run Selector Dropdown
+      if (el.selectSyncRun) {
+        const currentSelected = state.analytics.selectedJobId;
+        el.selectSyncRun.innerHTML = '';
+
+        const optAll = document.createElement('option');
+        optAll.value = 'all';
+        optAll.textContent = `All Sync Runs in period (${m.total_syncs || 0} runs)`;
+        el.selectSyncRun.appendChild(optAll);
+
+        jobs.forEach((j) => {
+          const opt = document.createElement('option');
+          opt.value = j.job_id;
+          const shortId = j.job_id.slice(0, 8);
+          const timeStr = j.created_at ? new Date(j.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+          const s = j.summary || {};
+          const totalItems = (s.added || 0) + (s.updated || 0) + (s.withdrawn || 0) + (s.skipped || 0) + (s.dead_letter || 0);
+          opt.textContent = `Run #${shortId} (${timeStr} • ${totalItems.toLocaleString()} items • ${j.status})`;
+          if (j.job_id === currentSelected) {
+            opt.selected = true;
+          }
+          el.selectSyncRun.appendChild(opt);
+        });
+
+        if (!currentSelected) {
+          optAll.selected = true;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load analytics metrics', err);
+    }
+  }
+
+  // Wire Range Pills
+  if (el.rangePills) {
+    el.rangePills.forEach((pill) => {
+      pill.addEventListener('click', () => {
+        el.rangePills.forEach((p) => p.classList.remove('active'));
+        pill.classList.add('active');
+        const range = pill.getAttribute('data-range');
+        state.analytics.timeRange = range;
+        state.analytics.selectedJobId = '';
+
+        if (range === 'custom') {
+          if (el.customRangeRow) el.customRangeRow.classList.remove('hidden');
+        } else {
+          if (el.customRangeRow) el.customRangeRow.classList.add('hidden');
+          state.analytics.from = null;
+          state.analytics.to = null;
+          loadAnalyticsMetrics();
+        }
+      });
+    });
+  }
+
+  // Wire Custom Range Apply
+  if (el.btnApplyCustomRange) {
+    el.btnApplyCustomRange.addEventListener('click', () => {
+      const fromVal = el.inputRangeFrom ? el.inputRangeFrom.value : '';
+      const toVal = el.inputRangeTo ? el.inputRangeTo.value : '';
+      if (!fromVal && !toVal) {
+        showToast('Please specify a date to filter', 'warning');
+        return;
+      }
+      state.analytics.timeRange = 'custom';
+      state.analytics.from = fromVal || null;
+      state.analytics.to = toVal || null;
+      state.analytics.selectedJobId = '';
+      loadAnalyticsMetrics();
+    });
+  }
+
+  // Wire Sync Run Selector
+  if (el.selectSyncRun) {
+    el.selectSyncRun.addEventListener('change', () => {
+      const val = el.selectSyncRun.value;
+      if (val === 'all') {
+        state.analytics.selectedJobId = '';
+      } else {
+        state.analytics.selectedJobId = val;
+      }
+      loadAnalyticsMetrics();
+    });
+  }
+
+  // Wire Refresh Button
+  if (el.btnRefreshAnalytics) {
+    el.btnRefreshAnalytics.addEventListener('click', () => {
+      loadAnalyticsMetrics();
+      showToast('Analytics metrics updated', 'info');
+    });
+  }
+
   // --- Runtime Timer ---
   function startRuntimeTimer() {
     state.jobStartTime = Date.now();
@@ -812,6 +991,7 @@
     loadCatalog();
     loadHistory();
     loadInterruptedJobs();
+    loadAnalyticsMetrics();
   }
 
   function handleJobInterrupted(data) {
@@ -1015,6 +1195,7 @@
           loadDLQ();
           loadHistory();
           loadInterruptedJobs();
+          loadAnalyticsMetrics();
         } else {
           showToast(body.error || 'Failed to reset database', 'error');
         }
@@ -1551,7 +1732,10 @@
 
     try {
       if (type === 'deadletter') {
-        const url = `/api/dead-letter?reason=${encodeURIComponent(search)}&limit=${limit}&offset=${offset}`;
+        let url = `/api/dead-letter?reason=${encodeURIComponent(search)}&limit=${limit}&offset=${offset}`;
+        if (state.analytics.selectedJobId) {
+          url += `&job_id=${encodeURIComponent(state.analytics.selectedJobId)}`;
+        }
         const res = await fetch(url);
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
@@ -1845,8 +2029,12 @@
   // --- Initial Bootstrap ---
   function init() {
     applyPreset('default');
-    renderDonutChart();
-    updateHealthGauge();
+    if (el.inputRangeFrom && el.inputRangeTo) {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      el.inputRangeFrom.value = todayISO;
+      el.inputRangeTo.value = todayISO;
+    }
+    loadAnalyticsMetrics();
     initSSE();
     loadDLQ();
     loadCatalog();

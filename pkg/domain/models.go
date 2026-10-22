@@ -139,3 +139,22 @@ type DeadLetterRecord struct {
 	Reason     string    `json:"reason"`
 	CreatedAt  time.Time `json:"created_at"`
 }
+
+// MetricsFilter configures query parameters for filtering aggregated performance and catalog metrics.
+type MetricsFilter struct {
+	TimeRange string     `json:"time_range"` // "today", "yesterday", "7d", "all", "custom"
+	From      *time.Time `json:"from,omitempty"`
+	To        *time.Time `json:"to,omitempty"`
+	JobID     string     `json:"job_id,omitempty"`
+}
+
+// AggregatedMetrics holds aggregated catalog changes and performance stats for a filtered window or sync run.
+type AggregatedMetrics struct {
+	Summary        ChangeSummary `json:"summary"`
+	TotalProcessed int           `json:"total_processed"`
+	QualityScore   float64       `json:"quality_score"`
+	TotalSyncs     int           `json:"total_syncs"`
+	CompletedSyncs int           `json:"completed_syncs"`
+	ElapsedSeconds float64       `json:"elapsed_seconds"`
+	AvgThroughput  float64       `json:"avg_throughput"`
+}

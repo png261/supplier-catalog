@@ -98,6 +98,58 @@
       </div>
     </section>
 
+    <!-- Operations & Catalog Analytics Filter Bar -->
+    <section class="card analytics-filter-card">
+      <div class="analytics-filter-header">
+        <div class="analytics-title-col">
+          <div class="analytics-title-row">
+            <h2 class="analytics-title">Operations & Catalog Analytics</h2>
+            <span class="analytics-filter-badge" id="analytics-filter-badge">Today</span>
+          </div>
+          <span class="analytics-subtitle" id="analytics-filter-subtitle">Showing: Today (All Sync Runs)</span>
+        </div>
+
+        <div class="analytics-filter-tools">
+          <!-- Time Range Selector Pills -->
+          <div class="filter-pills-group" id="analytics-range-pills" role="radiogroup" aria-label="Select Time Range">
+            <button type="button" class="btn-pill active" data-range="today">Today</button>
+            <button type="button" class="btn-pill" data-range="yesterday">Yesterday</button>
+            <button type="button" class="btn-pill" data-range="7d">Last 7 Days</button>
+            <button type="button" class="btn-pill" data-range="all">All Time</button>
+            <button type="button" class="btn-pill" data-range="custom">Custom</button>
+          </div>
+
+          <!-- Specific Sync Run Selector -->
+          <div class="sync-run-selector">
+            <label for="select-sync-run" class="filter-label">Sync Run:</label>
+            <select id="select-sync-run" class="select-sync-input" aria-label="Filter by specific sync run">
+              <option value="all">All Sync Runs in period</option>
+            </select>
+          </div>
+
+          <button type="button" id="btn-refresh-analytics" class="btn btn-outline btn-sm" title="Refresh metrics and charts">
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Collapsible Custom Date Range Picker -->
+      <div class="custom-range-row hidden" id="custom-range-row">
+        <span class="custom-range-hint">Filter date window:</span>
+        <label class="custom-date-field">
+          <span>From:</span>
+          <input type="date" id="input-range-from" class="date-input">
+        </label>
+        <label class="custom-date-field">
+          <span>To:</span>
+          <input type="date" id="input-range-to" class="date-input">
+        </label>
+        <button type="button" id="btn-apply-custom-range" class="btn btn-primary btn-xs">
+          <span>Apply Range</span>
+        </button>
+      </div>
+    </section>
+
     <!-- Operational Metrics -->
     <section class="metrics-grid">
       <!-- Added -->

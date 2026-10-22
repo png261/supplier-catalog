@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -1160,5 +1161,167 @@ func TestStorage_ResolveDeadLetter(t *testing.T) {
 	_ = sClosed.Close()
 	if err := sClosed.ResolveDeadLetter(ctx, "issue-x", corrected); err == nil {
 		t.Error("expected error on closed DB")
+	}
+}
+
+func TestStorage_GetMetrics(t *testing.T) {
+	ctx := context.Background()
+	s, err := storage.OpenInMemory()
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer s.Close()
+
+	// 1. Empty database
+	emptyAgg, emptyJobs, err := s.GetMetrics(ctx, domain.MetricsFilter{})
+	if err != nil {
+		t.Fatalf("GetMetrics on empty DB failed: %v", err)
+	}
+	if emptyAgg.TotalProcessed != 0 || emptyAgg.QualityScore != 100.0 || len(emptyJobs) != 0 {
+		t.Errorf("expected empty metrics, got: %+v, jobs: %d", emptyAgg, len(emptyJobs))
+	}
+
+	// 2. Insert test sync jobs at different times
+	now := time.Now().UTC()
+	t0 := now.Add(-48 * time.Hour)
+	t0End := t0.Add(2 * time.Minute)
+	t1 := now.Add(-30 * time.Minute)
+	t1End := now.Add(-25 * time.Minute)
+	t2 := now.Add(-10 * time.Minute)
+	t2End := now.Add(-7 * time.Minute)
+
+	// Job 0 (Old job, from 2 days ago)
+	j0 := &domain.SyncJob{
+		JobID:               "job-old",
+		Status:              domain.JobStatusCompleted,
+		TotalBatches:        5,
+		CommittedBatchIndex: 4,
+		Summary: domain.ChangeSummary{
+			Added:      50,
+			Updated:    20,
+			Withdrawn:  10,
+			Skipped:    5,
+			DeadLetter: 5,
+		},
+		CreatedAt:   t0,
+		UpdatedAt:   t0End,
+		CompletedAt: &t0End,
+	}
+	if err := s.CreateJob(ctx, j0); err != nil {
+		t.Fatalf("failed to create j0: %v", err)
+	}
+
+	// Job 1 (Today morning)
+	j1 := &domain.SyncJob{
+		JobID:               "job-today-1",
+		Status:              domain.JobStatusCompleted,
+		TotalBatches:        10,
+		CommittedBatchIndex: 9,
+		Summary: domain.ChangeSummary{
+			Added:      100,
+			Updated:    40,
+			Withdrawn:  10,
+			Skipped:    20,
+			DeadLetter: 10,
+		},
+		CreatedAt:   t1,
+		UpdatedAt:   t1End,
+		CompletedAt: &t1End,
+	}
+	if err := s.CreateJob(ctx, j1); err != nil {
+		t.Fatalf("failed to create j1: %v", err)
+	}
+
+	// Job 2 (Today noon)
+	j2 := &domain.SyncJob{
+		JobID:               "job-today-2",
+		Status:              domain.JobStatusCompleted,
+		TotalBatches:        10,
+		CommittedBatchIndex: 9,
+		Summary: domain.ChangeSummary{
+			Added:      200,
+			Updated:    50,
+			Withdrawn:  20,
+			Skipped:    10,
+			DeadLetter: 0,
+		},
+		CreatedAt:   t2,
+		UpdatedAt:   t2End,
+		CompletedAt: &t2End,
+	}
+	if err := s.CreateJob(ctx, j2); err != nil {
+		t.Fatalf("failed to create j2: %v", err)
+	}
+
+	// 3. Test Filter by Specific JobID
+	aggJob1, jobs1, err := s.GetMetrics(ctx, domain.MetricsFilter{JobID: "job-today-1"})
+	if err != nil {
+		t.Fatalf("GetMetrics by JobID failed: %v", err)
+	}
+	if len(jobs1) != 1 || jobs1[0].JobID != "job-today-1" {
+		t.Fatalf("expected 1 job with ID job-today-1, got %d", len(jobs1))
+	}
+	if aggJob1.Summary.Added != 100 || aggJob1.Summary.DeadLetter != 10 {
+		t.Errorf("unexpected summary for job-today-1: %+v", aggJob1.Summary)
+	}
+	expectedQualityJob1 := (float64(180-10) / 180.0) * 100.0 // 180 total, 10 dead letter = 170/180 = 94.44%
+	if math.Abs(aggJob1.QualityScore-expectedQualityJob1) > 0.01 {
+		t.Errorf("expected quality score %f, got %f", expectedQualityJob1, aggJob1.QualityScore)
+	}
+	if aggJob1.ElapsedSeconds <= 0 || aggJob1.AvgThroughput <= 0 {
+		t.Errorf("expected positive elapsed seconds and throughput, got %f and %f", aggJob1.ElapsedSeconds, aggJob1.AvgThroughput)
+	}
+
+	// 4. Test Filter by Today (From = 1 hour ago, To = now)
+	todayStart := now.Add(-1 * time.Hour)
+	todayEnd := now.Add(1 * time.Hour)
+	aggToday, jobsToday, err := s.GetMetrics(ctx, domain.MetricsFilter{
+		From: &todayStart,
+		To:   &todayEnd,
+	})
+	if err != nil {
+		t.Fatalf("GetMetrics for today failed: %v", err)
+	}
+	if len(jobsToday) != 2 {
+		t.Fatalf("expected 2 jobs for today, got %d", len(jobsToday))
+	}
+	if aggToday.Summary.Added != 300 || aggToday.Summary.Updated != 90 {
+		t.Errorf("unexpected today summary: %+v", aggToday.Summary)
+	}
+	if aggToday.TotalSyncs != 2 || aggToday.CompletedSyncs != 2 {
+		t.Errorf("unexpected sync counts: total=%d, completed=%d", aggToday.TotalSyncs, aggToday.CompletedSyncs)
+	}
+
+	// 5. Test Filter with From only
+	aggFrom, jobsFrom, err := s.GetMetrics(ctx, domain.MetricsFilter{
+		From: &todayStart,
+	})
+	if err != nil {
+		t.Fatalf("GetMetrics with From only failed: %v", err)
+	}
+	if len(jobsFrom) != 2 {
+		t.Errorf("expected 2 jobs, got %d", len(jobsFrom))
+	}
+	if aggFrom.TotalSyncs != 2 {
+		t.Errorf("expected 2 syncs, got %d", aggFrom.TotalSyncs)
+	}
+
+	// 6. Test All Time (no bounds)
+	aggAll, jobsAll, err := s.GetMetrics(ctx, domain.MetricsFilter{})
+	if err != nil {
+		t.Fatalf("GetMetrics all time failed: %v", err)
+	}
+	if len(jobsAll) != 3 {
+		t.Fatalf("expected 3 jobs all time, got %d", len(jobsAll))
+	}
+	if aggAll.Summary.Added != 350 {
+		t.Errorf("expected 350 added all time, got %d", aggAll.Summary.Added)
+	}
+
+	// 7. Test Closed DB error
+	sClosed2, _ := storage.OpenInMemory()
+	_ = sClosed2.Close()
+	if _, _, err := sClosed2.GetMetrics(ctx, domain.MetricsFilter{}); err == nil {
+		t.Error("expected error on closed DB for GetMetrics")
 	}
 }

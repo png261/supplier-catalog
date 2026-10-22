@@ -42,6 +42,7 @@ type Storage interface {
 	ListJobs(ctx context.Context, limit, offset int) ([]domain.SyncJob, int, error)
 	ListProducts(ctx context.Context, status string, search string, limit, offset int) ([]domain.Product, int, error)
 	GetBatchCheckpoints(ctx context.Context, jobID string) ([]domain.BatchCheckpoint, error)
+	GetMetrics(ctx context.Context, filter domain.MetricsFilter) (*domain.AggregatedMetrics, []domain.SyncJob, error)
 
 	// Maintenance
 	Reset(ctx context.Context) error
@@ -246,12 +247,17 @@ func (s *SQLiteStorage) UpsertProductTx(ctx context.Context, tx *sql.Tx, p *doma
 
 // CreateJob persists a new sync job record.
 func (s *SQLiteStorage) CreateJob(ctx context.Context, job *domain.SyncJob) error {
+	var completedAt any
+	if job.CompletedAt != nil {
+		completedAt = job.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+
 	query := `
 	INSERT INTO sync_jobs (
 		job_id, status, total_batches, committed_batch_index,
 		items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
-		created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		created_at, updated_at, completed_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	_, err := s.db.ExecContext(ctx, query,
 		job.JobID,
@@ -265,6 +271,7 @@ func (s *SQLiteStorage) CreateJob(ctx context.Context, job *domain.SyncJob) erro
 		job.Summary.DeadLetter,
 		job.CreatedAt.UTC().Format(time.RFC3339Nano),
 		job.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		completedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create job %s: %w", job.JobID, err)
@@ -762,6 +769,132 @@ func (s *SQLiteStorage) GetBatchCheckpoints(ctx context.Context, jobID string) (
 		return nil, fmt.Errorf("error iterating checkpoint rows: %w", err)
 	}
 	return checkpoints, nil
+}
+
+// GetMetrics returns aggregated metrics and associated sync jobs according to filter criteria.
+func (s *SQLiteStorage) GetMetrics(ctx context.Context, filter domain.MetricsFilter) (*domain.AggregatedMetrics, []domain.SyncJob, error) {
+	var conditions []string
+	var args []any
+
+	if filter.JobID != "" {
+		conditions = append(conditions, "job_id = ?")
+		args = append(args, filter.JobID)
+	} else {
+		if filter.From != nil {
+			conditions = append(conditions, "created_at >= ?")
+			args = append(args, filter.From.UTC().Format(time.RFC3339Nano))
+		}
+		if filter.To != nil {
+			conditions = append(conditions, "created_at <= ?")
+			args = append(args, filter.To.UTC().Format(time.RFC3339Nano))
+		}
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	aggQuery := fmt.Sprintf(`
+	SELECT 
+		COALESCE(SUM(items_added), 0),
+		COALESCE(SUM(items_updated), 0),
+		COALESCE(SUM(items_withdrawn), 0),
+		COALESCE(SUM(items_skipped), 0),
+		COALESCE(SUM(items_dead_letter), 0),
+		COUNT(*),
+		COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END), 0)
+	FROM sync_jobs %s;
+	`, whereClause)
+
+	var agg domain.AggregatedMetrics
+	if err := s.db.QueryRowContext(ctx, aggQuery, args...).Scan(
+		&agg.Summary.Added,
+		&agg.Summary.Updated,
+		&agg.Summary.Withdrawn,
+		&agg.Summary.Skipped,
+		&agg.Summary.DeadLetter,
+		&agg.TotalSyncs,
+		&agg.CompletedSyncs,
+	); err != nil {
+		return nil, nil, fmt.Errorf("failed to aggregate metrics: %w", err)
+	}
+
+	agg.TotalProcessed = agg.Summary.TotalProcessed()
+	if agg.TotalProcessed > 0 {
+		validItems := agg.TotalProcessed - agg.Summary.DeadLetter
+		if validItems < 0 {
+			validItems = 0
+		}
+		agg.QualityScore = (float64(validItems) / float64(agg.TotalProcessed)) * 100.0
+	} else {
+		agg.QualityScore = 100.0
+	}
+
+	// Fetch matching sync jobs (up to 100, most recent first)
+	jobsQuery := fmt.Sprintf(`
+	SELECT job_id, status, total_batches, committed_batch_index,
+	       items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
+	       created_at, updated_at, completed_at
+	FROM sync_jobs %s
+	ORDER BY created_at DESC
+	LIMIT 100;
+	`, whereClause)
+
+	rows, err := s.db.QueryContext(ctx, jobsQuery, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query sync jobs for metrics: %w", err)
+	}
+	defer rows.Close()
+
+	jobs := make([]domain.SyncJob, 0)
+	var totalElapsed float64
+	for rows.Next() {
+		var j domain.SyncJob
+		var statusStr, createdStr, updatedStr string
+		var completedStr sql.NullString
+
+		if err := rows.Scan(
+			&j.JobID,
+			&statusStr,
+			&j.TotalBatches,
+			&j.CommittedBatchIndex,
+			&j.Summary.Added,
+			&j.Summary.Updated,
+			&j.Summary.Withdrawn,
+			&j.Summary.Skipped,
+			&j.Summary.DeadLetter,
+			&createdStr,
+			&updatedStr,
+			&completedStr,
+		); err != nil {
+			return nil, nil, fmt.Errorf("failed to scan sync job: %w", err)
+		}
+
+		j.Status = domain.JobStatus(statusStr)
+		j.CreatedAt, _ = ParseTime(createdStr)
+		j.UpdatedAt, _ = ParseTime(updatedStr)
+		if completedStr.Valid && completedStr.String != "" {
+			if ct, err := ParseTime(completedStr.String); err == nil {
+				j.CompletedAt = &ct
+				dur := ct.Sub(j.CreatedAt).Seconds()
+				if dur > 0 {
+					totalElapsed += dur
+				}
+			}
+		}
+		jobs = append(jobs, j)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("error iterating sync jobs rows: %w", err)
+	}
+
+	agg.ElapsedSeconds = totalElapsed
+	if totalElapsed > 0 && agg.TotalProcessed > 0 {
+		agg.AvgThroughput = float64(agg.TotalProcessed) / totalElapsed
+	}
+
+	return &agg, jobs, nil
 }
 
 // Reset atomically deletes all records from products, sync_jobs, batch_checkpoints, and dead_letter_issues.

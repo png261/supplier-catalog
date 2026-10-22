@@ -51,6 +51,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/dead-letter", h.handleListDeadLetter)
 	mux.HandleFunc("POST /api/dead-letter/{id}/resolve", h.handleResolveDeadLetter)
 	mux.HandleFunc("GET /api/products", h.handleListProducts)
+	mux.HandleFunc("GET /api/metrics", h.handleGetMetrics)
 	mux.HandleFunc("GET /api/events", h.broker.ServeHTTP)
 }
 
@@ -853,4 +854,102 @@ func (h *Handler) handleListProducts(w http.ResponseWriter, r *http.Request) {
 		Limit:    limit,
 		Offset:   offset,
 	})
+}
+
+// handleGetMetrics handles GET /api/metrics.
+func (h *Handler) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.URL.Query()
+
+	timeRange := strings.TrimSpace(strings.ToLower(q.Get("time_range")))
+	jobID := strings.TrimSpace(q.Get("job_id"))
+	fromStr := strings.TrimSpace(q.Get("from"))
+	toStr := strings.TrimSpace(q.Get("to"))
+
+	if timeRange == "" && jobID == "" && fromStr == "" {
+		timeRange = "today"
+	}
+
+	filter := domain.MetricsFilter{
+		TimeRange: timeRange,
+		JobID:     jobID,
+	}
+
+	// Parse custom from / to timestamps if supplied
+	if fromStr != "" {
+		t, err := parseFlexTime(fromStr, false)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid from parameter: must be RFC3339 or YYYY-MM-DD", ErrCodeInvalidRequest)
+			return
+		}
+		filter.From = &t
+	}
+	if toStr != "" {
+		t, err := parseFlexTime(toStr, true)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid to parameter: must be RFC3339 or YYYY-MM-DD", ErrCodeInvalidRequest)
+			return
+		}
+		filter.To = &t
+	}
+
+	// If no explicit from/to supplied and no specific job_id, derive from preset
+	if jobID == "" && filter.From == nil && filter.To == nil {
+		now := time.Now().UTC()
+		switch timeRange {
+		case "today":
+			start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+			end := start.Add(24*time.Hour - time.Nanosecond)
+			filter.From = &start
+			filter.To = &end
+		case "yesterday":
+			end := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(-time.Nanosecond)
+			start := end.Add(-24*time.Hour + time.Nanosecond)
+			filter.From = &start
+			filter.To = &end
+		case "7d", "last7days":
+			start := now.Add(-7 * 24 * time.Hour)
+			filter.From = &start
+			filter.To = &now
+		case "all":
+			// No bounds
+		default:
+			if timeRange != "custom" {
+				h.writeError(w, http.StatusBadRequest, fmt.Sprintf("unsupported time_range '%s': must be today, yesterday, 7d, all, or custom", timeRange), ErrCodeInvalidRequest)
+				return
+			}
+		}
+	}
+
+	agg, jobs, err := h.storage.GetMetrics(ctx, filter)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "failed to retrieve metrics: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+	if jobs == nil {
+		jobs = []domain.SyncJob{}
+	}
+
+	h.writeJSON(w, http.StatusOK, MetricsResponse{
+		Filter:   filter,
+		Metrics:  *agg,
+		SyncJobs: jobs,
+	})
+}
+
+// parseFlexTime parses either RFC3339, RFC3339Nano, or YYYY-MM-DD date strings.
+func parseFlexTime(s string, isEndOfDay bool) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC(), nil
+	}
+	if d, err := time.Parse("2006-01-02", s); err == nil {
+		if isEndOfDay {
+			return time.Date(d.Year(), d.Month(), d.Day(), 23, 59, 59, 999999999, time.UTC), nil
+		}
+		return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC), nil
+	}
+	return time.Time{}, errors.New("cannot parse time string")
 }

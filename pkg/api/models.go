@@ -100,3 +100,10 @@ type ProductListResponse struct {
 	Limit    int              `json:"limit"`
 	Offset   int              `json:"offset"`
 }
+
+// MetricsResponse represents the aggregated analytics and matching sync runs response.
+type MetricsResponse struct {
+	Filter   domain.MetricsFilter     `json:"filter"`
+	Metrics  domain.AggregatedMetrics `json:"metrics"`
+	SyncJobs []domain.SyncJob         `json:"sync_jobs"`
+}

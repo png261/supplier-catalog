@@ -1261,3 +1261,112 @@ func TestHandler_ResolveDeadLetter(t *testing.T) {
 		t.Errorf("expected 500 on closed db, got %d", recClosed.Code)
 	}
 }
+
+func TestHandler_GetMetrics(t *testing.T) {
+	store, eng, broker, handler := setupTestEnv(t)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	job1 := &domain.SyncJob{
+		JobID:               "job-metrics-1",
+		Status:              domain.JobStatusCompleted,
+		TotalBatches:        5,
+		CommittedBatchIndex: 4,
+		Summary: domain.ChangeSummary{
+			Added:      50,
+			Updated:    20,
+			Withdrawn:  10,
+			Skipped:    5,
+			DeadLetter: 2,
+		},
+		CreatedAt:   now.Add(-10 * time.Minute),
+		UpdatedAt:   now.Add(-5 * time.Minute),
+		CompletedAt: &[]time.Time{now.Add(-5 * time.Minute)}[0],
+	}
+	if err := store.CreateJob(ctx, job1); err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+
+	// 1. Default (today)
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	rec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+	var res MetricsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&res); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if res.Metrics.Summary.Added != 50 || len(res.SyncJobs) != 1 {
+		t.Errorf("unexpected metrics response: %+v", res)
+	}
+
+	// 2. Specific Job ID
+	reqJob := httptest.NewRequest(http.MethodGet, "/api/metrics?job_id=job-metrics-1", nil)
+	recJob := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(recJob, reqJob)
+	if recJob.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", recJob.Code)
+	}
+
+	// 3. Preset filters: yesterday, 7d, all
+	for _, tr := range []string{"yesterday", "7d", "all"} {
+		rPreset := httptest.NewRequest(http.MethodGet, "/api/metrics?time_range="+tr, nil)
+		wPreset := httptest.NewRecorder()
+		handler.Routes().ServeHTTP(wPreset, rPreset)
+		if wPreset.Code != http.StatusOK {
+			t.Errorf("time_range=%s expected 200, got %d", tr, wPreset.Code)
+		}
+	}
+
+	// 4. Custom range with valid dates (RFC3339 and YYYY-MM-DD)
+	rCustom := httptest.NewRequest(http.MethodGet, "/api/metrics?time_range=custom&from=2026-10-01&to=2026-10-31", nil)
+	wCustom := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(wCustom, rCustom)
+	if wCustom.Code != http.StatusOK {
+		t.Errorf("expected 200 for custom range, got %d", wCustom.Code)
+	}
+
+	rCustomRFC := httptest.NewRequest(http.MethodGet, "/api/metrics?from="+now.Add(-1*time.Hour).Format(time.RFC3339)+"&to="+now.Format(time.RFC3339), nil)
+	wCustomRFC := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(wCustomRFC, rCustomRFC)
+	if wCustomRFC.Code != http.StatusOK {
+		t.Errorf("expected 200 for custom RFC range, got %d", wCustomRFC.Code)
+	}
+
+	// 5. Invalid from date
+	rBadFrom := httptest.NewRequest(http.MethodGet, "/api/metrics?from=invalid-date", nil)
+	wBadFrom := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(wBadFrom, rBadFrom)
+	if wBadFrom.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad from, got %d", wBadFrom.Code)
+	}
+
+	// 6. Invalid to date
+	rBadTo := httptest.NewRequest(http.MethodGet, "/api/metrics?to=invalid-date", nil)
+	wBadTo := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(wBadTo, rBadTo)
+	if wBadTo.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad to, got %d", wBadTo.Code)
+	}
+
+	// 7. Unsupported time_range
+	rBadTR := httptest.NewRequest(http.MethodGet, "/api/metrics?time_range=invalid_preset", nil)
+	wBadTR := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(wBadTR, rBadTR)
+	if wBadTR.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad time_range, got %d", wBadTR.Code)
+	}
+
+	// 8. Storage error on closed DB
+	storeClosed, _ := storage.OpenInMemory()
+	_ = storeClosed.Close()
+	handlerClosed := NewHandler(storeClosed, eng, broker)
+	rClosed := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	wClosed := httptest.NewRecorder()
+	handlerClosed.Routes().ServeHTTP(wClosed, rClosed)
+	if wClosed.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on closed DB, got %d", wClosed.Code)
+	}
+}
