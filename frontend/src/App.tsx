@@ -42,6 +42,10 @@ import {
 export const AppContent: React.FC = () => {
   // --- Shop Tenant Isolation ---
   const [shopId, setShopId] = useState<string>(() => getActiveShopId());
+  const shopIdRef = useRef<string>(shopId);
+  useEffect(() => {
+    shopIdRef.current = shopId;
+  }, [shopId]);
   const [isShopModalOpen, setIsShopModalOpen] = useState<boolean>(false);
 
   // --- Sidebar & Layout Navigation ---
@@ -141,53 +145,29 @@ export const AppContent: React.FC = () => {
   // Sync update completion tracker
   const markUpdateCompleted = (updateId: string | null) => {
     if (!updateId) return;
+    const currentShop = shopIdRef.current;
     setSyncedUpdateIds((prev) => {
       if (prev.includes(updateId)) return prev;
       const next = [...prev, updateId];
       try {
-        localStorage.setItem(`catalog_synced_updates_${shopId}`, JSON.stringify(next));
+        localStorage.setItem(`catalog_synced_updates_${currentShop}`, JSON.stringify(next));
       } catch (e) {
         console.error('Failed to save synced updates to localStorage', e);
       }
       return next;
     });
     try {
-      localStorage.removeItem(`active_sync_update_id_${shopId}`);
-      localStorage.removeItem(`active_sync_job_id_${shopId}`);
-      localStorage.removeItem(`active_sync_start_time_${shopId}`);
-      localStorage.removeItem(`active_sync_batch_${shopId}`);
-      localStorage.removeItem(`active_sync_total_${shopId}`);
+      localStorage.removeItem(`active_sync_update_id_${currentShop}`);
+      localStorage.removeItem(`active_sync_job_id_${currentShop}`);
+      localStorage.removeItem(`active_sync_start_time_${currentShop}`);
+      localStorage.removeItem(`active_sync_batch_${currentShop}`);
+      localStorage.removeItem(`active_sync_total_${currentShop}`);
     } catch (_) {}
     if (activeSyncingUpdateIdRef.current === updateId) {
       activeSyncingUpdateIdRef.current = null;
       setActiveSyncingUpdateId(null);
     }
   };
-
-  // Re-read synced updates when switching shops
-  useEffect(() => {
-    if (shopId) {
-      try {
-        const key = `catalog_synced_updates_${shopId}`;
-        const saved = localStorage.getItem(key);
-        setSyncedUpdateIds(saved ? JSON.parse(saved) : []);
-
-        const savedActive = localStorage.getItem(`active_sync_update_id_${shopId}`);
-        setActiveSyncingUpdateId(savedActive);
-        activeSyncingUpdateIdRef.current = savedActive;
-
-        const savedBatch = localStorage.getItem(`active_sync_batch_${shopId}`);
-        if (savedBatch) setCurrentBatch(parseInt(savedBatch, 10));
-
-        const savedTotal = localStorage.getItem(`active_sync_total_${shopId}`);
-        if (savedTotal) setTotalBatches(parseInt(savedTotal, 10));
-      } catch {
-        setSyncedUpdateIds([]);
-        setActiveSyncingUpdateId(null);
-        activeSyncingUpdateIdRef.current = null;
-      }
-    }
-  }, [shopId]);
 
   // --- Analytics Filters & Metrics ---
   const [analyticsRange, setAnalyticsRange] = useState<string>('today');
@@ -330,6 +310,11 @@ export const AppContent: React.FC = () => {
 
   // --- SSE Event Dispatcher ---
   const handleSSEEvent = (rawType: string, payload: any) => {
+    // Defense-in-depth: ignore events belonging to a different shop
+    if (payload?.shop_id && payload.shop_id !== shopIdRef.current) {
+      return;
+    }
+
     const type = (payload.type || rawType || '').toUpperCase();
     const data = { ...payload, type };
 
@@ -352,9 +337,10 @@ export const AppContent: React.FC = () => {
         const total = data.total_batches || totalBatches || 10;
         setCurrentBatch(batchIndex + 1);
         setTotalBatches(total);
+        const curShop = shopIdRef.current;
         try {
-          localStorage.setItem(`active_sync_batch_${shopId}`, String(batchIndex + 1));
-          localStorage.setItem(`active_sync_total_${shopId}`, String(total));
+          localStorage.setItem(`active_sync_batch_${curShop}`, String(batchIndex + 1));
+          localStorage.setItem(`active_sync_total_${curShop}`, String(total));
         } catch (_) {}
 
         const cumulative = data.cumulative_summary || data.summary;
@@ -517,9 +503,12 @@ export const AppContent: React.FC = () => {
       return;
     }
 
+    const currentShop = shopIdRef.current;
     const interval = setInterval(async () => {
       try {
+        if (shopIdRef.current !== currentShop) return;
         const res = await fetchJob(activeJob.job_id);
+        if (shopIdRef.current !== currentShop) return;
         const job = res?.job;
         if (!job) return;
 
@@ -566,7 +555,7 @@ export const AppContent: React.FC = () => {
     }, 400);
 
     return () => clearInterval(interval);
-  }, [activeJob?.job_id, activeJob?.status, totalBatches]);
+  }, [activeJob?.job_id, activeJob?.status, totalBatches, shopId]);
 
   // --- Runtime Timer ---
   const startRuntimeTimer = (customStartTime?: number) => {
@@ -591,12 +580,49 @@ export const AppContent: React.FC = () => {
 
   // --- Initial Data Load & Refresh ---
   useEffect(() => {
-    if (shopId) {
-      loadAllData();
-      loadAnalytics();
-      loadInterruptedJob();
-      restoreActiveSync();
+    if (!shopId) return;
+
+    // 1. Immediately abort running timer from previous shop
+    stopRuntimeTimer();
+
+    // 2. Clear transient sync state to avoid leaking between stores
+    setActiveJob(null);
+    setInterruptedJob(null);
+    setActiveSyncingUpdateId(null);
+    activeSyncingUpdateIdRef.current = null;
+    setCurrentBatch(0);
+    setTotalBatches(10);
+    setThroughput(0);
+    setEta('—');
+    setElapsedTime('00:00');
+    setSmartStatusText('Catalog is up to date.');
+    setSmartStatusType('normal');
+
+    // 3. Load target shop's synced updates & active sync keys
+    try {
+      const key = `catalog_synced_updates_${shopId}`;
+      const saved = localStorage.getItem(key);
+      setSyncedUpdateIds(saved ? JSON.parse(saved) : []);
+
+      const savedActive = localStorage.getItem(`active_sync_update_id_${shopId}`);
+      setActiveSyncingUpdateId(savedActive);
+      activeSyncingUpdateIdRef.current = savedActive;
+
+      const savedBatch = localStorage.getItem(`active_sync_batch_${shopId}`);
+      if (savedBatch) setCurrentBatch(parseInt(savedBatch, 10));
+
+      const savedTotal = localStorage.getItem(`active_sync_total_${shopId}`);
+      if (savedTotal) setTotalBatches(parseInt(savedTotal, 10));
+    } catch {
+      setSyncedUpdateIds([]);
+      setActiveSyncingUpdateId(null);
+      activeSyncingUpdateIdRef.current = null;
     }
+
+    loadAllData();
+    loadAnalytics();
+    loadInterruptedJob();
+    restoreActiveSync();
   }, [shopId]);
 
   useEffect(() => {
@@ -673,11 +699,12 @@ export const AppContent: React.FC = () => {
   };
 
   const restoreActiveSync = async () => {
-    const savedUpdateId = localStorage.getItem(`active_sync_update_id_${shopId}`);
-    const savedJobId = localStorage.getItem(`active_sync_job_id_${shopId}`);
-    const savedStartTime = localStorage.getItem(`active_sync_start_time_${shopId}`);
-    const savedBatch = localStorage.getItem(`active_sync_batch_${shopId}`);
-    const savedTotal = localStorage.getItem(`active_sync_total_${shopId}`);
+    const targetShop = shopIdRef.current;
+    const savedUpdateId = localStorage.getItem(`active_sync_update_id_${targetShop}`);
+    const savedJobId = localStorage.getItem(`active_sync_job_id_${targetShop}`);
+    const savedStartTime = localStorage.getItem(`active_sync_start_time_${targetShop}`);
+    const savedBatch = localStorage.getItem(`active_sync_batch_${targetShop}`);
+    const savedTotal = localStorage.getItem(`active_sync_total_${targetShop}`);
 
     try {
       let jobToRestore: any = null;
@@ -686,6 +713,7 @@ export const AppContent: React.FC = () => {
       if (savedJobId && savedJobId !== 'pending') {
         try {
           const res = await fetchJob(savedJobId);
+          if (shopIdRef.current !== targetShop) return;
           if (res?.job) {
             jobToRestore = res.job;
           }
@@ -696,11 +724,14 @@ export const AppContent: React.FC = () => {
       if (!jobToRestore || jobToRestore.status !== 'RUNNING') {
         try {
           const historyRes = await fetchHistory(5, 0, 'RUNNING');
+          if (shopIdRef.current !== targetShop) return;
           if (historyRes.jobs && historyRes.jobs.length > 0) {
             jobToRestore = historyRes.jobs[0];
           }
         } catch (_) {}
       }
+
+      if (shopIdRef.current !== targetShop) return;
 
       // 3. If there is a running job, restore state immediately
       if (jobToRestore && jobToRestore.status === 'RUNNING') {
@@ -713,15 +744,17 @@ export const AppContent: React.FC = () => {
 
         let updateId = savedUpdateId;
         if (!updateId) {
-          const pending = DEFAULT_CATALOG_UPDATES.find((u) => !syncedUpdateIds.includes(u.id));
+          const savedSynced = localStorage.getItem(`catalog_synced_updates_${targetShop}`);
+          const parsedSynced = savedSynced ? JSON.parse(savedSynced) : [];
+          const pending = DEFAULT_CATALOG_UPDATES.find((u) => !parsedSynced.includes(u.id));
           updateId = pending ? pending.id : DEFAULT_CATALOG_UPDATES[0].id;
         }
 
         setActiveSyncingUpdateId(updateId);
         activeSyncingUpdateIdRef.current = updateId;
         try {
-          localStorage.setItem(`active_sync_update_id_${shopId}`, updateId);
-          localStorage.setItem(`active_sync_job_id_${shopId}`, jobId);
+          localStorage.setItem(`active_sync_update_id_${targetShop}`, updateId);
+          localStorage.setItem(`active_sync_job_id_${targetShop}`, jobId);
         } catch (_) {}
 
         setActiveJob({ job_id: jobId, status: 'RUNNING' });
@@ -752,6 +785,20 @@ export const AppContent: React.FC = () => {
       // 4. If the saved job has already COMPLETED while reloaded
       if (jobToRestore && jobToRestore.status === 'COMPLETED' && savedUpdateId) {
         markUpdateCompleted(savedUpdateId);
+      } else if (
+        (jobToRestore && (jobToRestore.status === 'INTERRUPTED' || jobToRestore.status === 'FAILED')) ||
+        (!jobToRestore && savedJobId)
+      ) {
+        // Clean up stale active keys if the job is no longer running
+        try {
+          localStorage.removeItem(`active_sync_update_id_${targetShop}`);
+          localStorage.removeItem(`active_sync_job_id_${targetShop}`);
+          localStorage.removeItem(`active_sync_start_time_${targetShop}`);
+          localStorage.removeItem(`active_sync_batch_${targetShop}`);
+          localStorage.removeItem(`active_sync_total_${targetShop}`);
+        } catch (_) {}
+        setActiveSyncingUpdateId(null);
+        activeSyncingUpdateIdRef.current = null;
       }
     } catch (err) {
       console.error('Failed to restore active sync:', err);
@@ -858,7 +905,9 @@ export const AppContent: React.FC = () => {
 
   // --- Handlers ---
   const handleSelectShop = (newShopId: string) => {
+    if (newShopId === shopId) return;
     setActiveShopId(newShopId);
+    shopIdRef.current = newShopId;
     setShopId(newShopId);
     toast.success(`Switched to shop: ${newShopId}`);
   };
@@ -873,6 +922,7 @@ export const AppContent: React.FC = () => {
       return;
     }
 
+    const currentShop = shopIdRef.current;
     activeSyncingUpdateIdRef.current = update.id;
     setActiveSyncingUpdateId(update.id);
 
@@ -904,25 +954,27 @@ export const AppContent: React.FC = () => {
       status: 'RUNNING',
     });
     try {
-      localStorage.setItem(`active_sync_update_id_${shopId}`, update.id);
-      localStorage.setItem(`active_sync_start_time_${shopId}`, String(now));
-      localStorage.setItem(`active_sync_total_${shopId}`, String(update.batches || 10));
-      localStorage.setItem(`active_sync_batch_${shopId}`, '0');
+      localStorage.setItem(`active_sync_update_id_${currentShop}`, update.id);
+      localStorage.setItem(`active_sync_start_time_${currentShop}`, String(now));
+      localStorage.setItem(`active_sync_total_${currentShop}`, String(update.batches || 10));
+      localStorage.setItem(`active_sync_batch_${currentShop}`, '0');
     } catch (_) {}
 
     try {
       const res = await startJob(payload);
+      if (shopIdRef.current !== currentShop) return;
       setActiveJob({
         job_id: res.job_id,
         status: 'RUNNING',
       });
       try {
-        localStorage.setItem(`active_sync_job_id_${shopId}`, res.job_id);
+        localStorage.setItem(`active_sync_job_id_${currentShop}`, res.job_id);
       } catch (_) {}
       toast.success(`Sync started: ${update.version} (${res.job_id})`);
 
       try {
         const jobRes = await fetchJob(res.job_id);
+        if (shopIdRef.current !== currentShop) return;
         if (jobRes?.job?.status === 'COMPLETED') {
           markUpdateCompleted(update.id);
           setActiveJob(null);
@@ -945,12 +997,14 @@ export const AppContent: React.FC = () => {
         }
       } catch (_) {}
     } catch (err: any) {
-      activeSyncingUpdateIdRef.current = null;
-      setActiveSyncingUpdateId(null);
-      setActiveJob(null);
-      stopRuntimeTimer();
-      setSmartStatusText(`Failed to start sync: ${err.message || 'Unknown error'}`);
-      setSmartStatusType('warning');
+      if (shopIdRef.current === currentShop) {
+        activeSyncingUpdateIdRef.current = null;
+        setActiveSyncingUpdateId(null);
+        setActiveJob(null);
+        stopRuntimeTimer();
+        setSmartStatusText(`Failed to start sync: ${err.message || 'Unknown error'}`);
+        setSmartStatusType('warning');
+      }
       toast.error(err.message || 'Failed to start job');
     }
   };
@@ -991,12 +1045,14 @@ export const AppContent: React.FC = () => {
     if (!confirm('Are you sure you want to completely reset the catalog database?')) return;
     setIsResettingDb(true);
 
+    const currentShop = shopIdRef.current;
+
     // 1. Immediately abort local timers
     stopRuntimeTimer();
 
     // 2. Terminate all active syncing jobs on the server
     const currentActiveJob = activeJob;
-    const savedJobId = localStorage.getItem(`active_sync_job_id_${shopId}`);
+    const savedJobId = localStorage.getItem(`active_sync_job_id_${currentShop}`);
     const jobsToCancel = new Set<string>();
 
     if (currentActiveJob?.job_id && currentActiveJob.job_id !== 'pending') {
@@ -1024,12 +1080,12 @@ export const AppContent: React.FC = () => {
 
     // 3. Clear all active sync keys and localStorage
     try {
-      localStorage.removeItem(`active_sync_update_id_${shopId}`);
-      localStorage.removeItem(`active_sync_job_id_${shopId}`);
-      localStorage.removeItem(`active_sync_start_time_${shopId}`);
-      localStorage.removeItem(`active_sync_batch_${shopId}`);
-      localStorage.removeItem(`active_sync_total_${shopId}`);
-      localStorage.removeItem(`catalog_synced_updates_${shopId}`);
+      localStorage.removeItem(`active_sync_update_id_${currentShop}`);
+      localStorage.removeItem(`active_sync_job_id_${currentShop}`);
+      localStorage.removeItem(`active_sync_start_time_${currentShop}`);
+      localStorage.removeItem(`active_sync_batch_${currentShop}`);
+      localStorage.removeItem(`active_sync_total_${currentShop}`);
+      localStorage.removeItem(`catalog_synced_updates_${currentShop}`);
     } catch (_) {}
 
     setActiveJob(null);

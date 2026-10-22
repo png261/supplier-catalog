@@ -162,6 +162,7 @@ app.post('/api/jobs', async (c) => {
   // Broadcast job_started
   broker.publish(shopId, {
     type: 'JOB_STARTED',
+    shop_id: shopId,
     job_id: jobId,
     status: 'RUNNING',
     total_batches: totalBatches,
@@ -186,6 +187,7 @@ app.post('/api/jobs', async (c) => {
             activeJobs.delete(shopId);
             broker.publish(shopId, {
               type: 'JOB_INTERRUPTED',
+              shop_id: shopId,
               job_id: jobId,
               status: 'INTERRUPTED',
               committed_batch_index: batchIndex - 1,
@@ -214,6 +216,7 @@ app.post('/api/jobs', async (c) => {
           // Emit BATCH_COMMITTED
           broker.publish(shopId, {
             type: 'BATCH_COMMITTED',
+            shop_id: shopId,
             job_id: jobId,
             batch_index: batchIndex,
             total_batches: totalBatches,
@@ -225,6 +228,7 @@ app.post('/api/jobs', async (c) => {
           if (delta.dead_letter > 0) {
             broker.publish(shopId, {
               type: 'dead_letter',
+              shop_id: shopId,
               job_id: jobId,
               batch_index: batchIndex,
               new_issues: delta.dead_letter,
@@ -240,6 +244,7 @@ app.post('/api/jobs', async (c) => {
 
         broker.publish(shopId, {
           type: 'JOB_COMPLETED',
+          shop_id: shopId,
           job_id: jobId,
           status: 'COMPLETED',
           total_batches: totalBatches,
@@ -251,6 +256,7 @@ app.post('/api/jobs', async (c) => {
         activeJobs.delete(shopId);
         broker.publish(shopId, {
           type: 'JOB_FAILED',
+          shop_id: shopId,
           job_id: jobId,
           error: err?.message || 'internal batch execution error',
         });
@@ -299,6 +305,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
   const now = new Date().toISOString();
   broker.publish(shopId, {
     type: 'JOB_STARTED',
+    shop_id: shopId,
     job_id: jobId,
     status: 'RUNNING',
     resumed_from_batch: startBatchIndex,
@@ -328,6 +335,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
             activeJobs.delete(shopId);
             broker.publish(shopId, {
               type: 'JOB_INTERRUPTED',
+              shop_id: shopId,
               job_id: jobId,
               status: 'INTERRUPTED',
               committed_batch_index: batchIndex - 1,
@@ -348,6 +356,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
 
           broker.publish(shopId, {
             type: 'BATCH_COMMITTED',
+            shop_id: shopId,
             job_id: jobId,
             batch_index: batchIndex,
             total_batches: totalBatches,
@@ -362,6 +371,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
 
         broker.publish(shopId, {
           type: 'JOB_COMPLETED',
+          shop_id: shopId,
           job_id: jobId,
           status: 'COMPLETED',
           total_batches: totalBatches,
@@ -373,6 +383,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
         activeJobs.delete(shopId);
         broker.publish(shopId, {
           type: 'JOB_FAILED',
+          shop_id: shopId,
           job_id: jobId,
           error: err?.message || 'internal error on resume',
         });
