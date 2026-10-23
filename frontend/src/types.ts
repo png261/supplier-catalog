@@ -28,6 +28,45 @@ export interface CatalogProduct {
   last_updated_at?: string;
 }
 
+export interface CatalogVersion {
+  version_id: string;
+  version_number: number;
+  trigger_type?: string;
+  type?: string;
+  description: string;
+  reverted_version_id?: string;
+  revert_of_version_id?: string;
+  created_by?: string;
+  author?: string;
+  items_added?: number;
+  items_updated?: number;
+  items_withdrawn?: number;
+  items_skipped?: number;
+  items_dead_letter?: number;
+  items_changed?: number;
+  total_items_affected?: number;
+  metadata?: string;
+  created_at: string;
+}
+
+export interface VersionDiffItem {
+  sku: string;
+  operation?: string;
+  action?: string;
+  old_price?: number | null;
+  new_price: number;
+  old_status?: 'ACTIVE' | 'WITHDRAWN' | null;
+  new_status: 'ACTIVE' | 'WITHDRAWN';
+  old_name?: string | null;
+  new_name: string;
+  reason?: string;
+}
+
+export interface VersionDiffResponse {
+  version: CatalogVersion;
+  changes: VersionDiffItem[];
+}
+
 export interface DeadLetterIssue {
   issue_id: string;
   job_id: string;

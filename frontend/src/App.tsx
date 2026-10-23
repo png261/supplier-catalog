@@ -5,6 +5,7 @@ import { OverviewView } from './components/views/OverviewView';
 import { CatalogView } from './components/views/CatalogView';
 import { AttentionView } from './components/views/AttentionView';
 import { HistoryView } from './components/views/HistoryView';
+import { VersionsView } from './components/views/VersionsView';
 import { RemediationModal } from './components/RemediationModal';
 import { MetricDrilldownModal } from './components/MetricDrilldownModal';
 import { ShopModal } from './components/ShopModal';
@@ -23,6 +24,9 @@ import {
   cancelJob,
   resetDatabase,
   remediateProduct,
+  fetchVersions,
+  fetchVersionDiff,
+  rollbackVersion,
   getActiveShopId,
   setActiveShopId,
   getSSEUrl,
@@ -37,6 +41,8 @@ import {
   DEFAULT_CATALOG_UPDATES,
   JobStatus,
   TimeSeriesPoint,
+  CatalogVersion,
+  VersionDiffItem,
 } from './types';
 
 export const AppContent: React.FC = () => {
@@ -52,7 +58,7 @@ export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavItemKey>(() => {
     const params = new URLSearchParams(window.location.search);
     const p = params.get('page');
-    if (p && ['overview', 'catalog', 'attention', 'history'].includes(p)) {
+    if (p && ['overview', 'catalog', 'attention', 'history', 'versions'].includes(p)) {
       return p as NavItemKey;
     }
     return 'overview';
@@ -75,7 +81,7 @@ export const AppContent: React.FC = () => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
       const p = params.get('page');
-      if (p && ['overview', 'catalog', 'attention', 'history'].includes(p)) {
+      if (p && ['overview', 'catalog', 'attention', 'history', 'versions'].includes(p)) {
         setActiveTab(p as NavItemKey);
       } else {
         setActiveTab('overview');
@@ -242,6 +248,14 @@ export const AppContent: React.FC = () => {
   const [historyLimit] = useState<number>(10);
   const [historyStatus, setHistoryStatus] = useState<string>('');
 
+  // --- Catalog Versions State ---
+  const [versions, setVersions] = useState<CatalogVersion[]>([]);
+  const [versionTotal, setVersionTotal] = useState<number>(0);
+  const [versionPage, setVersionPage] = useState<number>(1);
+  const [versionLimit] = useState<number>(20);
+  const [isLoadingVersions, setIsLoadingVersions] = useState<boolean>(false);
+  const [isRollingBack, setIsRollingBack] = useState<boolean>(false);
+
   // --- Modal Open States ---
   const [activeRemediationIssue, setActiveRemediationIssue] = useState<DeadLetterIssue | null>(null);
   const [drilldownCategory, setDrilldownCategory] = useState<
@@ -283,6 +297,10 @@ export const AppContent: React.FC = () => {
       'DEAD_LETTER',
       'job_failed',
       'JOB_FAILED',
+      'version_created',
+      'VERSION_CREATED',
+      'version_rollback',
+      'VERSION_ROLLBACK',
     ];
 
     const onEventHandler = (evtName: string) => (event: MessageEvent) => {
@@ -492,6 +510,20 @@ export const AppContent: React.FC = () => {
         loadAnalytics();
         break;
 
+      case 'VERSION_CREATED':
+        toast.info(`Catalog milestone version recorded: v${data.version_number || ''}`);
+        loadVersions(1);
+        loadCatalog();
+        loadAnalytics();
+        break;
+
+      case 'VERSION_ROLLBACK':
+        toast.success(`Catalog reverted to version: ${data.reverted_version_id || ''}`);
+        loadVersions(1);
+        loadCatalog();
+        loadAnalytics();
+        break;
+
       default:
         break;
     }
@@ -645,6 +677,12 @@ export const AppContent: React.FC = () => {
 
   useEffect(() => {
     if (shopId) {
+      loadVersions(versionPage);
+    }
+  }, [versionPage, shopId]);
+
+  useEffect(() => {
+    if (shopId) {
       loadAnalytics();
     }
   }, [analyticsRange, selectedJobId, shopId]);
@@ -653,6 +691,7 @@ export const AppContent: React.FC = () => {
     loadCatalog();
     loadDLQ();
     loadHistory();
+    loadVersions(1);
   };
 
   const loadCatalog = async () => {
@@ -683,6 +722,44 @@ export const AppContent: React.FC = () => {
     } catch (err) {
       console.error('Failed to load history:', err);
     }
+  };
+
+  const loadVersions = async (p = versionPage) => {
+    setIsLoadingVersions(true);
+    try {
+      const offset = (p - 1) * versionLimit;
+      const res = await fetchVersions(versionLimit, offset);
+      setVersions(res.versions || []);
+      setVersionTotal(res.total || 0);
+      setVersionPage(p);
+    } catch (err) {
+      console.error('Failed to load versions:', err);
+    } finally {
+      setIsLoadingVersions(false);
+    }
+  };
+
+  const handleRollback = async (versionId: string, operator = 'staff-admin') => {
+    setIsRollingBack(true);
+    try {
+      const res = await rollbackVersion(versionId, operator);
+      toast.success(`Catalog successfully reverted to version v${res.version?.version_number || ''}`);
+      await Promise.all([
+        loadVersions(1),
+        loadCatalog(),
+        loadAnalytics(),
+      ]);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to rollback catalog version');
+      throw err;
+    } finally {
+      setIsRollingBack(false);
+    }
+  };
+
+  const handleFetchDiff = async (versionId: string): Promise<VersionDiffItem[]> => {
+    const res = await fetchVersionDiff(versionId);
+    return res.changes || [];
   };
 
   const loadInterruptedJob = async () => {
@@ -1164,6 +1241,7 @@ export const AppContent: React.FC = () => {
         catalogCount={catalog.total}
         quarantinedCount={dlq.total}
         historyCount={history.total}
+        versionsCount={versionTotal}
         activeShopId={shopId}
         onOpenShopModal={() => setIsShopModalOpen(true)}
       />
@@ -1282,6 +1360,22 @@ export const AppContent: React.FC = () => {
                 onPageChange={setHistoryPage}
                 onResumeJob={handleResumeInterrupted}
                 isSyncing={isSyncing}
+              />
+            )}
+
+            {/* 5. DEDICATED CATALOG VERSIONS & ROLLBACK AUDIT VIEW */}
+            {activeTab === 'versions' && (
+              <VersionsView
+                versions={versions}
+                total={versionTotal}
+                page={versionPage}
+                limit={versionLimit}
+                onPageChange={(p) => loadVersions(p)}
+                isLoading={isLoadingVersions}
+                onRefresh={() => loadVersions(versionPage)}
+                onRollback={handleRollback}
+                onFetchDiff={handleFetchDiff}
+                isRollingBack={isRollingBack}
               />
             )}
           </div>

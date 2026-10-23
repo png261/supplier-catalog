@@ -597,6 +597,96 @@ app.get('/api/metrics', async (c) => {
   });
 });
 
+// --- Catalog Versions & Rollback Endpoints ---
+
+app.get('/api/versions', async (c) => {
+  const shopId = getTenantShopId(c);
+  const storage = new D1Storage(c.env.DB);
+  const limit = parseInt(c.req.query('limit') || '20', 10);
+  const offset = parseInt(c.req.query('offset') || '0', 10);
+
+  const { versions, total } = await storage.listVersions(shopId, limit, offset);
+  return c.json({
+    versions,
+    total,
+    limit,
+    offset,
+  });
+});
+
+app.get('/api/versions/:id/diff', async (c) => {
+  const shopId = getTenantShopId(c);
+  const storage = new D1Storage(c.env.DB);
+  const versionId = c.req.param('id');
+
+  const version = await storage.getVersion(shopId, versionId);
+  if (!version) {
+    return c.json({ error: `version ${versionId} not found`, code: 'NOT_FOUND' }, 404);
+  }
+
+  const deltas = await storage.getVersionDeltas(shopId, versionId);
+  const changes = deltas.map((d) => ({
+    sku: d.sku,
+    action: d.action,
+    old_name: d.old_name,
+    new_name: d.new_name,
+    old_price: d.old_price,
+    new_price: d.new_price,
+    old_status: d.old_status,
+    new_status: d.new_status,
+  }));
+
+  return c.json({
+    version,
+    changes,
+  });
+});
+
+app.post('/api/versions/:id/rollback', async (c) => {
+  const shopId = getTenantShopId(c);
+  const storage = new D1Storage(c.env.DB);
+  const targetVersionId = c.req.param('id');
+
+  let body: any = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    body = {};
+  }
+
+  const operator = body.operator || 'staff';
+  const description = body.description || '';
+
+  try {
+    const result = await storage.rollbackVersion(shopId, targetVersionId, operator, description);
+
+    // Notify real-time subscribers via SSE broker
+    broker.publish(shopId, {
+      type: 'version_rollback',
+      data: {
+        shop_id: shopId,
+        reverted_version_id: targetVersionId,
+        new_version_id: result.version.version_id,
+        new_version_number: result.version.version_number,
+        items_affected: result.version.total_items_affected,
+        author: operator,
+        timestamp: result.version.created_at,
+      },
+    });
+
+    return c.json({
+      status: 'success',
+      version: result.version,
+      deltas: result.deltas,
+    });
+  } catch (err: any) {
+    if (err.message && err.message.includes('not found')) {
+      return c.json({ error: err.message, code: 'NOT_FOUND' }, 404);
+    }
+    return c.json({ error: err.message || 'failed to rollback version', code: 'INTERNAL_ERROR' }, 500);
+  }
+});
+
 // --- Database Reset ---
 
 app.post('/api/database/reset', async (c) => {

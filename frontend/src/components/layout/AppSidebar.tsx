@@ -4,6 +4,7 @@ import {
   Package,
   AlertTriangle,
   History,
+  GitBranch,
   Layers,
   ChevronLeft,
   ChevronRight,
@@ -12,7 +13,7 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 
-export type NavItemKey = "overview" | "catalog" | "attention" | "history";
+export type NavItemKey = "overview" | "catalog" | "attention" | "history" | "versions";
 
 interface AppSidebarProps {
   activeTab: NavItemKey;
@@ -24,6 +25,7 @@ interface AppSidebarProps {
   catalogCount: number;
   quarantinedCount: number;
   historyCount: number;
+  versionsCount?: number;
   activeShopId: string;
   onOpenShopModal: () => void;
 }
@@ -38,6 +40,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   catalogCount,
   quarantinedCount,
   historyCount,
+  versionsCount = 0,
   activeShopId,
   onOpenShopModal,
 }) => {
@@ -67,6 +70,13 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       label: "History",
       icon: History,
       badge: historyCount > 0 ? historyCount : null,
+      badgeVariant: "secondary" as const,
+    },
+    {
+      key: "versions" as NavItemKey,
+      label: "Versions",
+      icon: GitBranch,
+      badge: versionsCount > 0 ? versionsCount : null,
       badgeVariant: "secondary" as const,
     },
   ];

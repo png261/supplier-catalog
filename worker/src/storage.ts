@@ -1,8 +1,10 @@
 import {
   AggregatedMetrics,
   BatchCheckpoint,
+  CatalogVersion,
   ChangeSummary,
   DeadLetterRecord,
+  ItemDelta,
   JobStatus,
   MetricsFilter,
   Product,
@@ -503,10 +505,324 @@ export class D1Storage {
     };
   }
 
+  // --- Catalog Versions & Rollback ---
+
+  async listVersions(
+    shopId: string,
+    limit = 20,
+    offset = 0
+  ): Promise<{ versions: CatalogVersion[]; total: number }> {
+    const l = Math.min(100, Math.max(1, limit));
+    const o = Math.max(0, offset);
+
+    const countRes = await this.db
+      .prepare('SELECT COUNT(*) as total FROM catalog_versions WHERE shop_id = ?;')
+      .bind(shopId)
+      .first<{ total: number }>();
+    const total = countRes?.total || 0;
+
+    const query = `
+      SELECT shop_id, version_id, version_number, description, author, type,
+             revert_of_version_id, items_added, items_updated, items_withdrawn,
+             items_skipped, items_dead_letter, total_items_affected, metadata, created_at
+      FROM catalog_versions
+      WHERE shop_id = ?
+      ORDER BY version_number DESC
+      LIMIT ? OFFSET ?;
+    `;
+    const res = await this.db.prepare(query).bind(shopId, l, o).all<CatalogVersion>();
+    return {
+      versions: res.results || [],
+      total,
+    };
+  }
+
+  async getVersion(shopId: string, versionId: string): Promise<CatalogVersion | null> {
+    const query = `
+      SELECT shop_id, version_id, version_number, description, author, type,
+             revert_of_version_id, items_added, items_updated, items_withdrawn,
+             items_skipped, items_dead_letter, total_items_affected, metadata, created_at
+      FROM catalog_versions
+      WHERE shop_id = ? AND version_id = ?;
+    `;
+    return (await this.db.prepare(query).bind(shopId, versionId).first<CatalogVersion>()) || null;
+  }
+
+  async getVersionDeltas(shopId: string, versionId: string): Promise<ItemDelta[]> {
+    const query = `
+      SELECT delta_id, shop_id, version_id, sku, action,
+             old_name, new_name, old_price, new_price,
+             old_status, new_status, old_timestamp, new_timestamp
+      FROM catalog_version_deltas
+      WHERE shop_id = ? AND version_id = ?
+      ORDER BY delta_id ASC;
+    `;
+    const res = await this.db.prepare(query).bind(shopId, versionId).all<ItemDelta>();
+    return res.results || [];
+  }
+
+  async rollbackVersion(
+    shopId: string,
+    targetVersionId: string,
+    author = 'staff',
+    description = ''
+  ): Promise<{ version: CatalogVersion; deltas: ItemDelta[] }> {
+    // 1. Verify target version exists
+    const targetVer = await this.getVersion(shopId, targetVersionId);
+    if (!targetVer) {
+      throw new Error(`target version ${targetVersionId} not found`);
+    }
+
+    // 2. Get latest version number
+    const maxVerRes = await this.db
+      .prepare('SELECT MAX(version_number) as max_v FROM catalog_versions WHERE shop_id = ?;')
+      .bind(shopId)
+      .first<{ max_v: number | null }>();
+    const nextVerNum = (maxVerRes?.max_v ?? 0) + 1;
+
+    // 3. Reconstruct baseline state at target version using SQL window function
+    const baselineQuery = `
+      WITH ranked_deltas AS (
+        SELECT 
+          d.sku,
+          d.new_name,
+          d.new_price,
+          d.new_status,
+          d.new_timestamp,
+          ROW_NUMBER() OVER (
+            PARTITION BY d.sku 
+            ORDER BY v.version_number DESC, d.delta_id DESC
+          ) AS rn
+        FROM catalog_version_deltas d
+        JOIN catalog_versions v ON d.shop_id = v.shop_id AND d.version_id = v.version_id
+        WHERE d.shop_id = ? AND v.version_number <= ?
+      )
+      SELECT sku, new_name as name, new_price as price, new_status as status, new_timestamp as supplier_timestamp
+      FROM ranked_deltas
+      WHERE rn = 1;
+    `;
+    const baselineRes = await this.db
+      .prepare(baselineQuery)
+      .bind(shopId, targetVer.version_number)
+      .all<{ sku: string; name: string; price: number; status: 'ACTIVE' | 'WITHDRAWN'; supplier_timestamp: string }>();
+
+    const baselineMap = new Map<string, { sku: string; name: string; price: number; status: 'ACTIVE' | 'WITHDRAWN'; supplier_timestamp: string }>();
+    for (const b of (baselineRes.results || [])) {
+      baselineMap.set(b.sku, b);
+    }
+
+    // 4. Get all live products
+    const liveRes = await this.db
+      .prepare('SELECT sku, name, price, status, supplier_timestamp FROM products WHERE shop_id = ?;')
+      .bind(shopId)
+      .all<{ sku: string; name: string; price: number; status: 'ACTIVE' | 'WITHDRAWN'; supplier_timestamp: string }>();
+    const liveMap = new Map<string, { sku: string; name: string; price: number; status: 'ACTIVE' | 'WITHDRAWN'; supplier_timestamp: string }>();
+    for (const p of (liveRes.results || [])) {
+      liveMap.set(p.sku, p);
+    }
+
+    // 5. Compute inverse deltas
+    const rollbackVerId = `v${nextVerNum}-${Date.now().toString(36)}`;
+    const nowIso = new Date().toISOString();
+    const rollbackDeltas: ItemDelta[] = [];
+    const dbStatements: D1PreparedStatement[] = [];
+
+    let itemsUpdated = 0;
+    let itemsWithdrawn = 0;
+    let itemsAdded = 0;
+
+    // Check products in baseline
+    for (const [sku, base] of baselineMap.entries()) {
+      const live = liveMap.get(sku);
+      if (live) {
+        // INVARIANT A: Tombstone Preservation - If currently WITHDRAWN, NEVER reactivate to ACTIVE!
+        let effectiveStatus = base.status;
+        if (live.status === 'WITHDRAWN') {
+          effectiveStatus = 'WITHDRAWN';
+        }
+
+        const nameChanged = live.name !== base.name;
+        const priceChanged = Math.abs(live.price - base.price) > 0.0001;
+        const statusChanged = live.status !== effectiveStatus;
+
+        if (nameChanged || priceChanged || statusChanged) {
+          rollbackDeltas.push({
+            shop_id: shopId,
+            version_id: rollbackVerId,
+            sku,
+            action: 'UPDATED',
+            old_name: live.name,
+            new_name: base.name,
+            old_price: live.price,
+            new_price: base.price,
+            old_status: live.status,
+            new_status: effectiveStatus,
+            old_timestamp: live.supplier_timestamp,
+            new_timestamp: nowIso,
+          });
+          itemsUpdated++;
+
+          dbStatements.push(
+            this.db
+              .prepare(
+                'UPDATE products SET name = ?, price = ?, status = ?, supplier_timestamp = ?, updated_at = ? WHERE shop_id = ? AND sku = ?;'
+              )
+              .bind(base.name, base.price, effectiveStatus, nowIso, nowIso, shopId, sku)
+          );
+        }
+      } else {
+        // Product in baseline but not in live -> Add as ACTIVE
+        rollbackDeltas.push({
+          shop_id: shopId,
+          version_id: rollbackVerId,
+          sku,
+          action: 'ADDED',
+          old_name: null,
+          new_name: base.name,
+          old_price: null,
+          new_price: base.price,
+          old_status: null,
+          new_status: 'ACTIVE',
+          old_timestamp: null,
+          new_timestamp: nowIso,
+        });
+        itemsAdded++;
+
+        dbStatements.push(
+          this.db
+            .prepare(
+              'INSERT INTO products (shop_id, sku, name, price, status, supplier_timestamp, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?);'
+            )
+            .bind(shopId, sku, base.name, base.price, 'ACTIVE', nowIso, nowIso)
+        );
+      }
+    }
+
+    // Check products introduced after target version
+    for (const [sku, live] of liveMap.entries()) {
+      if (!baselineMap.has(sku) && live.status !== 'WITHDRAWN') {
+        rollbackDeltas.push({
+          shop_id: shopId,
+          version_id: rollbackVerId,
+          sku,
+          action: 'WITHDRAWN',
+          old_name: live.name,
+          new_name: live.name,
+          old_price: live.price,
+          new_price: live.price,
+          old_status: live.status,
+          new_status: 'WITHDRAWN',
+          old_timestamp: live.supplier_timestamp,
+          new_timestamp: nowIso,
+        });
+        itemsWithdrawn++;
+
+        dbStatements.push(
+          this.db
+            .prepare(
+              'UPDATE products SET status = ?, supplier_timestamp = ?, updated_at = ? WHERE shop_id = ? AND sku = ?;'
+            )
+            .bind('WITHDRAWN', nowIso, nowIso, shopId, sku)
+        );
+      }
+    }
+
+    const totalAffected = itemsAdded + itemsUpdated + itemsWithdrawn;
+    const finalDesc = description || `Revert to version v${targetVer.version_number} (${targetVer.version_id})`;
+
+    const rollbackVer: CatalogVersion = {
+      shop_id: shopId,
+      version_id: rollbackVerId,
+      version_number: nextVerNum,
+      description: finalDesc,
+      author: author || 'staff',
+      type: 'ROLLBACK',
+      revert_of_version_id: targetVersionId,
+      items_added: itemsAdded,
+      items_updated: itemsUpdated,
+      items_withdrawn: itemsWithdrawn,
+      items_skipped: 0,
+      items_dead_letter: 0,
+      total_items_affected: totalAffected,
+      metadata: JSON.stringify({ reverted_version_number: targetVer.version_number }),
+      created_at: nowIso,
+    };
+
+    // Prepare version row insert
+    dbStatements.push(
+      this.db
+        .prepare(`
+          INSERT INTO catalog_versions (
+            shop_id, version_id, version_number, description, author, type,
+            revert_of_version_id, items_added, items_updated, items_withdrawn,
+            items_skipped, items_dead_letter, total_items_affected, metadata, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        `)
+        .bind(
+          shopId,
+          rollbackVer.version_id,
+          rollbackVer.version_number,
+          rollbackVer.description,
+          rollbackVer.author,
+          rollbackVer.type,
+          rollbackVer.revert_of_version_id,
+          rollbackVer.items_added,
+          rollbackVer.items_updated,
+          rollbackVer.items_withdrawn,
+          rollbackVer.items_skipped,
+          rollbackVer.items_dead_letter,
+          rollbackVer.total_items_affected,
+          rollbackVer.metadata,
+          rollbackVer.created_at
+        )
+    );
+
+    // Prepare deltas insert
+    for (const d of rollbackDeltas) {
+      dbStatements.push(
+        this.db
+          .prepare(`
+            INSERT INTO catalog_version_deltas (
+              shop_id, version_id, sku, action,
+              old_name, new_name, old_price, new_price,
+              old_status, new_status, old_timestamp, new_timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          `)
+          .bind(
+            shopId,
+            d.version_id,
+            d.sku,
+            d.action,
+            d.old_name ?? null,
+            d.new_name,
+            d.old_price ?? null,
+            d.new_price,
+            d.old_status ?? null,
+            d.new_status,
+            d.old_timestamp ?? null,
+            d.new_timestamp
+          )
+      );
+    }
+
+    // Execute in chunks of 50 to respect D1 batch limits
+    for (let i = 0; i < dbStatements.length; i += 50) {
+      const chunk = dbStatements.slice(i, i + 50);
+      await this.db.batch(chunk);
+    }
+
+    return {
+      version: rollbackVer,
+      deltas: rollbackDeltas,
+    };
+  }
+
   // --- Maintenance ---
 
   async resetDatabase(shopId: string): Promise<void> {
     await this.db.batch([
+      this.db.prepare('DELETE FROM catalog_version_deltas WHERE shop_id = ?;').bind(shopId),
+      this.db.prepare('DELETE FROM catalog_versions WHERE shop_id = ?;').bind(shopId),
       this.db.prepare('DELETE FROM dead_letter_issues WHERE shop_id = ?;').bind(shopId),
       this.db.prepare('DELETE FROM batch_checkpoints WHERE shop_id = ?;').bind(shopId),
       this.db.prepare('DELETE FROM sync_jobs WHERE shop_id = ?;').bind(shopId),

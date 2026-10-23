@@ -4,6 +4,8 @@ import {
   SyncJob,
   AnalyticsResponse,
   TimeSeriesPoint,
+  CatalogVersion,
+  VersionDiffResponse,
 } from '../types';
 
 const SHOP_STORAGE_KEY = 'catalog_sync_active_shop_id';
@@ -249,4 +251,23 @@ export async function remediateProduct(payload: {
     }),
   });
   return handleResponse<any>(res, 'Failed to remediate product');
+}
+
+export async function fetchVersions(limit = 50, offset = 0): Promise<{ versions: CatalogVersion[]; total: number }> {
+  const res = await shopFetch(`/api/versions?limit=${limit}&offset=${offset}`);
+  return handleResponse<{ versions: CatalogVersion[]; total: number }>(res, 'Failed to fetch catalog versions');
+}
+
+export async function fetchVersionDiff(versionId: string): Promise<VersionDiffResponse> {
+  const res = await shopFetch(`/api/versions/${encodeURIComponent(versionId)}/diff`);
+  return handleResponse<VersionDiffResponse>(res, 'Failed to fetch version diff');
+}
+
+export async function rollbackVersion(versionId: string, operator = 'staff'): Promise<{ status: string; version: CatalogVersion }> {
+  const res = await shopFetch(`/api/versions/${encodeURIComponent(versionId)}/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operator }),
+  });
+  return handleResponse<{ status: string; version: CatalogVersion }>(res, 'Failed to rollback version');
 }
