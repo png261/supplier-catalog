@@ -126,11 +126,27 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
   // Resolve the version immediately preceding a given version (or v0 initial pre-sync baseline)
   const getPreviousVersion = (ver: CatalogVersion): CatalogVersion => {
-    const candidates = versions.filter((v) => (v.version_number || 0) < (ver.version_number || 0));
+    const candidates = versions.filter(
+      (v) => (v.version_number || 0) > 0 && (v.version_number || 0) < (ver.version_number || 0)
+    );
     if (candidates.length > 0) {
-      return candidates.reduce((best, cur) =>
+      const bestPrev = candidates.reduce((best, cur) =>
         (cur.version_number || 0) > (best.version_number || 0) ? cur : best
       , candidates[0]);
+      if (
+        (bestPrev.type === 'ROLLBACK' || bestPrev.trigger_type === 'ROLLBACK') &&
+        bestPrev.revert_of_version_id === 'v0'
+      ) {
+        return {
+          version_id: 'v0',
+          version_number: 0,
+          type: 'INITIAL',
+          description: 'Initial Pre-Sync Baseline (Empty Catalog)',
+          author: 'system',
+          created_at: ver.created_at || new Date(0).toISOString(),
+        };
+      }
+      return bestPrev;
     }
     return {
       version_id: 'v0',

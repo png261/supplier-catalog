@@ -464,6 +464,12 @@ export class D1Storage {
         conditions.push('created_at <= ?');
         args.push(filter.to);
       }
+      const { revertedSyncIds } = await this.computeVersionHistoryState(shopId);
+      if (revertedSyncIds.length > 0) {
+        const placeholders = revertedSyncIds.map(() => '?').join(', ');
+        conditions.push(`job_id NOT IN (${placeholders})`);
+        args.push(...revertedSyncIds);
+      }
     }
 
     const whereClause = conditions.join(' AND ');
@@ -725,6 +731,63 @@ export class D1Storage {
     return entries;
   }
 
+  private async computeVersionHistoryState(
+    shopId: string,
+    upToVersionNumber?: number
+  ): Promise<{
+    activeVersionNumbers: number[];
+    revertedSyncIds: string[];
+  }> {
+    const query =
+      upToVersionNumber !== undefined
+        ? `SELECT version_id, version_number, type, revert_of_version_id FROM catalog_versions WHERE shop_id = ? AND version_number <= ? ORDER BY version_number ASC;`
+        : `SELECT version_id, version_number, type, revert_of_version_id FROM catalog_versions WHERE shop_id = ? ORDER BY version_number ASC;`;
+    const res =
+      upToVersionNumber !== undefined
+        ? await this.db.prepare(query).bind(shopId, upToVersionNumber).all<any>()
+        : await this.db.prepare(query).bind(shopId).all<any>();
+    const rows = res.results || [];
+
+    const versionNumById = new Map<string, number>();
+    versionNumById.set('v0', 0);
+    for (const r of rows) {
+      versionNumById.set(r.version_id, r.version_number);
+    }
+
+    let activeStack: Array<{ version_id: string; version_number: number; type: string }> = [];
+    const allSyncIds: string[] = [];
+
+    for (const r of rows) {
+      if (r.type === 'ROLLBACK') {
+        const targetId = (r.revert_of_version_id || 'v0').trim();
+        if (targetId === 'v0') {
+          activeStack = [];
+        } else {
+          const targetNum = versionNumById.get(targetId);
+          if (targetNum !== undefined) {
+            activeStack = activeStack.filter((v) => v.version_number <= targetNum);
+          }
+        }
+      } else if (r.version_number > 0) {
+        activeStack.push({
+          version_id: r.version_id,
+          version_number: r.version_number,
+          type: r.type,
+        });
+        if (r.type === 'SYNC') {
+          allSyncIds.push(r.version_id);
+        }
+      }
+    }
+
+    const activeIds = new Set(activeStack.map((v) => v.version_id));
+    const revertedSyncIds = allSyncIds.filter((id) => !activeIds.has(id));
+    return {
+      activeVersionNumbers: activeStack.map((v) => v.version_number),
+      revertedSyncIds,
+    };
+  }
+
   async rollbackVersion(
     shopId: string,
     targetVersionId: string,
@@ -754,35 +817,40 @@ export class D1Storage {
       .first<{ max_v: number | null }>();
     const nextVerNum = (maxVerRes?.max_v ?? 0) + 1;
 
-    // 3. Reconstruct baseline state at target version using SQL window function
-    const baselineQuery = `
-      WITH ranked_deltas AS (
-        SELECT 
-          d.sku,
-          d.new_name,
-          d.new_price,
-          d.new_status,
-          d.new_timestamp,
-          ROW_NUMBER() OVER (
-            PARTITION BY d.sku 
-            ORDER BY v.version_number DESC, d.delta_id DESC
-          ) AS rn
-        FROM catalog_version_deltas d
-        JOIN catalog_versions v ON d.shop_id = v.shop_id AND d.version_id = v.version_id
-        WHERE d.shop_id = ? AND v.version_number <= ?
-      )
-      SELECT sku, new_name as name, new_price as price, new_status as status, new_timestamp as supplier_timestamp
-      FROM ranked_deltas
-      WHERE rn = 1;
-    `;
-    const baselineRes = await this.db
-      .prepare(baselineQuery)
-      .bind(shopId, targetVer.version_number)
-      .all<{ sku: string; name: string; price: number; status: 'ACTIVE' | 'WITHDRAWN'; supplier_timestamp: string }>();
-
+    // 3. Reconstruct baseline state at target version using active (non-reverted) versions up to targetVer
+    const { activeVersionNumbers } = await this.computeVersionHistoryState(shopId, targetVer.version_number);
     const baselineMap = new Map<string, { sku: string; name: string; price: number; status: 'ACTIVE' | 'WITHDRAWN'; supplier_timestamp: string }>();
-    for (const b of (baselineRes.results || [])) {
-      baselineMap.set(b.sku, b);
+
+    if (targetVersionId.trim() !== 'v0' && activeVersionNumbers.length > 0) {
+      const placeholders = activeVersionNumbers.map(() => '?').join(', ');
+      const baselineQuery = `
+        WITH ranked_deltas AS (
+          SELECT 
+            d.sku,
+            d.new_name,
+            d.new_price,
+            d.new_status,
+            d.new_timestamp,
+            ROW_NUMBER() OVER (
+              PARTITION BY d.sku 
+              ORDER BY v.version_number DESC, d.delta_id DESC
+            ) AS rn
+          FROM catalog_version_deltas d
+          JOIN catalog_versions v ON d.shop_id = v.shop_id AND d.version_id = v.version_id
+          WHERE d.shop_id = ? AND v.version_number IN (${placeholders})
+        )
+        SELECT sku, new_name as name, new_price as price, new_status as status, new_timestamp as supplier_timestamp
+        FROM ranked_deltas
+        WHERE rn = 1;
+      `;
+      const baselineRes = await this.db
+        .prepare(baselineQuery)
+        .bind(shopId, ...activeVersionNumbers)
+        .all<{ sku: string; name: string; price: number; status: 'ACTIVE' | 'WITHDRAWN'; supplier_timestamp: string }>();
+
+      for (const b of (baselineRes.results || [])) {
+        baselineMap.set(b.sku, b);
+      }
     }
 
     // 4. Get all live products
@@ -809,15 +877,13 @@ export class D1Storage {
     for (const [sku, base] of baselineMap.entries()) {
       const live = liveMap.get(sku);
       if (live) {
-        // INVARIANT A: Tombstone Preservation - If currently WITHDRAWN, NEVER reactivate to ACTIVE!
-        let effectiveStatus = base.status;
-        if (live.status === 'WITHDRAWN') {
-          effectiveStatus = 'WITHDRAWN';
-        }
+        const effectiveStatus = base.status;
+        const effectiveTimestamp = base.supplier_timestamp || nowIso;
 
         const nameChanged = live.name !== base.name;
         const priceChanged = Math.abs(live.price - base.price) > 0.0001;
         const statusChanged = live.status !== effectiveStatus;
+        const timestampChanged = live.supplier_timestamp !== effectiveTimestamp;
 
         if (nameChanged || priceChanged || statusChanged) {
           rollbackDeltas.push({
@@ -832,20 +898,24 @@ export class D1Storage {
             old_status: live.status,
             new_status: effectiveStatus,
             old_timestamp: live.supplier_timestamp,
-            new_timestamp: nowIso,
+            new_timestamp: effectiveTimestamp,
           });
           itemsUpdated++;
+        }
 
+        if (nameChanged || priceChanged || statusChanged || timestampChanged) {
           dbStatements.push(
             this.db
               .prepare(
                 'UPDATE products SET name = ?, price = ?, status = ?, supplier_timestamp = ?, updated_at = ? WHERE shop_id = ? AND sku = ?;'
               )
-              .bind(base.name, base.price, effectiveStatus, nowIso, nowIso, shopId, sku)
+              .bind(base.name, base.price, effectiveStatus, effectiveTimestamp, nowIso, shopId, sku)
           );
         }
       } else {
-        // Product in baseline but not in live -> Add as ACTIVE
+        // Product in baseline but not in live -> Restore with baseline status & timestamp
+        const effectiveStatus = base.status || 'ACTIVE';
+        const effectiveTimestamp = base.supplier_timestamp || nowIso;
         rollbackDeltas.push({
           shop_id: shopId,
           version_id: rollbackVerId,
@@ -856,9 +926,9 @@ export class D1Storage {
           old_price: null,
           new_price: base.price,
           old_status: null,
-          new_status: 'ACTIVE',
+          new_status: effectiveStatus,
           old_timestamp: null,
-          new_timestamp: nowIso,
+          new_timestamp: effectiveTimestamp,
         });
         itemsAdded++;
 
@@ -867,14 +937,14 @@ export class D1Storage {
             .prepare(
               'INSERT INTO products (shop_id, sku, name, price, status, supplier_timestamp, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?);'
             )
-            .bind(shopId, sku, base.name, base.price, 'ACTIVE', nowIso, nowIso)
+            .bind(shopId, sku, base.name, base.price, effectiveStatus, effectiveTimestamp, nowIso)
         );
       }
     }
 
-    // Check products introduced after target version
+    // Check products introduced after target version -> remove from live products table
     for (const [sku, live] of liveMap.entries()) {
-      if (!baselineMap.has(sku) && live.status !== 'WITHDRAWN') {
+      if (!baselineMap.has(sku)) {
         rollbackDeltas.push({
           shop_id: shopId,
           version_id: rollbackVerId,
@@ -893,10 +963,8 @@ export class D1Storage {
 
         dbStatements.push(
           this.db
-            .prepare(
-              'UPDATE products SET status = ?, supplier_timestamp = ?, updated_at = ? WHERE shop_id = ? AND sku = ?;'
-            )
-            .bind('WITHDRAWN', nowIso, nowIso, shopId, sku)
+            .prepare('DELETE FROM products WHERE shop_id = ? AND sku = ?;')
+            .bind(shopId, sku)
         );
       }
     }

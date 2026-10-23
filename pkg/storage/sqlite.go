@@ -808,6 +808,15 @@ func (s *SQLiteStorage) GetMetrics(ctx context.Context, filter domain.MetricsFil
 			conditions = append(conditions, "created_at <= ?")
 			args = append(args, filter.To.UTC().Format(time.RFC3339Nano))
 		}
+		_, revertedSyncIDs := s.computeVersionHistoryState(ctx, s.db, -1)
+		if len(revertedSyncIDs) > 0 {
+			placeholders := make([]string, len(revertedSyncIDs))
+			for i, id := range revertedSyncIDs {
+				placeholders[i] = "?"
+				args = append(args, id)
+			}
+			conditions = append(conditions, fmt.Sprintf("job_id NOT IN (%s)", strings.Join(placeholders, ", ")))
+		}
 	}
 
 	whereClause := ""
@@ -1446,6 +1455,74 @@ func (s *SQLiteStorage) GetBaselineStateAtVersionTx(ctx context.Context, tx *sql
 	return s.getBaselineStateAtVersion(ctx, tx, versionID)
 }
 
+func (s *SQLiteStorage) computeVersionHistoryState(ctx context.Context, q querier, upToVersionNumber int) ([]int, []string) {
+	var rows *sql.Rows
+	var err error
+	if upToVersionNumber >= 0 {
+		rows, err = q.QueryContext(ctx, "SELECT version_id, version_number, type, COALESCE(revert_of_version_id, '') FROM catalog_versions WHERE version_number <= ? ORDER BY version_number ASC;", upToVersionNumber)
+	} else {
+		rows, err = q.QueryContext(ctx, "SELECT version_id, version_number, type, COALESCE(revert_of_version_id, '') FROM catalog_versions ORDER BY version_number ASC;")
+	}
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+
+	type verEntry struct {
+		id  string
+		num int
+		typ string
+		rev string
+	}
+	var all []verEntry
+	versionNumByID := map[string]int{"v0": 0}
+	for rows.Next() {
+		var e verEntry
+		if err := rows.Scan(&e.id, &e.num, &e.typ, &e.rev); err == nil {
+			all = append(all, e)
+			versionNumByID[e.id] = e.num
+		}
+	}
+
+	var activeStack []verEntry
+	var allSyncIDs []string
+	for _, r := range all {
+		if r.typ == string(domain.VersionTypeRollback) {
+			targetID := strings.TrimSpace(r.rev)
+			if targetID == "" || targetID == "v0" {
+				activeStack = nil
+			} else if targetNum, ok := versionNumByID[targetID]; ok {
+				filtered := activeStack[:0]
+				for _, v := range activeStack {
+					if v.num <= targetNum {
+						filtered = append(filtered, v)
+					}
+				}
+				activeStack = filtered
+			}
+		} else if r.num > 0 {
+			activeStack = append(activeStack, r)
+			if r.typ == string(domain.VersionTypeSync) {
+				allSyncIDs = append(allSyncIDs, r.id)
+			}
+		}
+	}
+
+	activeIDSet := make(map[string]bool, len(activeStack))
+	activeNums := make([]int, 0, len(activeStack))
+	for _, v := range activeStack {
+		activeIDSet[v.id] = true
+		activeNums = append(activeNums, v.num)
+	}
+	var revertedSyncIDs []string
+	for _, id := range allSyncIDs {
+		if !activeIDSet[id] {
+			revertedSyncIDs = append(revertedSyncIDs, id)
+		}
+	}
+	return activeNums, revertedSyncIDs
+}
+
 func (s *SQLiteStorage) getBaselineStateAtVersion(ctx context.Context, q querier, versionID string) (map[string]domain.Product, error) {
 	if strings.TrimSpace(versionID) == "v0" {
 		return make(map[string]domain.Product), nil
@@ -1459,27 +1536,65 @@ func (s *SQLiteStorage) getBaselineStateAtVersion(ctx context.Context, q querier
 		return nil, fmt.Errorf("failed querying version %s: %w", versionID, err)
 	}
 
-	query := `
-	WITH ranked_deltas AS (
-		SELECT 
-			d.sku,
-			d.new_name,
-			d.new_price,
-			d.new_status,
-			d.new_timestamp,
-			ROW_NUMBER() OVER (
-				PARTITION BY d.sku 
-				ORDER BY v.version_number DESC, d.delta_id DESC
-			) AS rn
-		FROM catalog_version_deltas d
-		JOIN catalog_versions v ON d.version_id = v.version_id
-		WHERE v.version_number <= ?
-	)
-	SELECT sku, new_name, new_price, new_status, new_timestamp
-	FROM ranked_deltas
-	WHERE rn = 1;
-	`
-	rows, err := q.QueryContext(ctx, query, targetVersionNumber)
+	var patchCount int
+	_ = q.QueryRowContext(ctx, "SELECT COUNT(*) FROM catalog_versions WHERE version_number > 0 AND type IN ('INITIAL', 'PATCH');").Scan(&patchCount)
+
+	var rows *sql.Rows
+	if patchCount == 0 {
+		activeNums, _ := s.computeVersionHistoryState(ctx, q, targetVersionNumber)
+		if len(activeNums) == 0 {
+			return make(map[string]domain.Product), nil
+		}
+		placeholders := make([]string, len(activeNums))
+		qArgs := make([]any, len(activeNums))
+		for i, n := range activeNums {
+			placeholders[i] = "?"
+			qArgs[i] = n
+		}
+		query := fmt.Sprintf(`
+		WITH ranked_deltas AS (
+			SELECT 
+				d.sku,
+				d.new_name,
+				d.new_price,
+				d.new_status,
+				d.new_timestamp,
+				ROW_NUMBER() OVER (
+					PARTITION BY d.sku 
+					ORDER BY v.version_number DESC, d.delta_id DESC
+				) AS rn
+			FROM catalog_version_deltas d
+			JOIN catalog_versions v ON d.version_id = v.version_id
+			WHERE v.version_number IN (%s)
+		)
+		SELECT sku, new_name, new_price, new_status, new_timestamp
+		FROM ranked_deltas
+		WHERE rn = 1;
+		`, strings.Join(placeholders, ", "))
+		rows, err = q.QueryContext(ctx, query, qArgs...)
+	} else {
+		query := `
+		WITH ranked_deltas AS (
+			SELECT 
+				d.sku,
+				d.new_name,
+				d.new_price,
+				d.new_status,
+				d.new_timestamp,
+				ROW_NUMBER() OVER (
+					PARTITION BY d.sku 
+					ORDER BY v.version_number DESC, d.delta_id DESC
+				) AS rn
+			FROM catalog_version_deltas d
+			JOIN catalog_versions v ON d.version_id = v.version_id
+			WHERE v.version_number <= ?
+		)
+		SELECT sku, new_name, new_price, new_status, new_timestamp
+		FROM ranked_deltas
+		WHERE rn = 1;
+		`
+		rows, err = q.QueryContext(ctx, query, targetVersionNumber)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to reconstruct baseline catalog at version %s: %w", versionID, err)
 	}
@@ -1542,6 +1657,10 @@ func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID str
 		}
 	}
 
+	var patchCount int
+	_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM catalog_versions WHERE version_number > 0 AND type IN ('INITIAL', 'PATCH');").Scan(&patchCount)
+	isSyncRevertMode := targetVersionID == "v0" || patchCount == 0
+
 	// 2. Retrieve baseline products at targetVersionID
 	baselineProducts, err := s.getBaselineStateAtVersion(ctx, tx, targetVersionID)
 	if err != nil {
@@ -1591,12 +1710,13 @@ func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID str
 
 		if exists {
 			targetStatus := baseline.Status
-			// CRITICAL INVARIANT A ENFORCEMENT:
-			// If product in live catalog currently has status == domain.StatusWithdrawn,
-			// and baseline has status == domain.StatusActive:
-			// The item MUST NOT be resurrected! Status remains domain.StatusWithdrawn,
-			// but price and name revert to baseline values.
-			if live.Status == domain.StatusWithdrawn && baseline.Status == domain.StatusActive {
+			targetTimestamp := now
+			if isSyncRevertMode {
+				if !baseline.SupplierTimestamp.IsZero() {
+					targetTimestamp = baseline.SupplierTimestamp
+				}
+			} else if live.Status == domain.StatusWithdrawn && baseline.Status == domain.StatusActive {
+				// CRITICAL INVARIANT A ENFORCEMENT (for manual PATCH versions):
 				targetStatus = domain.StatusWithdrawn
 			}
 
@@ -1617,30 +1737,43 @@ func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID str
 					OldStatus:    &oldStatus,
 					NewStatus:    targetStatus,
 					OldTimestamp: &oldTime,
-					NewTimestamp: now,
+					NewTimestamp: targetTimestamp,
 				}
 				deltas = append(deltas, delta)
 				summary.Updated++
 
 				updatedProd := delta.PostImageProduct()
+				updatedProd.UpdatedAt = now
 				if err := s.UpsertProductTx(ctx, tx, &updatedProd); err != nil {
 					return nil, nil, fmt.Errorf("failed updating product %s during rollback: %w", sku, err)
+				}
+			} else if isSyncRevertMode && !live.SupplierTimestamp.Equal(targetTimestamp) {
+				updatedProd := live
+				updatedProd.SupplierTimestamp = targetTimestamp
+				updatedProd.UpdatedAt = now
+				if err := s.UpsertProductTx(ctx, tx, &updatedProd); err != nil {
+					return nil, nil, fmt.Errorf("failed restoring timestamp for product %s during rollback: %w", sku, err)
 				}
 			}
 		} else {
 			// Product was in baseline but missing in products table: insert into products
+			targetTimestamp := now
+			if isSyncRevertMode && !baseline.SupplierTimestamp.IsZero() {
+				targetTimestamp = baseline.SupplierTimestamp
+			}
 			delta := domain.ItemDelta{
 				SKU:          sku,
 				Action:       domain.DeltaActionAdded,
 				NewName:      baseline.Name,
 				NewPrice:     baseline.Price,
 				NewStatus:    baseline.Status,
-				NewTimestamp: now,
+				NewTimestamp: targetTimestamp,
 			}
 			deltas = append(deltas, delta)
 			summary.Added++
 
 			newProd := delta.PostImageProduct()
+			newProd.UpdatedAt = now
 			if err := s.UpsertProductTx(ctx, tx, &newProd); err != nil {
 				return nil, nil, fmt.Errorf("failed inserting missing baseline product %s during rollback: %w", sku, err)
 			}
@@ -1658,8 +1791,32 @@ func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID str
 	for _, sku := range liveSKUs {
 		live := liveProducts[sku]
 		if _, inBaseline := baselineProducts[sku]; !inBaseline {
-			// Item added after baseline: transition status to WITHDRAWN so they no longer appear active
-			if live.Status == domain.StatusActive {
+			if isSyncRevertMode {
+				oldName := live.Name
+				oldPrice := live.Price
+				oldStatus := live.Status
+				oldTime := live.SupplierTimestamp
+
+				delta := domain.ItemDelta{
+					SKU:          sku,
+					Action:       domain.DeltaActionWithdrawn,
+					OldName:      &oldName,
+					NewName:      live.Name,
+					OldPrice:     &oldPrice,
+					NewPrice:     live.Price,
+					OldStatus:    &oldStatus,
+					NewStatus:    domain.StatusWithdrawn,
+					OldTimestamp: &oldTime,
+					NewTimestamp: now,
+				}
+				deltas = append(deltas, delta)
+				summary.Withdrawn++
+
+				if _, err := tx.ExecContext(ctx, "DELETE FROM products WHERE sku = ?;", sku); err != nil {
+					return nil, nil, fmt.Errorf("failed deleting post-baseline product %s during rollback: %w", sku, err)
+				}
+			} else if live.Status == domain.StatusActive {
+				// Item added after baseline: transition status to WITHDRAWN so they no longer appear active
 				oldName := live.Name
 				oldPrice := live.Price
 				oldStatus := live.Status
