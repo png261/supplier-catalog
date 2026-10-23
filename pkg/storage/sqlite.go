@@ -43,6 +43,7 @@ type Storage interface {
 
 	// Catalog & Audit Queries
 	ListJobs(ctx context.Context, limit, offset int) ([]domain.SyncJob, int, error)
+	ListJobsByStatus(ctx context.Context, status string, limit, offset int) ([]domain.SyncJob, int, error)
 	ListProducts(ctx context.Context, status string, search string, limit, offset int) ([]domain.Product, int, error)
 	GetBatchCheckpoints(ctx context.Context, jobID string) ([]domain.BatchCheckpoint, error)
 	GetMetrics(ctx context.Context, filter domain.MetricsFilter) (*domain.AggregatedMetrics, []domain.SyncJob, error)
@@ -143,6 +144,8 @@ func (s *SQLiteStorage) initSchema(ctx context.Context) error {
 	if err := s.MigrateUp(ctx); err != nil {
 		return fmt.Errorf("failed executing migrations: %w", err)
 	}
+	// Ensure job_config column exists on legacy databases created prior to job_config addition.
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE sync_jobs ADD COLUMN job_config TEXT NOT NULL DEFAULT '';`)
 	return nil
 }
 
@@ -230,8 +233,8 @@ func (s *SQLiteStorage) CreateJob(ctx context.Context, job *domain.SyncJob) erro
 	INSERT INTO sync_jobs (
 		job_id, status, total_batches, committed_batch_index,
 		items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
-		created_at, updated_at, completed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		job_config, created_at, updated_at, completed_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	_, err := s.db.ExecContext(ctx, query,
 		job.JobID,
@@ -243,6 +246,7 @@ func (s *SQLiteStorage) CreateJob(ctx context.Context, job *domain.SyncJob) erro
 		job.Summary.Withdrawn,
 		job.Summary.Skipped,
 		job.Summary.DeadLetter,
+		job.JobConfig,
 		job.CreatedAt.UTC().Format(time.RFC3339Nano),
 		job.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		completedAt,
@@ -258,7 +262,7 @@ func (s *SQLiteStorage) GetJob(ctx context.Context, jobID string) (*domain.SyncJ
 	query := `
 	SELECT job_id, status, total_batches, committed_batch_index,
 	       items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
-	       created_at, updated_at, completed_at
+	       job_config, created_at, updated_at, completed_at
 	FROM sync_jobs WHERE job_id = ?;
 	`
 	row := s.db.QueryRowContext(ctx, query, jobID)
@@ -277,6 +281,7 @@ func (s *SQLiteStorage) GetJob(ctx context.Context, jobID string) (*domain.SyncJ
 		&job.Summary.Withdrawn,
 		&job.Summary.Skipped,
 		&job.Summary.DeadLetter,
+		&job.JobConfig,
 		&createdStr,
 		&updatedStr,
 		&completedStr,
@@ -306,7 +311,7 @@ func (s *SQLiteStorage) GetActiveJob(ctx context.Context) (*domain.SyncJob, erro
 	query := `
 	SELECT job_id, status, total_batches, committed_batch_index,
 	       items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
-	       created_at, updated_at, completed_at
+	       job_config, created_at, updated_at, completed_at
 	FROM sync_jobs WHERE status IN ('RUNNING', 'PENDING')
 	ORDER BY created_at DESC LIMIT 1;
 	`
@@ -326,6 +331,7 @@ func (s *SQLiteStorage) GetActiveJob(ctx context.Context) (*domain.SyncJob, erro
 		&job.Summary.Withdrawn,
 		&job.Summary.Skipped,
 		&job.Summary.DeadLetter,
+		&job.JobConfig,
 		&createdStr,
 		&updatedStr,
 		&completedStr,
@@ -542,7 +548,8 @@ func (s *SQLiteStorage) ListDeadLetterRecords(ctx context.Context, jobID string,
 	return records, totalCount, nil
 }
 
-// ResolveDeadLetter atomically upserts a corrected product into catalog and deletes the quarantined dead-letter issue.
+// ResolveDeadLetter atomically upserts a corrected product into catalog and deletes the quarantined dead-letter issue,
+// enforcing Invariant C (Tombstone Preservation) and Invariant B (Temporal Monotonicity).
 func (s *SQLiteStorage) ResolveDeadLetter(ctx context.Context, issueID string, p *domain.Product) error {
 	if s.db == nil {
 		return errors.New("database connection is closed")
@@ -565,6 +572,20 @@ func (s *SQLiteStorage) ResolveDeadLetter(ctx context.Context, issueID string, p
 		return fmt.Errorf("failed to query dead letter issue: %w", err)
 	}
 
+	// Verify Invariant C (Tombstone Preservation) and Invariant B (Temporal Monotonicity) against existing product state
+	existing, err := s.GetProductTx(ctx, tx, p.SKU)
+	if err != nil && !errors.Is(err, domain.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("failed to check existing product %s: %w", p.SKU, err)
+	}
+	if existing != nil {
+		if existing.Status == domain.StatusWithdrawn && p.Status == domain.StatusActive {
+			return domain.ErrResurrectionRestricted
+		}
+		if p.SupplierTimestamp.Before(existing.SupplierTimestamp) || p.SupplierTimestamp.Equal(existing.SupplierTimestamp) {
+			return domain.ErrOutdatedTimestamp
+		}
+	}
+
 	if err := s.UpsertProductTx(ctx, tx, p); err != nil {
 		return fmt.Errorf("failed to upsert corrected product: %w", err)
 	}
@@ -582,6 +603,11 @@ func (s *SQLiteStorage) ResolveDeadLetter(ctx context.Context, issueID string, p
 
 // ListJobs retrieves a paginated list of sync jobs ordered by creation timestamp descending.
 func (s *SQLiteStorage) ListJobs(ctx context.Context, limit, offset int) ([]domain.SyncJob, int, error) {
+	return s.ListJobsByStatus(ctx, "", limit, offset)
+}
+
+// ListJobsByStatus retrieves a paginated list of sync jobs optionally filtered by status.
+func (s *SQLiteStorage) ListJobsByStatus(ctx context.Context, status string, limit, offset int) ([]domain.SyncJob, int, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -592,21 +618,29 @@ func (s *SQLiteStorage) ListJobs(ctx context.Context, limit, offset int) ([]doma
 		offset = 0
 	}
 
+	var whereClause string
+	var countArgs []any
+	if status != "" {
+		whereClause = "WHERE status = ?"
+		countArgs = append(countArgs, status)
+	}
+
 	var total int
-	countQuery := `SELECT count(*) FROM sync_jobs;`
-	if err := s.db.QueryRowContext(ctx, countQuery).Scan(&total); err != nil {
+	countQuery := fmt.Sprintf("SELECT count(*) FROM sync_jobs %s;", whereClause)
+	if err := s.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count sync jobs: %w", err)
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 	SELECT job_id, status, total_batches, committed_batch_index,
 	       items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
-	       created_at, updated_at, completed_at
-	FROM sync_jobs
+	       job_config, created_at, updated_at, completed_at
+	FROM sync_jobs %s
 	ORDER BY created_at DESC
 	LIMIT ? OFFSET ?;
-	`
-	rows, err := s.db.QueryContext(ctx, query, limit, offset)
+	`, whereClause)
+	queryArgs := append(append([]any{}, countArgs...), limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query sync jobs: %w", err)
 	}
@@ -622,7 +656,7 @@ func (s *SQLiteStorage) ListJobs(ctx context.Context, limit, offset int) ([]doma
 			&j.JobID, &statusStr, &j.TotalBatches, &j.CommittedBatchIndex,
 			&j.Summary.Added, &j.Summary.Updated, &j.Summary.Withdrawn,
 			&j.Summary.Skipped, &j.Summary.DeadLetter,
-			&createdStr, &updatedStr, &completedStr,
+			&j.JobConfig, &createdStr, &updatedStr, &completedStr,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan sync job row: %w", err)
 		}

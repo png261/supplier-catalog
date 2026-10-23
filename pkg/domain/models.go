@@ -116,6 +116,7 @@ type SyncJob struct {
 	TotalBatches        int           `json:"total_batches"`
 	CommittedBatchIndex int           `json:"committed_batch_index"` // -1 before first batch
 	Summary             ChangeSummary `json:"summary"`
+	JobConfig           string        `json:"job_config,omitempty"`
 	CreatedAt           time.Time     `json:"created_at"`
 	UpdatedAt           time.Time     `json:"updated_at"`
 	CompletedAt         *time.Time    `json:"completed_at,omitempty"`

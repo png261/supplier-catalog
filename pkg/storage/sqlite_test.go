@@ -1157,6 +1157,66 @@ func TestStorage_ResolveDeadLetter(t *testing.T) {
 		t.Errorf("expected ErrNotFound for non-existent issue, got %v", err)
 	}
 
+	// 2b. Verify Invariant C (Tombstone Preservation) and Invariant B (Temporal Monotonicity) on ResolveDeadLetter
+	tx2, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("failed to begin tx2: %v", err)
+	}
+	withdrawnProd := &domain.Product{
+		SKU:               "SKU-WITHDRAWN-DL",
+		Name:              "Discontinued Item",
+		Price:             19.99,
+		Status:            domain.StatusWithdrawn,
+		SupplierTimestamp: now,
+		UpdatedAt:         now,
+	}
+	if err := s.UpsertProductTx(ctx, tx2, withdrawnProd); err != nil {
+		_ = tx2.Rollback()
+		t.Fatalf("failed upserting withdrawn product: %v", err)
+	}
+	dlIssue2 := &domain.DeadLetterRecord{
+		IssueID:    "issue-invariant-check",
+		JobID:      jobID,
+		BatchIndex: 0,
+		SKU:        "SKU-WITHDRAWN-DL",
+		RawPayload: `{"sku":"SKU-WITHDRAWN-DL","price":-1}`,
+		Reason:     "negative price",
+		CreatedAt:  now,
+	}
+	if err := s.RecordDeadLetterTx(ctx, tx2, dlIssue2); err != nil {
+		_ = tx2.Rollback()
+		t.Fatalf("failed recording dlIssue2: %v", err)
+	}
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("failed committing tx2: %v", err)
+	}
+
+	// Attempting to resolve SKU-WITHDRAWN-DL as ACTIVE must fail with ErrResurrectionRestricted
+	resurrectAttempt := &domain.Product{
+		SKU:               "SKU-WITHDRAWN-DL",
+		Name:              "Resurrected Item",
+		Price:             25.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(time.Hour),
+		UpdatedAt:         now.Add(time.Hour),
+	}
+	if err := s.ResolveDeadLetter(ctx, "issue-invariant-check", resurrectAttempt); !errors.Is(err, domain.ErrResurrectionRestricted) {
+		t.Errorf("expected ErrResurrectionRestricted, got %v", err)
+	}
+
+	// Attempting to resolve SKU-FIXED with an older timestamp must fail with ErrOutdatedTimestamp
+	staleAttempt := &domain.Product{
+		SKU:               "SKU-FIXED",
+		Name:              "Stale Fix",
+		Price:             35.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(-time.Hour),
+		UpdatedAt:         now,
+	}
+	if err := s.ResolveDeadLetter(ctx, "issue-invariant-check", staleAttempt); !errors.Is(err, domain.ErrOutdatedTimestamp) {
+		t.Errorf("expected ErrOutdatedTimestamp, got %v", err)
+	}
+
 	// 3. Resolve with closed DB
 	sClosed, _ := storage.OpenInMemory()
 	_ = sClosed.Close()

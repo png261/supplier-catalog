@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS sync_jobs (
     items_withdrawn INTEGER NOT NULL DEFAULT 0,
     items_skipped INTEGER NOT NULL DEFAULT 0,
     items_dead_letter INTEGER NOT NULL DEFAULT 0,
+    job_config TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT

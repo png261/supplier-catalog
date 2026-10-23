@@ -1370,3 +1370,137 @@ func TestHandler_GetMetrics(t *testing.T) {
 		t.Errorf("expected 500 on closed DB, got %d", wClosed.Code)
 	}
 }
+
+func TestHandler_ResumeJob_AfterServerRestart_PersistedConfig(t *testing.T) {
+	store, eng, broker, _ := setupTestEnv(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Create an INTERRUPTED batches-mode job directly in SQLite (simulating state after crash recovery)
+	batchesSpec := fmt.Sprintf(`{"mode":"batches","batches":[{"job_id":"job-restart-batches","batch_index":0,"records":[{"sku":"SKU-R0","name":"Batch 0 Item","price":10,"status":"ACTIVE","timestamp":"%s"}]},{"job_id":"job-restart-batches","batch_index":1,"records":[{"sku":"SKU-R1","name":"Batch 1 Item","price":20,"status":"ACTIVE","timestamp":"%s"}]}]}`,
+		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+
+	interruptedJob := &domain.SyncJob{
+		JobID:               "job-restart-batches",
+		Status:              domain.JobStatusInterrupted,
+		TotalBatches:        2,
+		CommittedBatchIndex: 0, // Batch 0 already committed before crash
+		JobConfig:           batchesSpec,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	if err := store.CreateJob(ctx, interruptedJob); err != nil {
+		t.Fatalf("failed creating interrupted job: %v", err)
+	}
+
+	// Create a brand-new Handler instance (empty in-memory activeConfigs, simulating process restart)
+	restartedHandler := NewHandler(store, eng, broker)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/job-restart-batches/resume", nil)
+	req.SetPathValue("id", "job-restart-batches")
+	rec := httptest.NewRecorder()
+	restartedHandler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 Accepted when resuming after restart, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Wait for batch 1 to commit
+	time.Sleep(150 * time.Millisecond)
+
+	p1, err := store.GetProduct(ctx, "SKU-R1")
+	if err != nil {
+		t.Fatalf("expected SKU-R1 from batch 1 to be committed after resume: %v", err)
+	}
+	if p1.Price != 20 {
+		t.Errorf("expected price 20, got %f", p1.Price)
+	}
+
+	finalJob, err := store.GetJob(ctx, "job-restart-batches")
+	if err != nil {
+		t.Fatalf("failed fetching job: %v", err)
+	}
+	if finalJob.Status != domain.JobStatusCompleted || finalJob.CommittedBatchIndex != 1 {
+		t.Errorf("expected COMPLETED at batch index 1, got status=%s index=%d", finalJob.Status, finalJob.CommittedBatchIndex)
+	}
+}
+
+func TestHandler_ListJobs_StatusFilterSQLPagination(t *testing.T) {
+	store, _, _, handler := setupTestEnv(t)
+	ctx := context.Background()
+	baseTime := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+
+	// Insert 1 oldest INTERRUPTED job followed by 25 newer COMPLETED jobs
+	oldInterrupted := &domain.SyncJob{
+		JobID:        "job-oldest-interrupted",
+		Status:       domain.JobStatusInterrupted,
+		TotalBatches: 5,
+		CreatedAt:    baseTime,
+		UpdatedAt:    baseTime,
+	}
+	_ = store.CreateJob(ctx, oldInterrupted)
+
+	for i := 1; i <= 25; i++ {
+		ts := baseTime.Add(time.Duration(i) * time.Minute)
+		_ = store.CreateJob(ctx, &domain.SyncJob{
+			JobID:        fmt.Sprintf("job-newer-completed-%02d", i),
+			Status:       domain.JobStatusCompleted,
+			TotalBatches: 5,
+			CreatedAt:    ts,
+			UpdatedAt:    ts,
+		})
+	}
+
+	// Request first page of INTERRUPTED jobs with limit=10 (beyond first 20 rows overall)
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs?status=INTERRUPTED&limit=10&offset=0", nil)
+	rec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	var resp JobListResponse
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp.Total != 1 || len(resp.Jobs) != 1 {
+		t.Fatalf("expected 1 interrupted job via SQL filter, got total=%d len=%d", resp.Total, len(resp.Jobs))
+	}
+	if resp.Jobs[0].JobID != "job-oldest-interrupted" {
+		t.Errorf("expected job-oldest-interrupted, got %s", resp.Jobs[0].JobID)
+	}
+}
+
+func TestHandler_ResolveDeadLetter_InvariantConflict(t *testing.T) {
+	store, _, _, handler := setupTestEnv(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	tx, _ := store.BeginTx(ctx)
+	_ = store.UpsertProductTx(ctx, tx, &domain.Product{
+		SKU:               "SKU-TOMBSTONE-API",
+		Name:              "Withdrawn Item",
+		Price:             10.0,
+		Status:            domain.StatusWithdrawn,
+		SupplierTimestamp: now,
+		UpdatedAt:         now,
+	})
+	_ = store.RecordDeadLetterTx(ctx, tx, &domain.DeadLetterRecord{
+		IssueID:    "dl-tombstone-api",
+		JobID:      "job-1",
+		BatchIndex: 0,
+		SKU:        "SKU-TOMBSTONE-API",
+		RawPayload: `{}`,
+		Reason:     "negative price",
+		CreatedAt:  now,
+	})
+	_ = tx.Commit()
+
+	body := fmt.Sprintf(`{"sku":"SKU-TOMBSTONE-API","name":"Resurrected","price":15.0,"status":"ACTIVE","timestamp":"%s"}`, now.Add(time.Hour).Format(time.RFC3339))
+	req := httptest.NewRequest(http.MethodPost, "/api/dead-letter/dl-tombstone-api/resolve", bytes.NewBufferString(body))
+	req.SetPathValue("id", "dl-tombstone-api")
+	rec := httptest.NewRecorder()
+	handler.handleResolveDeadLetter(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict when attempting to resurrect withdrawn product via DLQ resolve, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

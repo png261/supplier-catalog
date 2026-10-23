@@ -427,12 +427,27 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Atomically create initial job state in storage while holding lock
 	now := time.Now().UTC()
+	type persistedJobSpec struct {
+		Mode            string            `json:"mode"`
+		GeneratorConfig *generator.Config `json:"generator_config,omitempty"`
+		Batches         []domain.Batch    `json:"batches,omitempty"`
+	}
+	spec := persistedJobSpec{Mode: req.Mode}
+	if req.Mode == "batches" {
+		spec.Batches = directBatches
+	} else {
+		cfgCopy := cfg
+		spec.GeneratorConfig = &cfgCopy
+	}
+	specBytes, _ := json.Marshal(spec)
+
 	job := &domain.SyncJob{
 		JobID:               jobID,
 		Status:              domain.JobStatusRunning,
 		TotalBatches:        totalBatches,
 		CommittedBatchIndex: -1,
 		Summary:             domain.ChangeSummary{},
+		JobConfig:           string(specBytes),
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
@@ -627,26 +642,50 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Resolve and validate generator config for resumption
+	// 3. Resolve and validate generator/batches config for resumption (including across process restarts)
+	var resumeBatches []domain.Batch
+	resumeMode := "generator"
 	cfg, ok := tenant.GetActiveConfig(jobID)
 	if !ok {
 		cfg = generator.DefaultConfig()
 		cfg.TotalBatches = job.TotalBatches
+		if job.JobConfig != "" {
+			var persisted struct {
+				Mode            string            `json:"mode"`
+				GeneratorConfig *generator.Config `json:"generator_config,omitempty"`
+				Batches         []domain.Batch    `json:"batches,omitempty"`
+			}
+			if err := json.Unmarshal([]byte(job.JobConfig), &persisted); err == nil {
+				if persisted.Mode == "batches" && len(persisted.Batches) > 0 {
+					resumeMode = "batches"
+					resumeBatches = persisted.Batches
+				} else if persisted.GeneratorConfig != nil {
+					cfg = *persisted.GeneratorConfig
+				}
+			}
+		}
 	}
-	if resumeReq.Seed != nil {
-		cfg.Seed = *resumeReq.Seed
-	}
-	if resumeReq.TotalBatches != nil {
-		cfg.TotalBatches = *resumeReq.TotalBatches
-	}
-	if resumeReq.BatchSize != nil {
-		cfg.BatchSize = *resumeReq.BatchSize
+	if resumeMode == "generator" {
+		if resumeReq.Seed != nil {
+			cfg.Seed = *resumeReq.Seed
+		}
+		if resumeReq.TotalBatches != nil {
+			cfg.TotalBatches = *resumeReq.TotalBatches
+		}
+		if resumeReq.BatchSize != nil {
+			cfg.BatchSize = *resumeReq.BatchSize
+		}
+
+		if err := cfg.Validate(); err != nil {
+			tenant.Unlock()
+			h.writeError(w, http.StatusBadRequest, "invalid resume config: "+err.Error(), ErrCodeInvalidRequest)
+			return
+		}
 	}
 
-	if err := cfg.Validate(); err != nil {
-		tenant.Unlock()
-		h.writeError(w, http.StatusBadRequest, "invalid resume config: "+err.Error(), ErrCodeInvalidRequest)
-		return
+	resumedTotalBatches := cfg.TotalBatches
+	if resumeMode == "batches" {
+		resumedTotalBatches = len(resumeBatches)
 	}
 
 	// 4. CRITICAL: Atomically transition job status to RUNNING in storage while holding lock
@@ -660,7 +699,9 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	bgCtx, cancel := context.WithCancel(context.Background())
 	tenant.SetActiveJobID(jobID)
 	tenant.SetActiveCancel(cancel)
-	tenant.SetActiveConfig(jobID, cfg)
+	if resumeMode == "generator" {
+		tenant.SetActiveConfig(jobID, cfg)
+	}
 	tenant.Unlock()
 
 	// 6. Respond 202 Accepted
@@ -668,7 +709,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusAccepted, SyncJobResponse{
 		JobID:               job.JobID,
 		Status:              domain.JobStatusRunning,
-		TotalBatches:        cfg.TotalBatches,
+		TotalBatches:        resumedTotalBatches,
 		CommittedBatchIndex: job.CommittedBatchIndex,
 		Summary:             job.Summary,
 		CreatedAt:           job.CreatedAt,
@@ -683,7 +724,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 			"job_id":             jobID,
 			"status":             string(domain.JobStatusRunning),
 			"resumed_from_batch": job.CommittedBatchIndex + 1,
-			"total_batches":      cfg.TotalBatches,
+			"total_batches":      resumedTotalBatches,
 			"timestamp":          now,
 		},
 	})
@@ -700,11 +741,21 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 			tenant.Unlock()
 		}()
 
-		gen, err := generator.New(cfg)
-		if err != nil {
-			return
+		var stream <-chan domain.Batch
+		if resumeMode == "batches" {
+			ch := make(chan domain.Batch, len(resumeBatches))
+			for _, b := range resumeBatches {
+				ch <- b
+			}
+			close(ch)
+			stream = ch
+		} else {
+			gen, err := generator.New(cfg)
+			if err != nil {
+				return
+			}
+			stream = gen.StreamBatches(bgCtx, jobID)
 		}
-		stream := gen.StreamBatches(bgCtx, jobID)
 
 		finalJob, err := tenant.GetEngine().ResumeJob(bgCtx, jobID, stream)
 		if err != nil {
@@ -721,7 +772,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 					"job_id":                jobID,
 					"status":                string(domain.JobStatusInterrupted),
 					"committed_batch_index": committedIdx,
-					"total_batches":         cfg.TotalBatches,
+					"total_batches":         resumedTotalBatches,
 					"summary":               sum,
 					"reason":                err.Error(),
 				},
@@ -802,21 +853,10 @@ func (h *Handler) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	jobs, total, err := tenant.GetStorage().ListJobs(ctx, limit, offset)
+	jobs, total, err := tenant.GetStorage().ListJobsByStatus(ctx, statusFilter, limit, offset)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "failed to query sync jobs: "+err.Error(), ErrCodeInternalError)
 		return
-	}
-
-	if statusFilter != "" {
-		filtered := make([]domain.SyncJob, 0)
-		for _, j := range jobs {
-			if string(j.Status) == statusFilter {
-				filtered = append(filtered, j)
-			}
-		}
-		jobs = filtered
-		total = len(filtered)
 	}
 
 	if jobs == nil {
@@ -1032,6 +1072,10 @@ func (h *Handler) handleResolveDeadLetter(w http.ResponseWriter, r *http.Request
 	if err := tenant.GetStorage().ResolveDeadLetter(ctx, issueID, prod); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "dead letter issue not found", ErrCodeNotFound)
+			return
+		}
+		if errors.Is(err, domain.ErrResurrectionRestricted) || errors.Is(err, domain.ErrOutdatedTimestamp) {
+			h.writeError(w, http.StatusConflict, err.Error(), ErrCodeCommitBlocked)
 			return
 		}
 		h.writeError(w, http.StatusInternalServerError, "failed to resolve dead letter record: "+err.Error(), ErrCodeInternalError)
