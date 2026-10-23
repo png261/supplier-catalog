@@ -58,7 +58,7 @@ $WRANGLER_CMD deploy
 echo ""
 echo "🌐 Step 3/3: Building and deploying Cloudflare Pages (Frontend SPA)..."
 npm --prefix frontend run build:pages
-$WRANGLER_CMD pages deploy frontend/dist --project-name supplier-catalog-frontend || true
+$WRANGLER_CMD pages deploy frontend/dist --project-name supplier-catalog-frontend --branch main || true
 
 echo ""
 echo "=========================================================="

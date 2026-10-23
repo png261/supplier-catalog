@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -962,6 +963,14 @@ func (s *SQLiteStorage) RecordSyncBatchVersionTx(ctx context.Context, tx *sql.Tx
 	versionID := strings.TrimSpace(job.JobID)
 	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
 	desc := fmt.Sprintf("Supplier Catalog Sync (%s)", versionID)
+	if strings.TrimSpace(job.JobConfig) != "" {
+		var cfgMeta struct {
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal([]byte(job.JobConfig), &cfgMeta); err == nil && strings.TrimSpace(cfgMeta.Description) != "" {
+			desc = strings.TrimSpace(cfgMeta.Description)
+		}
+	}
 	metadata := fmt.Sprintf(`{"job_id":%q}`, versionID)
 	affected := len(deltas)
 
@@ -1236,6 +1245,16 @@ func (s *SQLiteStorage) GetVersion(ctx context.Context, versionID string) (*doma
 	ver, err := scanVersionRow(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			if strings.TrimSpace(versionID) == "v0" {
+				return &domain.CatalogVersion{
+					VersionID:     "v0",
+					VersionNumber: 0,
+					Description:   "Initial Pre-Sync Baseline (Empty Catalog)",
+					Author:        "system",
+					Type:          domain.VersionTypeInitial,
+					CreatedAt:     time.Unix(0, 0).UTC(),
+				}, nil
+			}
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get version %s: %w", versionID, err)
@@ -1428,6 +1447,9 @@ func (s *SQLiteStorage) GetBaselineStateAtVersionTx(ctx context.Context, tx *sql
 }
 
 func (s *SQLiteStorage) getBaselineStateAtVersion(ctx context.Context, q querier, versionID string) (map[string]domain.Product, error) {
+	if strings.TrimSpace(versionID) == "v0" {
+		return make(map[string]domain.Product), nil
+	}
 	var targetVersionNumber int
 	err := q.QueryRowContext(ctx, "SELECT version_number FROM catalog_versions WHERE version_id = ?;", versionID).Scan(&targetVersionNumber)
 	if err != nil {
@@ -1500,14 +1522,24 @@ func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID str
 	}
 	defer tx.Rollback()
 
-	// 1. Verify target version exists in catalog_versions
+	// 1. Verify target version exists in catalog_versions (or materialize v0 initial pre-sync baseline)
 	var targetVersionNumber int
-	err = tx.QueryRowContext(ctx, "SELECT version_number FROM catalog_versions WHERE version_id = ?;", targetVersionID).Scan(&targetVersionNumber)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, domain.ErrNotFound
+	if strings.TrimSpace(targetVersionID) == "v0" {
+		targetVersionID = "v0"
+		targetVersionNumber = 0
+		_, _ = tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO catalog_versions (
+				version_id, version_number, description, author, type, created_at
+			) VALUES ('v0', 0, 'Initial Pre-Sync Baseline (Empty Catalog)', 'system', 'INITIAL', '1970-01-01T00:00:00Z');
+		`)
+	} else {
+		err = tx.QueryRowContext(ctx, "SELECT version_number FROM catalog_versions WHERE version_id = ?;", targetVersionID).Scan(&targetVersionNumber)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, nil, domain.ErrNotFound
+			}
+			return nil, nil, fmt.Errorf("failed querying target version %s: %w", targetVersionID, err)
 		}
-		return nil, nil, fmt.Errorf("failed querying target version %s: %w", targetVersionID, err)
 	}
 
 	// 2. Retrieve baseline products at targetVersionID

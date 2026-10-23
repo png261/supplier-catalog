@@ -25,9 +25,10 @@ interface VersionDiffModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   version: CatalogVersion | null;
+  previousVersion?: CatalogVersion | null;
   changes: VersionDiffItem[];
   isLoading: boolean;
-  onRollbackClick?: (version: CatalogVersion) => void;
+  onRollbackClick?: (targetVersion: CatalogVersion, undoneVersion?: CatalogVersion) => void;
   isCurrentVersion?: boolean;
 }
 
@@ -35,6 +36,7 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
   isOpen,
   onOpenChange,
   version,
+  previousVersion = null,
   changes,
   isLoading,
   onRollbackClick,
@@ -223,6 +225,19 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
                 className="bg-amber-600 hover:bg-amber-700 text-white font-medium"
               >
                 Revert to Version v{version.version_number}
+              </Button>
+            )}
+            {isCurrentVersion && previousVersion && onRollbackClick && version.revert_of_version_id !== 'v0' && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  onOpenChange(false);
+                  onRollbackClick(previousVersion, version);
+                }}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-medium"
+              >
+                Revert Before v{version.version_number} (to v{previousVersion.version_number})
               </Button>
             )}
           </div>

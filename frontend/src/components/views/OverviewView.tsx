@@ -26,6 +26,8 @@ interface OverviewViewProps {
   syncedUpdateIds: string[];
   activeSyncingUpdateId: string | null;
   onSyncUpdate: (update: CatalogUpdate) => void;
+  onRevertUpdate?: (update: CatalogUpdate) => void;
+  isRollingBack?: boolean;
   analyticsRange: string;
   analyticsFrom: string;
   analyticsTo: string;
@@ -74,6 +76,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   syncedUpdateIds,
   activeSyncingUpdateId,
   onSyncUpdate,
+  onRevertUpdate,
+  isRollingBack = false,
   analyticsRange,
   analyticsFrom,
   analyticsTo,
@@ -102,6 +106,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         interruptedJob={interruptedJob}
         isAnySyncing={Boolean(isSyncing)}
         onSync={onSyncUpdate}
+        onRevert={onRevertUpdate}
+        isRollingBack={isRollingBack}
         currentBatch={currentBatch}
         totalBatches={totalBatches}
         throughput={throughput}

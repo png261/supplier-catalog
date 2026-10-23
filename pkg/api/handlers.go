@@ -472,10 +472,11 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	type persistedJobSpec struct {
 		Mode            string            `json:"mode"`
+		Description     string            `json:"description,omitempty"`
 		GeneratorConfig *generator.Config `json:"generator_config,omitempty"`
 		Batches         []domain.Batch    `json:"batches,omitempty"`
 	}
-	spec := persistedJobSpec{Mode: req.Mode}
+	spec := persistedJobSpec{Mode: req.Mode, Description: strings.TrimSpace(req.Description)}
 	if req.Mode == "batches" {
 		spec.Batches = directBatches
 	} else {
