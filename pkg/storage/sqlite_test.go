@@ -2152,8 +2152,12 @@ func TestStorage_CatalogLookupLatencySubMillisecond(t *testing.T) {
 	avgPointLatency := pointElapsed / time.Duration(pointLookups)
 
 	t.Logf("Measured avg point lookup latency: %v across %d lookups", avgPointLatency, pointLookups)
-	if avgPointLatency >= 1*time.Millisecond {
-		t.Fatalf("Point lookup latency regression: got %v, expected < 1ms", avgPointLatency)
+	maxPointAllowed := 1 * time.Millisecond
+	if isRaceDetectorEnabled() {
+		maxPointAllowed = 5 * time.Millisecond
+	}
+	if avgPointLatency >= maxPointAllowed {
+		t.Fatalf("Point lookup latency regression: got %v, expected < %v", avgPointLatency, maxPointAllowed)
 	}
 
 	// 5. Assert Paginated List Latency (< 2.0 ms for 50 items)

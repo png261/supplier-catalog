@@ -53,7 +53,7 @@ interface OverviewViewProps {
   onJobSelect: (jobId: string) => void;
   onRefreshAnalytics: () => void;
   onMetricCardClick: (category: 'added' | 'updated' | 'withdrawn' | 'skipped' | 'dead_letter') => void;
-  onNavigateToTab: (tab: 'catalog' | 'attention' | 'history' | 'versions') => void;
+  onNavigateToTab: (tab: 'catalog' | 'attention' | 'history') => void;
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({
@@ -165,10 +165,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => onNavigateToTab('versions')}
+                onClick={() => onNavigateToTab('history')}
                 className="h-7 px-2.5 text-xs font-semibold border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50 shrink-0 shadow-none"
               >
-                Inspect Versions
+                History & Versions
                 <ArrowRight className="h-3 w-3 ml-1" />
               </Button>
             </div>

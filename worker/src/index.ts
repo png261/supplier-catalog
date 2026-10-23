@@ -72,13 +72,20 @@ app.post('/api/jobs', async (c) => {
   const storage = new D1Storage(c.env.DB);
   const engine = new SyncEngine(c.env.DB, storage);
 
-  // Check running job
-  const existingActive = await storage.getActiveJob(shopId);
+  // Check running job (recover orphaned/zombie jobs stuck in RUNNING > 15s)
+  let existingActive = await storage.getActiveJob(shopId);
   if (existingActive) {
-    return c.json(
-      { error: `a synchronization job is already running: ${existingActive.job_id}`, code: 'JOB_CONFLICT' },
-      409
-    );
+    const updatedMs = new Date(existingActive.updated_at).getTime();
+    const isOrphaned = activeJobs.get(shopId) !== existingActive.job_id && (isNaN(updatedMs) || Date.now() - updatedMs > 15000);
+    if (isOrphaned) {
+      await storage.updateJobStatus(shopId, existingActive.job_id, 'INTERRUPTED');
+      existingActive = null;
+    } else {
+      return c.json(
+        { error: `a synchronization job is already running: ${existingActive.job_id}`, code: 'JOB_CONFLICT' },
+        409
+      );
+    }
   }
 
   let body: any = {};
@@ -219,7 +226,7 @@ app.post('/api/jobs', async (c) => {
           }
 
           // Execute batch inside atomic D1 transaction
-          const delta = await engine.executeBatch(shopId, batch, cumulativeSummary);
+          const delta = await engine.executeBatch(shopId, batch, cumulativeSummary, body.description || '');
           cumulativeSummary.added += delta.added;
           cumulativeSummary.updated += delta.updated;
           cumulativeSummary.withdrawn += delta.withdrawn;
@@ -286,9 +293,16 @@ app.post('/api/jobs/:id/resume', async (c) => {
   const storage = new D1Storage(c.env.DB);
   const engine = new SyncEngine(c.env.DB, storage);
 
-  const existingActive = await storage.getActiveJob(shopId);
+  let existingActive = await storage.getActiveJob(shopId);
   if (existingActive) {
-    return c.json({ error: `job ${existingActive.job_id} is already running`, code: 'JOB_CONFLICT' }, 409);
+    const updatedMs = new Date(existingActive.updated_at).getTime();
+    const isOrphaned = activeJobs.get(shopId) !== existingActive.job_id && (isNaN(updatedMs) || Date.now() - updatedMs > 15000);
+    if (isOrphaned) {
+      await storage.updateJobStatus(shopId, existingActive.job_id, 'INTERRUPTED');
+      existingActive = null;
+    } else {
+      return c.json({ error: `job ${existingActive.job_id} is already running`, code: 'JOB_CONFLICT' }, 409);
+    }
   }
 
   const job = await storage.getJob(shopId, jobId);
@@ -300,7 +314,11 @@ app.post('/api/jobs/:id/resume', async (c) => {
     return c.json({ error: 'job is already completed and cannot be resumed', code: 'JOB_CONFLICT' }, 409);
   }
   if (job.status === 'RUNNING') {
-    return c.json({ error: `job ${jobId} is already running`, code: 'JOB_CONFLICT' }, 409);
+    const updatedMs = new Date(job.updated_at).getTime();
+    const isOrphaned = activeJobs.get(shopId) !== jobId && (isNaN(updatedMs) || Date.now() - updatedMs > 15000);
+    if (!isOrphaned) {
+      return c.json({ error: `job ${jobId} is already running`, code: 'JOB_CONFLICT' }, 409);
+    }
   }
 
   let body: any = {};
@@ -310,6 +328,18 @@ app.post('/api/jobs/:id/resume', async (c) => {
 
   const startBatchIndex = job.committed_batch_index + 1;
   const totalBatches = body.total_batches ?? job.total_batches;
+
+  let baseTime = body.base_time;
+  const maxTs = await storage.getMaxSupplierTimestamp(shopId);
+  if (maxTs) {
+    const maxDate = new Date(maxTs).getTime();
+    const reqDate = baseTime ? new Date(baseTime).getTime() : 0;
+    if (!baseTime || isNaN(reqDate) || reqDate <= maxDate) {
+      baseTime = new Date(maxDate + 86400000).toISOString();
+    }
+  } else if (!baseTime) {
+    baseTime = '2026-01-01T00:00:00.000Z';
+  }
 
   await storage.updateJobStatus(shopId, jobId, 'RUNNING');
   activeJobs.set(shopId, jobId);
@@ -333,6 +363,12 @@ app.post('/api/jobs/:id/resume', async (c) => {
           seed: body.seed ?? 42,
           total_batches: totalBatches,
           batch_size: body.batch_size ?? 100,
+          update_ratio: body.update_ratio ?? 0.20,
+          duplicate_ratio: body.duplicate_ratio ?? 0.05,
+          out_of_order_ratio: body.out_of_order_ratio ?? 0.10,
+          withdrawn_ratio: body.withdrawn_ratio ?? 0.05,
+          invalid_ratio: body.invalid_ratio ?? 0.05,
+          base_time: baseTime,
         });
 
         // Fast-forward generator state to startBatchIndex
@@ -654,7 +690,7 @@ app.post('/api/versions/:id/rollback', async (c) => {
     body = {};
   }
 
-  const operator = body.operator || 'staff';
+  const operator = body.operator || body.author || 'staff';
   const description = body.description || '';
 
   try {

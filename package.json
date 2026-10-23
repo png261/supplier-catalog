@@ -4,9 +4,13 @@
   "description": "Resilient, Minimalist Catalog Synchronization Engine in Go",
   "private": true,
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:e2e": "playwright test",
+    "test:api": "playwright test tests/playwright/api.spec.ts",
+    "test:ui": "playwright test tests/playwright/ui.spec.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "husky": "^9.1.7"
   }
 }

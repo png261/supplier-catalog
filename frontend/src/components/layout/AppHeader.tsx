@@ -46,12 +46,8 @@ const TAB_METADATA: Record<NavItemKey, { title: string; subtitle: string }> = {
     subtitle: "Review and remediate malformed or invalid supplier records",
   },
   history: {
-    title: "Sync Run Audit History",
-    subtitle: "Session logs, batch checkpoints, and crash recovery controls",
-  },
-  versions: {
-    title: "Catalog Versions & Rollback",
-    subtitle: "Milestone journaling, SKU pre-image diffs, and atomic Git-revert",
+    title: "Sync History & Version Control",
+    subtitle: "Unified session audit logs, batch checkpoints, SKU pre-image diffs, and atomic Git-revert",
   },
 };
 

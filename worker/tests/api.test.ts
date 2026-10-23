@@ -198,4 +198,156 @@ describe('Cloudflare Worker REST API', () => {
     expect(prodData.products[0].price).toBe(100.0);
     expect(prodData.products[0].name).toBe('Widget v1');
   });
+
+  it('GET / returns API metadata and GET /api/events returns SSE stream', async () => {
+    const rootRes = await makeRequest('/');
+    expect(rootRes.status).toBe(200);
+    const rootData = await rootRes.json();
+    expect(rootData.version).toBe('1.0.0');
+
+    const sseRes = await makeRequest('/api/events?shop=test-shop');
+    expect(sseRes.status).toBe(200);
+    expect(sseRes.headers.get('Content-Type')).toContain('text/event-stream');
+  });
+
+  it('Validates POST /api/jobs payloads and supports generator mode, cancel, resume, and job listing', async () => {
+    // Invalid mode
+    const badMode = await makeRequest('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'invalid-mode' }),
+    });
+    expect(badMode.status).toBe(400);
+
+    // Empty batches in batches mode
+    const emptyBatches = await makeRequest('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'batches', batches: [] }),
+    });
+    expect(emptyBatches.status).toBe(400);
+
+    // Invalid ratio > 1.0
+    const badRatio = await makeRequest('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'generator', update_ratio: 1.5 }),
+    });
+    expect(badRatio.status).toBe(400);
+
+    // Sum of ratios > 1.0
+    const badSum = await makeRequest('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'generator', update_ratio: 0.6, duplicate_ratio: 0.6 }),
+    });
+    expect(badSum.status).toBe(400);
+
+    // Seed an interrupted job to test cancel & resume
+    await mockDB.exec(`
+      INSERT INTO sync_jobs (
+        shop_id, job_id, status, total_batches, committed_batch_index,
+        items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
+        created_at, updated_at
+      ) VALUES (
+        'default', 'job-interrupted-1', 'INTERRUPTED', 2, 0,
+        5, 0, 0, 0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+      );
+    `);
+
+    const listJobsRes = await makeRequest('/api/jobs?status=INTERRUPTED');
+    expect(listJobsRes.status).toBe(200);
+    const listJobsData = await listJobsRes.json();
+    expect(listJobsData.total).toBe(1);
+    expect(listJobsData.jobs[0].job_id).toBe('job-interrupted-1');
+
+    const getJobRes = await makeRequest('/api/jobs/job-interrupted-1');
+    expect(getJobRes.status).toBe(200);
+    const getJobData = await getJobRes.json();
+    expect(getJobData.job.job_id).toBe('job-interrupted-1');
+
+    const missingJobRes = await makeRequest('/api/jobs/non-existent-job');
+    expect(missingJobRes.status).toBe(404);
+
+    // Resume interrupted job
+    const resumeRes = await makeRequest('/api/jobs/job-interrupted-1/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seed: 42, total_batches: 2, batch_size: 5 }),
+    });
+    expect(resumeRes.status).toBe(202);
+
+    // Cancel job
+    const cancelRes = await makeRequest('/api/jobs/job-interrupted-1/cancel', { method: 'POST' });
+    expect(cancelRes.status).toBe(200);
+  });
+
+  it('Filters dead-letter records by UI reason codes and validates resolve payloads', async () => {
+    await mockDB.exec(`
+      INSERT INTO dead_letter_issues (shop_id, issue_id, job_id, batch_index, sku, raw_payload, reason, created_at)
+      VALUES
+        ('default', 'dl-e1', 'job-1', 0, '', '{}', 'sku cannot be empty', '2026-01-01T00:00:00Z'),
+        ('default', 'dl-e2', 'job-1', 0, 'S2', '{}', 'price cannot be negative', '2026-01-01T00:00:00Z'),
+        ('default', 'dl-e3', 'job-1', 0, 'S3', '{}', 'timestamp must not be zero', '2026-01-01T00:00:00Z'),
+        ('default', 'dl-e4', 'job-1', 0, 'S4', '{}', 'status must be ACTIVE or WITHDRAWN', '2026-01-01T00:00:00Z');
+    `);
+
+    for (const code of ['EMPTY_SKU', 'NEGATIVE_OR_ZERO_PRICE', 'ZERO_OR_MISSING_TIMESTAMP', 'CORRUPTED_JSON']) {
+      const res = await makeRequest(`/api/dead-letter?reason=${code}`);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.total).toBe(1);
+    }
+
+    // Validation errors on resolve
+    const badSku = await makeRequest('/api/dead-letter/dl-e1/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ sku: '', price: 10, status: 'ACTIVE' }),
+    });
+    expect(badSku.status).toBe(400);
+
+    const badPrice = await makeRequest('/api/dead-letter/dl-e1/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ sku: 'S1', price: -5, status: 'ACTIVE' }),
+    });
+    expect(badPrice.status).toBe(400);
+
+    const badStatus = await makeRequest('/api/dead-letter/dl-e1/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ sku: 'S1', price: 10, status: 'INVALID' }),
+    });
+    expect(badStatus.status).toBe(400);
+
+    const notFound = await makeRequest('/api/dead-letter/dl-missing/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ sku: 'S1', price: 10, status: 'ACTIVE' }),
+    });
+    expect(notFound.status).toBe(404);
+  });
+
+  it('Supports GET /api/metrics time_range filters (today, yesterday, 7d, all, job_id)', async () => {
+    const nowIso = new Date().toISOString();
+    await mockDB.exec(`
+      INSERT INTO sync_jobs (
+        shop_id, job_id, status, total_batches, committed_batch_index,
+        items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
+        created_at, updated_at, completed_at
+      ) VALUES (
+        'default', 'job-metrics-1', 'COMPLETED', 1, 0,
+        10, 2, 1, 3, 1, '${nowIso}', '${nowIso}', '${nowIso}'
+      );
+    `);
+
+    for (const range of ['today', 'yesterday', '7d', 'all']) {
+      const res = await makeRequest(`/api/metrics?time_range=${range}`);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.filter.time_range).toBe(range);
+    }
+
+    const jobFilterRes = await makeRequest('/api/metrics?job_id=job-metrics-1');
+    expect(jobFilterRes.status).toBe(200);
+    const jobFilterData = await jobFilterRes.json();
+    expect(jobFilterData.metrics.total_processed).toBe(17);
+  });
 });

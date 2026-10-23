@@ -19,6 +19,8 @@ frontend/dist/
 coverage.out
 coverage.html
 *.cov
+test-results/
+playwright-report/
 
 # SQLite database files, WAL logs, and persistent state
 *.db

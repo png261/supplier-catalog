@@ -37,7 +37,7 @@ interface MetricDrilldownModalProps {
   dlqIssues: DeadLetterIssue[];
   onRemediateIssue?: (issue: DeadLetterIssue) => void;
   onNavigateToCatalog?: (statusFilter: string) => void;
-  onNavigateToTab?: (tab: 'catalog' | 'attention' | 'history' | 'versions') => void;
+  onNavigateToTab?: (tab: 'catalog' | 'attention' | 'history') => void;
 }
 
 export const MetricDrilldownModal: React.FC<MetricDrilldownModalProps> = ({
