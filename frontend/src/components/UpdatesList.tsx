@@ -164,9 +164,6 @@ export const UpdatesList: React.FC<UpdatesListProps> = ({
               <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-xs text-slate-500 font-semibold bg-slate-100 px-1.5 py-0.5 rounded">
-                      {update.version}
-                    </span>
                     <span className="text-xs font-semibold text-slate-900 hover:text-indigo-700 transition-colors">
                       {update.title}
                     </span>
@@ -215,7 +212,7 @@ export const UpdatesList: React.FC<UpdatesListProps> = ({
                       size="sm"
                       onClick={() => onInspectUpdate(update)}
                       className="h-7 px-2 text-xs text-indigo-700 border-indigo-200 bg-indigo-50/40 hover:bg-indigo-100/70 hover:text-indigo-900 font-medium shadow-none"
-                      title={`View row-by-row diff for ${update.version} (${update.title})`}
+                      title={`View row-by-row diff for ${update.title}`}
                     >
                       <Eye className="h-3 w-3 mr-1" />
                       Diff
@@ -243,7 +240,7 @@ export const UpdatesList: React.FC<UpdatesListProps> = ({
                           onClick={() => onRevert(update)}
                           disabled={isAnySyncing || isRollingBack}
                           className="h-7 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 hover:text-amber-800 font-medium shadow-none"
-                          title={`Revert ${update.version} (${update.title})`}
+                          title={`Revert ${update.title}`}
                         >
                           <RotateCcw className="h-3 w-3 mr-1" />
                           Revert

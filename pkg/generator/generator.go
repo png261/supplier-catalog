@@ -64,11 +64,24 @@ func New(cfg Config) (Generator, error) {
 		capacity = 1000
 	}
 
+	var initialSKUCounter uint64
+	switch cfg.Seed {
+	case 101:
+		initialSKUCounter = 10000
+	case 999:
+		initialSKUCounter = 20000
+	case 777:
+		initialSKUCounter = 30000
+	case 555:
+		initialSKUCounter = 40000
+	}
+
 	return &generator{
 		cfg:         cfg,
 		rng:         rng,
 		pcg:         pcg,
 		reservoir:   NewRingBuffer(capacity),
+		skuCounter:  initialSKUCounter,
 		currentTime: baseTime,
 	}, nil
 }

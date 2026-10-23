@@ -309,11 +309,15 @@ export async function fetchVersionDiff(versionId: string): Promise<VersionDiffRe
   };
 }
 
-export async function rollbackVersion(versionId: string, operator = 'staff'): Promise<{ status: string; version: CatalogVersion }> {
+export async function rollbackVersion(
+  versionId: string,
+  operator = 'staff',
+  description?: string
+): Promise<{ status: string; version: CatalogVersion }> {
   const res = await shopFetch(`/api/versions/${encodeURIComponent(versionId)}/rollback`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ operator, author: operator }),
+    body: JSON.stringify({ operator, author: operator, ...(description ? { description } : {}) }),
   });
   const data = await handleResponse<any>(res, 'Failed to rollback version');
   return {

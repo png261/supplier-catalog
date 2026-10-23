@@ -209,7 +209,7 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
                 <DialogTitle className="text-base sm:text-lg font-semibold text-slate-900 flex items-center gap-2 flex-wrap">
                   <span>
                     {previewUpdate
-                      ? `${previewUpdate.version} — ${previewUpdate.title}`
+                      ? previewUpdate.title
                       : version.version_number > 0
                       ? `Version v${version.version_number} Row-Level Diff`
                       : `Session ${version.version_id} Row-Level Diff`}
@@ -541,7 +541,7 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
                 className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs"
               >
                 <Play className="h-3 w-3 mr-1.5 fill-white" />
-                Sync {previewUpdate.version} Now
+                Sync {previewUpdate.title} Now
               </Button>
             )}
             {!isPreviewMode && !isCurrentVersion && onRollbackClick && (

@@ -740,8 +740,8 @@ export class D1Storage {
   }> {
     const query =
       upToVersionNumber !== undefined
-        ? `SELECT version_id, version_number, type, revert_of_version_id FROM catalog_versions WHERE shop_id = ? AND version_number <= ? ORDER BY version_number ASC;`
-        : `SELECT version_id, version_number, type, revert_of_version_id FROM catalog_versions WHERE shop_id = ? ORDER BY version_number ASC;`;
+        ? `SELECT version_id, version_number, type, revert_of_version_id, description, metadata FROM catalog_versions WHERE shop_id = ? AND version_number <= ? ORDER BY version_number ASC;`
+        : `SELECT version_id, version_number, type, revert_of_version_id, description, metadata FROM catalog_versions WHERE shop_id = ? ORDER BY version_number ASC;`;
     const res =
       upToVersionNumber !== undefined
         ? await this.db.prepare(query).bind(shopId, upToVersionNumber).all<any>()
@@ -760,7 +760,12 @@ export class D1Storage {
     for (const r of rows) {
       if (r.type === 'ROLLBACK') {
         const targetId = (r.revert_of_version_id || 'v0').trim();
-        if (targetId === 'v0') {
+        const isSingle =
+          (typeof r.description === 'string' && r.description.startsWith('Revert update:')) ||
+          (typeof r.metadata === 'string' && r.metadata.includes('"revert_mode":"single"'));
+        if (isSingle) {
+          activeStack = activeStack.filter((v) => v.version_id !== targetId);
+        } else if (targetId === 'v0') {
           activeStack = [];
         } else {
           const targetNum = versionNumById.get(targetId);
@@ -817,8 +822,16 @@ export class D1Storage {
       .first<{ max_v: number | null }>();
     const nextVerNum = (maxVerRes?.max_v ?? 0) + 1;
 
-    // 3. Reconstruct baseline state at target version using active (non-reverted) versions up to targetVer
-    const { activeVersionNumbers } = await this.computeVersionHistoryState(shopId, targetVer.version_number);
+    // 3. Reconstruct baseline state using active (non-reverted) versions
+    const isSingleRevert = description.startsWith('Revert update:');
+    let activeVersionNumbers: number[] = [];
+    if (isSingleRevert) {
+      const currentState = await this.computeVersionHistoryState(shopId);
+      activeVersionNumbers = currentState.activeVersionNumbers.filter((n) => n !== targetVer.version_number);
+    } else {
+      const targetState = await this.computeVersionHistoryState(shopId, targetVer.version_number);
+      activeVersionNumbers = targetState.activeVersionNumbers;
+    }
     const baselineMap = new Map<string, { sku: string; name: string; price: number; status: 'ACTIVE' | 'WITHDRAWN'; supplier_timestamp: string }>();
 
     if (targetVersionId.trim() !== 'v0' && activeVersionNumbers.length > 0) {
@@ -969,6 +982,18 @@ export class D1Storage {
       }
     }
 
+    if (isSingleRevert) {
+      dbStatements.push(
+        this.db
+          .prepare('DELETE FROM dead_letter_issues WHERE shop_id = ? AND job_id = ?;')
+          .bind(shopId, targetVersionId)
+      );
+    } else if (targetVersionId.trim() === 'v0') {
+      dbStatements.push(
+        this.db.prepare('DELETE FROM dead_letter_issues WHERE shop_id = ?;').bind(shopId)
+      );
+    }
+
     const totalAffected = itemsAdded + itemsUpdated + itemsWithdrawn;
     const finalDesc = description || `Revert to version v${targetVer.version_number} (${targetVer.version_id})`;
 
@@ -986,7 +1011,11 @@ export class D1Storage {
       items_skipped: 0,
       items_dead_letter: 0,
       total_items_affected: totalAffected,
-      metadata: JSON.stringify({ reverted_version_number: targetVer.version_number }),
+      metadata: JSON.stringify(
+        isSingleRevert
+          ? { reverted_version_number: targetVer.version_number, revert_mode: 'single' }
+          : { reverted_version_number: targetVer.version_number }
+      ),
       created_at: nowIso,
     };
 
