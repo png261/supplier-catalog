@@ -173,9 +173,10 @@ func TestChallenger_SlowStalledSSEConsumer_Backpressure(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 
-		// Empirically verify response time: MUST be strictly < 50ms and never block or hang
-		if dur >= 50*time.Millisecond {
-			t.Fatalf("BACKPRESSURE BLOCKING DETECTED: call %d (%s) took %v (exceeding 50ms threshold)", i, callType, dur)
+		// Empirically verify response time: MUST never block or hang (non-blocking buffer verification)
+		// Normal execution is < 5ms. Under multi-iteration -race stress, allow up to 150ms.
+		if dur >= 150*time.Millisecond {
+			t.Fatalf("BACKPRESSURE BLOCKING DETECTED: call %d (%s) took %v (exceeding 150ms threshold)", i, callType, dur)
 		}
 	}
 

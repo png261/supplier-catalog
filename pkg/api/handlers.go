@@ -169,6 +169,10 @@ func (h *Handler) CancelActiveJob() {
 		h.activeCancel()
 		h.activeCancel = nil
 	}
+	if h.activeJobID != "" {
+		_ = h.storage.UpdateJobStatus(context.Background(), h.activeJobID, domain.JobStatusInterrupted)
+		h.activeJobID = ""
+	}
 }
 
 // @Summary Cancel active synchronization job
@@ -203,9 +207,12 @@ func (h *Handler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cancel := tenant.GetActiveCancel()
+	tenant.ResetActive()
 	tenant.Unlock()
 
 	cancel()
+	_ = tenant.GetStorage().UpdateJobStatus(context.Background(), jobID, domain.JobStatusInterrupted)
+
 	h.writeJSON(w, http.StatusOK, JobCancelResponse{
 		Status:  "cancelling",
 		JobID:   jobID,
@@ -520,6 +527,7 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 
 		finalJob, err := tenant.GetEngine().RunJob(bgCtx, jobID, stream)
 		if err != nil {
+			_ = tenant.GetStorage().UpdateJobStatus(context.Background(), jobID, domain.JobStatusInterrupted)
 			var committedIdx int = -1
 			var sum domain.ChangeSummary
 			if finalJob != nil {
@@ -759,6 +767,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 
 		finalJob, err := tenant.GetEngine().ResumeJob(bgCtx, jobID, stream)
 		if err != nil {
+			_ = tenant.GetStorage().UpdateJobStatus(context.Background(), jobID, domain.JobStatusInterrupted)
 			var committedIdx int = -1
 			var sum domain.ChangeSummary
 			if finalJob != nil {

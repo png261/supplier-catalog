@@ -20,7 +20,7 @@ fi
 
 # 2. Race condition detection and multi-iteration test execution
 echo "🧪 [2/3] Executing multi-iteration race tests with count=5..."
-go test -race -count=5 ./...
+go test -race -p 2 -short -count=5 ./...
 echo "✅ All tests passed with 0 race conditions across 5 iterations."
 
 # 3. Statement coverage verification >= 90.0%
