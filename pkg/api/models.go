@@ -42,6 +42,8 @@ type BatchInput struct {
 type JobStartRequest struct {
 	Mode            string       `json:"mode,omitempty"` // "generator" or "batches" (default "generator")
 	JobID           string       `json:"job_id,omitempty"`
+	Description     string       `json:"description,omitempty"`
+	BaseTime        *string      `json:"base_time,omitempty"`
 	Seed            *uint64      `json:"seed,omitempty"`
 	TotalBatches    *int         `json:"total_batches,omitempty"`
 	BatchSize       *int         `json:"batch_size,omitempty"`
@@ -155,6 +157,7 @@ type VersionListResponse struct {
 // RollbackRequest defines the payload for reverting the catalog to a previous baseline version.
 type RollbackRequest struct {
 	Author      string `json:"author,omitempty" example:"ops-team"`
+	Operator    string `json:"operator,omitempty" example:"ops-team"`
 	Description string `json:"description,omitempty" example:"Rollback due to supplier pricing error"`
 }
 

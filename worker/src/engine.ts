@@ -1,4 +1,4 @@
-import { Batch, BatchCheckpoint, ChangeSummary, DeadLetterRecord, Product, SupplierUpdate } from './types';
+import { Batch, BatchCheckpoint, ChangeSummary, DeadLetterRecord, ItemDelta, Product, SupplierUpdate } from './types';
 import { D1Storage } from './storage';
 import { broker } from './sse';
 
@@ -35,7 +35,8 @@ export class SyncEngine {
   async executeBatch(
     shopId: string,
     batch: Batch,
-    cumulativeSummary: ChangeSummary
+    cumulativeSummary: ChangeSummary,
+    description = ''
   ): Promise<ChangeSummary> {
     if (batch.records.length === 0) {
       return { added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 };
@@ -44,7 +45,19 @@ export class SyncEngine {
     const delta: ChangeSummary = { added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 };
     const batchState = new Map<string, Product | null>();
     const statements: D1PreparedStatement[] = [];
+    const itemDeltas: ItemDelta[] = [];
     const now = new Date().toISOString();
+
+    // Preload all candidate SKUs in this batch in bulk to avoid N+1 D1 queries
+    const skusToLookup: string[] = [];
+    for (const r of batch.records) {
+      const s = r.sku?.trim() ?? '';
+      if (s) skusToLookup.push(s);
+    }
+    const preloadedProducts = await this.storage.getProductsBySkus(shopId, skusToLookup);
+    for (const s of skusToLookup) {
+      batchState.set(s, preloadedProducts.get(s) ?? null);
+    }
 
     for (let i = 0; i < batch.records.length; i++) {
       const record = batch.records[i];
@@ -90,6 +103,20 @@ export class SyncEngine {
         statements.push(this.storage.buildUpsertProductStmt(shopId, newProduct));
         batchState.set(sku, newProduct);
         delta.added++;
+        itemDeltas.push({
+          shop_id: shopId,
+          version_id: batch.job_id,
+          sku,
+          action: 'ADDED',
+          old_name: null,
+          new_name: newProduct.name,
+          old_price: null,
+          new_price: newProduct.price,
+          old_status: null,
+          new_status: newProduct.status,
+          old_timestamp: null,
+          new_timestamp: newProduct.supplier_timestamp,
+        });
         continue;
       }
 
@@ -128,11 +155,28 @@ export class SyncEngine {
       statements.push(this.storage.buildUpsertProductStmt(shopId, updatedProduct));
       batchState.set(sku, updatedProduct);
 
+      let action: 'UPDATED' | 'WITHDRAWN' = 'UPDATED';
       if (!wasWithdrawn && nowWithdrawn) {
         delta.withdrawn++;
+        action = 'WITHDRAWN';
       } else {
         delta.updated++;
       }
+
+      itemDeltas.push({
+        shop_id: shopId,
+        version_id: batch.job_id,
+        sku,
+        action,
+        old_name: existingProduct.name,
+        new_name: updatedProduct.name,
+        old_price: existingProduct.price,
+        new_price: updatedProduct.price,
+        old_status: existingProduct.status,
+        new_status: updatedProduct.status,
+        old_timestamp: existingProduct.supplier_timestamp,
+        new_timestamp: updatedProduct.supplier_timestamp,
+      });
     }
 
     // Invariant E: Atomic Batch Checkpoint & Progress Commit
@@ -154,6 +198,21 @@ export class SyncEngine {
         now
       )
     );
+
+    // Record / update version milestone and SKU deltas for this sync job
+    statements.push(
+      this.storage.buildUpsertSyncVersionStmt(
+        shopId,
+        batch.job_id,
+        description,
+        delta,
+        itemDeltas.length,
+        now
+      )
+    );
+    for (const d of itemDeltas) {
+      statements.push(this.storage.buildInsertVersionDeltaStmt(shopId, d));
+    }
 
     // Atomically execute entire batch transaction in D1!
     if (statements.length > 0) {

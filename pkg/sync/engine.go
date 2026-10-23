@@ -141,14 +141,26 @@ func (e *SyncEngine) ExecuteBatch(ctx context.Context, batch domain.Batch) (doma
 	return summary, nil
 }
 
+// batchVersionStorage is an optional storage capability for recording version milestones and deltas per sync batch.
+type batchVersionStorage interface {
+	RecordSyncBatchVersionTx(ctx context.Context, tx *sql.Tx, job *domain.SyncJob, batchDelta domain.ChangeSummary, deltas []domain.ItemDelta) error
+}
+
 // executeRecordsTx processes individual records and dead letters within an active transaction.
 func (e *SyncEngine) executeRecordsTx(ctx context.Context, tx *sql.Tx, batch domain.Batch) (domain.ChangeSummary, error) {
+	summary, _, err := e.executeRecordsWithDeltasTx(ctx, tx, batch)
+	return summary, err
+}
+
+// executeRecordsWithDeltasTx processes individual records, dead letters, and captures pre-image/post-image item deltas.
+func (e *SyncEngine) executeRecordsWithDeltasTx(ctx context.Context, tx *sql.Tx, batch domain.Batch) (domain.ChangeSummary, []domain.ItemDelta, error) {
 	summary := domain.ChangeSummary{}
+	deltas := make([]domain.ItemDelta, 0, len(batch.Records))
 	batchState := make(map[string]*domain.Product)
 
 	for i, record := range batch.Records {
 		if err := ctx.Err(); err != nil {
-			return domain.ChangeSummary{}, err
+			return domain.ChangeSummary{}, nil, err
 		}
 
 		sku := strings.TrimSpace(record.SKU)
@@ -180,7 +192,7 @@ func (e *SyncEngine) executeRecordsTx(ctx context.Context, tx *sql.Tx, batch dom
 			}
 
 			if err := e.storage.RecordDeadLetterTx(ctx, tx, dlRecord); err != nil {
-				return domain.ChangeSummary{}, fmt.Errorf("failed to record dead letter issue: %w", err)
+				return domain.ChangeSummary{}, nil, fmt.Errorf("failed to record dead letter issue: %w", err)
 			}
 			continue
 		}
@@ -194,7 +206,7 @@ func (e *SyncEngine) executeRecordsTx(ctx context.Context, tx *sql.Tx, batch dom
 				if errors.Is(err, domain.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
 					existingProduct = nil
 				} else {
-					return domain.ChangeSummary{}, fmt.Errorf("failed to query product %s at index %d: %w", sku, i, err)
+					return domain.ChangeSummary{}, nil, fmt.Errorf("failed to query product %s at index %d: %w", sku, i, err)
 				}
 			}
 			batchState[sku] = existingProduct
@@ -211,10 +223,19 @@ func (e *SyncEngine) executeRecordsTx(ctx context.Context, tx *sql.Tx, batch dom
 				UpdatedAt:         e.now(),
 			}
 			if err := e.storage.UpsertProductTx(ctx, tx, newProduct); err != nil {
-				return domain.ChangeSummary{}, fmt.Errorf("failed to insert product %s: %w", sku, err)
+				return domain.ChangeSummary{}, nil, fmt.Errorf("failed to insert product %s: %w", sku, err)
 			}
 			batchState[sku] = newProduct
 			summary.Added++
+			deltas = append(deltas, domain.ItemDelta{
+				VersionID:    batch.JobID,
+				SKU:          sku,
+				Action:       domain.DeltaActionAdded,
+				NewName:      newProduct.Name,
+				NewPrice:     newProduct.Price,
+				NewStatus:    newProduct.Status,
+				NewTimestamp: recordTimestamp,
+			})
 			continue
 		}
 
@@ -236,6 +257,11 @@ func (e *SyncEngine) executeRecordsTx(ctx context.Context, tx *sql.Tx, batch dom
 		wasWithdrawn := existingProduct.Status == domain.StatusWithdrawn
 		nowWithdrawn := record.Status == domain.StatusWithdrawn
 
+		oldName := existingProduct.Name
+		oldPrice := existingProduct.Price
+		oldStatus := existingProduct.Status
+		oldTime := existingProduct.SupplierTimestamp
+
 		updatedProduct := &domain.Product{
 			SKU:               sku,
 			Name:              record.Name,
@@ -245,18 +271,34 @@ func (e *SyncEngine) executeRecordsTx(ctx context.Context, tx *sql.Tx, batch dom
 			UpdatedAt:         e.now(),
 		}
 		if err := e.storage.UpsertProductTx(ctx, tx, updatedProduct); err != nil {
-			return domain.ChangeSummary{}, fmt.Errorf("failed to update product %s: %w", sku, err)
+			return domain.ChangeSummary{}, nil, fmt.Errorf("failed to update product %s: %w", sku, err)
 		}
 		batchState[sku] = updatedProduct
 
+		deltaAction := domain.DeltaActionUpdated
 		if !wasWithdrawn && nowWithdrawn {
 			summary.Withdrawn++
+			deltaAction = domain.DeltaActionWithdrawn
 		} else {
 			summary.Updated++
 		}
+
+		deltas = append(deltas, domain.ItemDelta{
+			VersionID:    batch.JobID,
+			SKU:          sku,
+			Action:       deltaAction,
+			OldName:      &oldName,
+			NewName:      updatedProduct.Name,
+			OldPrice:     &oldPrice,
+			NewPrice:     updatedProduct.Price,
+			OldStatus:    &oldStatus,
+			NewStatus:    updatedProduct.Status,
+			OldTimestamp: &oldTime,
+			NewTimestamp: recordTimestamp,
+		})
 	}
 
-	return summary, nil
+	return summary, deltas, nil
 }
 
 // processBatchTx executes a batch within an atomic database transaction including checkpoint and progress.
@@ -285,7 +327,7 @@ func (e *SyncEngine) processBatchTx(ctx context.Context, job *domain.SyncJob, ba
 	}()
 
 	// 1. Process records and dead letters inside transaction
-	summary, err := e.executeRecordsTx(ctx, tx, batch)
+	summary, deltas, err := e.executeRecordsWithDeltasTx(ctx, tx, batch)
 	if err != nil {
 		return err
 	}
@@ -305,6 +347,13 @@ func (e *SyncEngine) processBatchTx(ctx context.Context, job *domain.SyncJob, ba
 	// 3. Atomically update job cumulative progress
 	if err := e.storage.UpdateJobProgressTx(ctx, tx, job.JobID, batch.BatchIndex, summary); err != nil {
 		return fmt.Errorf("failed to update job progress for %s[%d]: %w", job.JobID, batch.BatchIndex, err)
+	}
+
+	// 3b. Record catalog version milestone & pre-image deltas if storage supports versioning
+	if vs, ok := e.storage.(batchVersionStorage); ok {
+		if err := vs.RecordSyncBatchVersionTx(ctx, tx, job, summary, deltas); err != nil {
+			return fmt.Errorf("failed to record sync batch version for %s[%d]: %w", job.JobID, batch.BatchIndex, err)
+		}
 	}
 
 	// Verify context is still active prior to committing transaction

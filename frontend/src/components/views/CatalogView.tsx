@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card } from '../ui/card';
 import { Input } from '../ui/input';
 import { Button } from '../ui/button';
@@ -13,7 +13,7 @@ import {
 } from '../ui/table';
 import { CatalogProduct } from '../../types';
 import { formatCurrency, formatDateTime, formatNumber } from '../../lib/utils';
-import { Package, Search, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
+import { Package, Search, ChevronLeft, ChevronRight, RotateCcw, X } from 'lucide-react';
 
 interface CatalogViewProps {
   products: CatalogProduct[];
@@ -40,7 +40,21 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   onPageChange,
   onResetFilters,
 }) => {
+  const [localSearch, setLocalSearch] = useState(search);
   const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  useEffect(() => {
+    setLocalSearch(search);
+  }, [search]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (localSearch !== search) {
+        onSearchChange(localSearch);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [localSearch, search, onSearchChange]);
 
   return (
     <div className="space-y-4">
@@ -59,14 +73,28 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
 
           {/* Search & Status Filters */}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative w-full sm:w-60">
-              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
               <Input
                 placeholder="Search SKU or Name..."
-                value={search}
-                onChange={(e) => onSearchChange(e.target.value)}
-                className="pl-8 h-8 text-xs bg-white border-slate-200"
+                value={localSearch}
+                onChange={(e) => setLocalSearch(e.target.value)}
+                className="pl-8 pr-7 h-8 text-xs bg-white border-slate-200"
               />
+              {localSearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLocalSearch('');
+                    onSearchChange('');
+                  }}
+                  className="absolute right-2 top-2 text-slate-400 hover:text-slate-700"
+                  title="Clear search"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
 
             <select
@@ -79,13 +107,16 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               <option value="WITHDRAWN">WITHDRAWN only</option>
             </select>
 
-            {(search || status) && (
+            {(localSearch || search || status) && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onResetFilters}
-                className="h-9 text-xs text-slate-500 hover:text-slate-900 dark:hover:text-slate-100"
-                title="Clear filters"
+                onClick={() => {
+                  setLocalSearch('');
+                  onResetFilters();
+                }}
+                className="h-8 px-2.5 text-xs text-slate-500 hover:text-slate-900"
+                title="Clear all filters"
               >
                 <RotateCcw className="h-3.5 w-3.5 mr-1" />
                 Clear
@@ -96,22 +127,22 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
       </Card>
 
       {/* Products Table Card */}
-      <Card className="border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
+      <Card className="border-slate-200/80 bg-white shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
-            <TableHeader className="bg-slate-50/75 dark:bg-slate-800/60">
-              <TableRow className="border-slate-200 dark:border-slate-800">
-                <TableHead className="w-36 text-slate-700 dark:text-slate-300">SKU</TableHead>
-                <TableHead className="text-slate-700 dark:text-slate-300">Product Name</TableHead>
-                <TableHead className="w-32 text-right text-slate-700 dark:text-slate-300">Unit Price</TableHead>
-                <TableHead className="w-28 text-center text-slate-700 dark:text-slate-300">Status</TableHead>
-                <TableHead className="w-48 text-slate-700 dark:text-slate-300">Last Synchronized</TableHead>
+            <TableHeader className="bg-slate-50/75">
+              <TableRow className="border-slate-200">
+                <TableHead className="w-36 text-slate-700">SKU</TableHead>
+                <TableHead className="text-slate-700">Product Name</TableHead>
+                <TableHead className="w-32 text-right text-slate-700">Unit Price</TableHead>
+                <TableHead className="w-28 text-center text-slate-700">Status</TableHead>
+                <TableHead className="w-48 text-slate-700">Last Synchronized</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {products.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-36 text-center text-slate-400 dark:text-slate-500 text-xs">
+                  <TableCell colSpan={5} className="h-36 text-center text-slate-400 text-xs">
                     No products found matching filter criteria. Start a sync or adjust filters.
                   </TableCell>
                 </TableRow>
@@ -119,15 +150,15 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                 products.map((p) => (
                   <TableRow
                     key={p.sku}
-                    className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 border-slate-200 dark:border-slate-800"
+                    className="hover:bg-slate-50/70 border-slate-200"
                   >
-                    <TableCell className="font-mono font-semibold text-slate-900 dark:text-slate-100">
+                    <TableCell className="font-mono font-semibold text-slate-900">
                       {p.sku}
                     </TableCell>
-                    <TableCell className="font-medium text-slate-800 dark:text-slate-200">
+                    <TableCell className="font-medium text-slate-800">
                       {p.name}
                     </TableCell>
-                    <TableCell className="text-right font-mono font-bold text-slate-900 dark:text-slate-100">
+                    <TableCell className="text-right font-mono font-bold text-slate-900">
                       {formatCurrency(p.price)}
                     </TableCell>
                     <TableCell className="text-center">
@@ -138,7 +169,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                         {p.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                    <TableCell className="text-slate-500 font-mono text-[11px]">
                       {formatDateTime(p.updated_at || p.last_updated_at || p.supplier_timestamp)}
                     </TableCell>
                   </TableRow>
@@ -149,7 +180,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         </div>
 
         {/* Pagination Bar */}
-        <div className="flex items-center justify-between p-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+        <div className="flex items-center justify-between p-4 border-t border-slate-200/80 text-xs text-slate-500 bg-slate-50/40">
           <div>
             Showing {products.length > 0 ? (page - 1) * limit + 1 : 0} to{' '}
             {Math.min(page * limit, total)} of {formatNumber(total)} products
@@ -160,12 +191,12 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               size="sm"
               onClick={() => onPageChange(page - 1)}
               disabled={page <= 1}
-              className="h-8 px-2.5 border-slate-300 dark:border-slate-700"
+              className="h-8 px-2.5 border-slate-200"
             >
               <ChevronLeft className="h-3.5 w-3.5 mr-1" />
               <span>Prev</span>
             </Button>
-            <span className="font-mono font-semibold text-slate-700 dark:text-slate-300 px-2">
+            <span className="font-mono font-semibold text-slate-700 px-2">
               {page} / {totalPages}
             </span>
             <Button
@@ -173,7 +204,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               size="sm"
               onClick={() => onPageChange(page + 1)}
               disabled={page >= totalPages}
-              className="h-8 px-2.5 border-slate-300 dark:border-slate-700"
+              className="h-8 px-2.5 border-slate-200"
             >
               <span>Next</span>
               <ChevronRight className="h-3.5 w-3.5 ml-1" />

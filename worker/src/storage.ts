@@ -36,6 +36,28 @@ export class D1Storage {
     return res ?? null;
   }
 
+  async getProductsBySkus(shopId: string, skus: string[]): Promise<Map<string, Product>> {
+    const map = new Map<string, Product>();
+    if (!skus || skus.length === 0) return map;
+
+    const uniqueSkus = Array.from(new Set(skus.filter((s) => s && s.trim() !== '')));
+    const chunkSize = 50;
+    for (let i = 0; i < uniqueSkus.length; i += chunkSize) {
+      const chunk = uniqueSkus.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const query = `
+        SELECT sku, name, price, status, supplier_timestamp, updated_at
+        FROM products
+        WHERE shop_id = ? AND sku IN (${placeholders});
+      `;
+      const res = await this.db.prepare(query).bind(shopId, ...chunk).all<Product>();
+      for (const p of res.results ?? []) {
+        map.set(p.sku, p);
+      }
+    }
+    return map;
+  }
+
   async listProducts(
     shopId: string,
     status?: string,
@@ -371,8 +393,19 @@ export class D1Storage {
       args.push(jobId);
     }
     if (reason) {
-      conditions.push('reason LIKE ?');
-      args.push(`%${reason}%`);
+      const upper = reason.trim().toUpperCase();
+      if (upper === 'NEGATIVE_OR_ZERO_PRICE') {
+        conditions.push("(reason LIKE '%price%' OR reason LIKE '%NEGATIVE_OR_ZERO_PRICE%')");
+      } else if (upper === 'EMPTY_SKU') {
+        conditions.push("(reason LIKE '%sku%' OR reason LIKE '%SKU%' OR reason LIKE '%EMPTY_SKU%')");
+      } else if (upper === 'ZERO_OR_MISSING_TIMESTAMP') {
+        conditions.push("(reason LIKE '%timestamp%' OR reason LIKE '%ZERO_OR_MISSING_TIMESTAMP%')");
+      } else if (upper === 'CORRUPTED_JSON') {
+        conditions.push("(reason LIKE '%status%' OR reason LIKE '%malformed%' OR reason LIKE '%CORRUPTED_JSON%')");
+      } else {
+        conditions.push('reason LIKE ?');
+        args.push(`%${reason}%`);
+      }
     }
 
     const whereClause = conditions.join(' AND ');
@@ -506,6 +539,74 @@ export class D1Storage {
   }
 
   // --- Catalog Versions & Rollback ---
+
+  buildUpsertSyncVersionStmt(
+    shopId: string,
+    jobId: string,
+    description: string,
+    delta: ChangeSummary,
+    affectedCount: number,
+    now: string
+  ): D1PreparedStatement {
+    const query = `
+      INSERT INTO catalog_versions (
+        shop_id, version_id, version_number, description, author, type,
+        items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
+        total_items_affected, metadata, created_at
+      ) VALUES (
+        ?, ?,
+        COALESCE((SELECT MAX(version_number) FROM catalog_versions WHERE shop_id = ?), 0) + 1,
+        ?, 'supplier-sync', 'SYNC',
+        ?, ?, ?, ?, ?,
+        ?, ?, ?
+      )
+      ON CONFLICT(shop_id, version_id) DO UPDATE SET
+        items_added = catalog_versions.items_added + excluded.items_added,
+        items_updated = catalog_versions.items_updated + excluded.items_updated,
+        items_withdrawn = catalog_versions.items_withdrawn + excluded.items_withdrawn,
+        items_skipped = catalog_versions.items_skipped + excluded.items_skipped,
+        items_dead_letter = catalog_versions.items_dead_letter + excluded.items_dead_letter,
+        total_items_affected = catalog_versions.total_items_affected + excluded.total_items_affected;
+    `;
+    return this.db.prepare(query).bind(
+      shopId,
+      jobId,
+      shopId,
+      description || `Supplier Catalog Sync (${jobId})`,
+      delta.added,
+      delta.updated,
+      delta.withdrawn,
+      delta.skipped,
+      delta.dead_letter,
+      affectedCount,
+      JSON.stringify({ job_id: jobId }),
+      now
+    );
+  }
+
+  buildInsertVersionDeltaStmt(shopId: string, d: ItemDelta): D1PreparedStatement {
+    const query = `
+      INSERT INTO catalog_version_deltas (
+        shop_id, version_id, sku, action,
+        old_name, new_name, old_price, new_price,
+        old_status, new_status, old_timestamp, new_timestamp
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `;
+    return this.db.prepare(query).bind(
+      shopId,
+      d.version_id,
+      d.sku,
+      d.action,
+      d.old_name ?? null,
+      d.new_name,
+      d.old_price ?? null,
+      d.new_price,
+      d.old_status ?? null,
+      d.new_status,
+      d.old_timestamp ?? null,
+      d.new_timestamp
+    );
+  }
 
   async listVersions(
     shopId: string,

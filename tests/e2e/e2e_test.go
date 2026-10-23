@@ -246,3 +246,194 @@ func TestE2E_MultiTenantIsolation(t *testing.T) {
 		t.Errorf("expected 0 products in shop-beta, got %d", listBeta.Total)
 	}
 }
+
+func TestE2E_SyncJobVersioningDiffAndRollback(t *testing.T) {
+	ts := createE2EServer(t)
+	client := &http.Client{}
+
+	// 1. Run Sync Job 1 (Baseline v1)
+	job1Payload := `{
+		"mode": "batches",
+		"job_id": "job-sync-v1",
+		"batches": [{
+			"batch_index": 0,
+			"records": [
+				{"sku": "SKU-V1", "name": "Desk Lamp V1", "price": 50.0, "status": "ACTIVE", "timestamp": "2026-01-01T10:00:00Z"},
+				{"sku": "SKU-V2", "name": "Desk Mat V1", "price": 25.0, "status": "ACTIVE", "timestamp": "2026-01-01T10:00:00Z"}
+			]
+		}]
+	}`
+	res1, err := http.Post(ts.URL+"/api/jobs", "application/json", bytes.NewBufferString(job1Payload))
+	if err != nil || res1.StatusCode != http.StatusAccepted {
+		t.Fatalf("failed starting job-sync-v1: %v", err)
+	}
+	res1.Body.Close()
+	time.Sleep(150 * time.Millisecond)
+
+	// 2. Run Sync Job 2 (Price update + Withdraw SKU-V2 + Add SKU-V3)
+	job2Payload := `{
+		"mode": "batches",
+		"job_id": "job-sync-v2",
+		"batches": [{
+			"batch_index": 0,
+			"records": [
+				{"sku": "SKU-V1", "name": "Desk Lamp V2 Pro", "price": 75.0, "status": "ACTIVE", "timestamp": "2026-01-02T10:00:00Z"},
+				{"sku": "SKU-V2", "name": "Desk Mat V1", "price": 25.0, "status": "WITHDRAWN", "timestamp": "2026-01-02T10:00:00Z"},
+				{"sku": "SKU-V3", "name": "Monitor Arm V2", "price": 99.0, "status": "ACTIVE", "timestamp": "2026-01-02T10:00:00Z"}
+			]
+		}]
+	}`
+	res2, err := http.Post(ts.URL+"/api/jobs", "application/json", bytes.NewBufferString(job2Payload))
+	if err != nil || res2.StatusCode != http.StatusAccepted {
+		t.Fatalf("failed starting job-sync-v2: %v", err)
+	}
+	res2.Body.Close()
+	time.Sleep(150 * time.Millisecond)
+
+	// 3. Verify GET /api/versions has 2 SYNC versions
+	verResp, err := http.Get(ts.URL + "/api/versions")
+	if err != nil {
+		t.Fatalf("failed to list versions: %v", err)
+	}
+	defer verResp.Body.Close()
+	var verList api.VersionListResponse
+	if err := json.NewDecoder(verResp.Body).Decode(&verList); err != nil {
+		t.Fatalf("failed decoding versions: %v", err)
+	}
+	if verList.Total != 2 || len(verList.Versions) != 2 {
+		t.Fatalf("expected 2 SYNC versions, got total=%d len=%d", verList.Total, len(verList.Versions))
+	}
+	if verList.Versions[0].Type != domain.VersionTypeSync || verList.Versions[1].Type != domain.VersionTypeSync {
+		t.Errorf("expected version type SYNC, got %s and %s", verList.Versions[0].Type, verList.Versions[1].Type)
+	}
+
+	// 4. Verify GET /api/versions/job-sync-v2/diff returns 3 deltas
+	diffResp, err := http.Get(ts.URL + "/api/versions/job-sync-v2/diff")
+	if err != nil {
+		t.Fatalf("failed getting diff: %v", err)
+	}
+	defer diffResp.Body.Close()
+	var deltas []domain.ItemDelta
+	if err := json.NewDecoder(diffResp.Body).Decode(&deltas); err != nil {
+		t.Fatalf("failed decoding deltas: %v", err)
+	}
+	if len(deltas) != 3 {
+		t.Fatalf("expected 3 deltas for job-sync-v2, got %d", len(deltas))
+	}
+
+	// 5. Rollback to job-sync-v1 using "operator" field (UI payload format)
+	rollReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/versions/job-sync-v1/rollback", bytes.NewBufferString(`{"operator":"qa-playwright-bot","description":"Revert v2"}`))
+	rollReq.Header.Set("Content-Type", "application/json")
+	rollResp, err := client.Do(rollReq)
+	if err != nil {
+		t.Fatalf("rollback request failed: %v", err)
+	}
+	defer rollResp.Body.Close()
+	if rollResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(rollResp.Body)
+		t.Fatalf("expected 200 OK on rollback, got %d: %s", rollResp.StatusCode, body)
+	}
+	var rollData api.RollbackResponse
+	_ = json.NewDecoder(rollResp.Body).Decode(&rollData)
+	if rollData.Version.Author != "qa-playwright-bot" {
+		t.Errorf("expected rollback author 'qa-playwright-bot', got %q", rollData.Version.Author)
+	}
+	if rollData.Version.Type != domain.VersionTypeRollback {
+		t.Errorf("expected ROLLBACK version type, got %s", rollData.Version.Type)
+	}
+
+	// 6. Verify Tombstone Preservation & Baseline Restoration in live catalog
+	prodResp, _ := http.Get(ts.URL + "/api/products?limit=20")
+	var prodList api.ProductListResponse
+	_ = json.NewDecoder(prodResp.Body).Decode(&prodList)
+	prodResp.Body.Close()
+
+	bySKU := make(map[string]domain.Product)
+	for _, p := range prodList.Products {
+		bySKU[p.SKU] = p
+	}
+	if bySKU["SKU-V1"].Price != 50.0 || bySKU["SKU-V1"].Name != "Desk Lamp V1" {
+		t.Errorf("expected SKU-V1 reverted to 50.0 / Desk Lamp V1, got %+v", bySKU["SKU-V1"])
+	}
+	if bySKU["SKU-V2"].Status != domain.StatusWithdrawn {
+		t.Errorf("expected Tombstone Preservation on SKU-V2 (remain WITHDRAWN), got %s", bySKU["SKU-V2"].Status)
+	}
+	if bySKU["SKU-V3"].Status != domain.StatusWithdrawn {
+		t.Errorf("expected post-baseline SKU-V3 to be WITHDRAWN after rollback, got %s", bySKU["SKU-V3"].Status)
+	}
+}
+
+func TestE2E_DeadLetterReasonCodeFilteringAndCORS(t *testing.T) {
+	ts := createE2EServer(t)
+	client := &http.Client{}
+
+	// 1. Verify CORS preflight allows X-Shop-Id
+	optReq, _ := http.NewRequest(http.MethodOptions, ts.URL+"/api/jobs", nil)
+	optResp, err := client.Do(optReq)
+	if err != nil {
+		t.Fatalf("OPTIONS request failed: %v", err)
+	}
+	optResp.Body.Close()
+	allowHeaders := optResp.Header.Get("Access-Control-Allow-Headers")
+	if !bytes.Contains([]byte(allowHeaders), []byte("X-Shop-Id")) {
+		t.Errorf("expected Access-Control-Allow-Headers to contain X-Shop-Id, got %q", allowHeaders)
+	}
+
+	// 2. Ingest batch with all 4 defect categories
+	batchPayload := `{
+		"mode": "batches",
+		"job_id": "job-dlq-reasons",
+		"batches": [{
+			"batch_index": 0,
+			"records": [
+				{"sku": "", "name": "Missing SKU Item", "price": 19.99, "status": "ACTIVE", "timestamp": "2026-01-01T10:00:00Z"},
+				{"sku": "SKU-NEG", "name": "Negative Price Item", "price": -5.00, "status": "ACTIVE", "timestamp": "2026-01-01T10:00:00Z"},
+				{"sku": "SKU-BAD-STATUS", "name": "Invalid Status Item", "price": 15.00, "status": "BROKEN_STATUS", "timestamp": "2026-01-01T10:00:00Z"},
+				{"sku": "SKU-ZERO-TS", "name": "Zero Timestamp Item", "price": 25.00, "status": "ACTIVE", "timestamp": "0001-01-01T00:00:00Z"}
+			]
+		}]
+	}`
+	res, err := http.Post(ts.URL+"/api/jobs", "application/json", bytes.NewBufferString(batchPayload))
+	if err != nil || res.StatusCode != http.StatusAccepted {
+		t.Fatalf("failed starting job-dlq-reasons: %v", err)
+	}
+	res.Body.Close()
+	time.Sleep(150 * time.Millisecond)
+
+	// 3. Test each UI reason filter code
+	for _, code := range []string{"EMPTY_SKU", "NEGATIVE_OR_ZERO_PRICE", "CORRUPTED_JSON", "ZERO_OR_MISSING_TIMESTAMP"} {
+		resp, err := http.Get(ts.URL + "/api/dead-letter?reason=" + code)
+		if err != nil {
+			t.Fatalf("GET /api/dead-letter?reason=%s failed: %v", code, err)
+		}
+		var list api.DeadLetterListResponse
+		_ = json.NewDecoder(resp.Body).Decode(&list)
+		resp.Body.Close()
+		if list.Total != 1 || len(list.Issues) != 1 {
+			t.Errorf("expected 1 issue for reason=%s, got total=%d len=%d", code, list.Total, len(list.Issues))
+		}
+	}
+
+	// 4. Test generator with base_time advancement across consecutive runs
+	gen1 := `{"mode":"generator","job_id":"gen-basetime-1","seed":42,"total_batches":2,"batch_size":10,"base_time":"2026-02-01T00:00:00Z"}`
+	rGen1, _ := http.Post(ts.URL+"/api/jobs", "application/json", bytes.NewBufferString(gen1))
+	rGen1.Body.Close()
+	time.Sleep(150 * time.Millisecond)
+
+	// Second generator run with earlier base_time should auto-advance past max_ts so updates are applied
+	gen2 := `{"mode":"generator","job_id":"gen-basetime-2","seed":42,"total_batches":2,"batch_size":10,"base_time":"2026-01-01T00:00:00Z","update_ratio":0.5}`
+	rGen2, _ := http.Post(ts.URL+"/api/jobs", "application/json", bytes.NewBufferString(gen2))
+	rGen2.Body.Close()
+	time.Sleep(150 * time.Millisecond)
+
+	job2Resp, _ := http.Get(ts.URL + "/api/jobs/gen-basetime-2")
+	var job2Detail api.JobDetailResponse
+	_ = json.NewDecoder(job2Resp.Body).Decode(&job2Detail)
+	job2Resp.Body.Close()
+	if job2Detail.Job == nil || job2Detail.Job.Status != domain.JobStatusCompleted {
+		t.Fatalf("expected gen-basetime-2 completed, got %+v", job2Detail.Job)
+	}
+	if job2Detail.Job.Summary.Added+job2Detail.Job.Summary.Updated+job2Detail.Job.Summary.Withdrawn == 0 {
+		t.Errorf("expected gen-basetime-2 to apply changes with advanced base_time, got summary %+v", job2Detail.Job.Summary)
+	}
+}

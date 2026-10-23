@@ -499,8 +499,19 @@ func (s *SQLiteStorage) ListDeadLetterRecords(ctx context.Context, jobID string,
 		args = append(args, jobID)
 	}
 	if reason != "" {
-		conditions = append(conditions, "reason LIKE '%' || ? || '%'")
-		args = append(args, reason)
+		switch strings.ToUpper(strings.TrimSpace(reason)) {
+		case "NEGATIVE_OR_ZERO_PRICE":
+			conditions = append(conditions, "(reason LIKE '%price%' OR reason LIKE '%NEGATIVE_OR_ZERO_PRICE%')")
+		case "EMPTY_SKU":
+			conditions = append(conditions, "(reason LIKE '%SKU%' OR reason LIKE '%sku%' OR reason LIKE '%EMPTY_SKU%')")
+		case "ZERO_OR_MISSING_TIMESTAMP":
+			conditions = append(conditions, "(reason LIKE '%timestamp%' OR reason LIKE '%ZERO_OR_MISSING_TIMESTAMP%')")
+		case "CORRUPTED_JSON":
+			conditions = append(conditions, "(reason LIKE '%status%' OR reason LIKE '%malformed%' OR reason LIKE '%CORRUPTED_JSON%')")
+		default:
+			conditions = append(conditions, "reason LIKE '%' || ? || '%'")
+			args = append(args, reason)
+		}
 	}
 
 	whereClause := ""
@@ -929,6 +940,118 @@ func (s *SQLiteStorage) Reset(ctx context.Context) error {
 	}
 
 	return tx.Commit()
+}
+
+// GetMaxSupplierTimestamp returns the maximum supplier_timestamp currently stored in products.
+func (s *SQLiteStorage) GetMaxSupplierTimestamp(ctx context.Context) (time.Time, error) {
+	var maxStr sql.NullString
+	err := s.db.QueryRowContext(ctx, "SELECT MAX(supplier_timestamp) FROM products;").Scan(&maxStr)
+	if err != nil || !maxStr.Valid || maxStr.String == "" {
+		return time.Time{}, err
+	}
+	return ParseTime(maxStr.String)
+}
+
+// RecordSyncBatchVersionTx atomically upserts a SYNC catalog version milestone for the job
+// and appends the batch's pre-image/post-image item deltas inside the active batch transaction.
+func (s *SQLiteStorage) RecordSyncBatchVersionTx(ctx context.Context, tx *sql.Tx, job *domain.SyncJob, batchDelta domain.ChangeSummary, deltas []domain.ItemDelta) error {
+	if tx == nil || job == nil || strings.TrimSpace(job.JobID) == "" {
+		return nil
+	}
+
+	versionID := strings.TrimSpace(job.JobID)
+	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
+	desc := fmt.Sprintf("Supplier Catalog Sync (%s)", versionID)
+	metadata := fmt.Sprintf(`{"job_id":%q}`, versionID)
+	affected := len(deltas)
+
+	upsertVersionQuery := `
+	INSERT INTO catalog_versions (
+		version_id, version_number, description, author, type,
+		items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
+		total_items_affected, metadata, created_at
+	) VALUES (
+		?, COALESCE((SELECT MAX(version_number) FROM catalog_versions), 0) + 1,
+		?, 'supplier-sync', 'SYNC',
+		?, ?, ?, ?, ?,
+		?, ?, ?
+	)
+	ON CONFLICT(version_id) DO UPDATE SET
+		items_added = catalog_versions.items_added + excluded.items_added,
+		items_updated = catalog_versions.items_updated + excluded.items_updated,
+		items_withdrawn = catalog_versions.items_withdrawn + excluded.items_withdrawn,
+		items_skipped = catalog_versions.items_skipped + excluded.items_skipped,
+		items_dead_letter = catalog_versions.items_dead_letter + excluded.items_dead_letter,
+		total_items_affected = catalog_versions.total_items_affected + excluded.total_items_affected;
+	`
+	if _, err := tx.ExecContext(ctx, upsertVersionQuery,
+		versionID,
+		desc,
+		batchDelta.Added,
+		batchDelta.Updated,
+		batchDelta.Withdrawn,
+		batchDelta.Skipped,
+		batchDelta.DeadLetter,
+		affected,
+		metadata,
+		nowStr,
+	); err != nil {
+		return fmt.Errorf("failed upserting sync catalog version %s: %w", versionID, err)
+	}
+
+	if len(deltas) == 0 {
+		return nil
+	}
+
+	deltaQuery := `
+	INSERT INTO catalog_version_deltas (
+		version_id, sku, action,
+		old_name, new_name,
+		old_price, new_price,
+		old_status, new_status,
+		old_timestamp, new_timestamp
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+	`
+	stmt, err := tx.PrepareContext(ctx, deltaQuery)
+	if err != nil {
+		return fmt.Errorf("failed preparing sync delta insert statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for i := range deltas {
+		d := &deltas[i]
+		var oldName, oldPrice, oldStatus, oldTimestamp any
+		if d.OldName != nil {
+			oldName = *d.OldName
+		}
+		if d.OldPrice != nil {
+			oldPrice = *d.OldPrice
+		}
+		if d.OldStatus != nil {
+			oldStatus = string(*d.OldStatus)
+		}
+		if d.OldTimestamp != nil && !d.OldTimestamp.IsZero() {
+			oldTimestamp = d.OldTimestamp.UTC().Format(time.RFC3339Nano)
+		}
+
+		if _, err := stmt.ExecContext(ctx,
+			versionID,
+			d.SKU,
+			string(d.Action),
+			oldName,
+			d.NewName,
+			oldPrice,
+			d.NewPrice,
+			oldStatus,
+			string(d.NewStatus),
+			oldTimestamp,
+			d.NewTimestamp.UTC().Format(time.RFC3339Nano),
+		); err != nil {
+			return fmt.Errorf("failed inserting sync delta for sku %s: %w", d.SKU, err)
+		}
+	}
+
+	return nil
 }
 
 // CreateVersionTx persists a catalog version milestone and its pre-image deltas inside a transaction.
@@ -1413,8 +1536,10 @@ func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID str
 		liveProducts[p.SKU] = p
 	}
 	if err := liveRows.Err(); err != nil {
+		liveRows.Close()
 		return nil, nil, fmt.Errorf("error iterating live products: %w", err)
 	}
+	liveRows.Close()
 
 	now := time.Now().UTC()
 	var deltas []domain.ItemDelta

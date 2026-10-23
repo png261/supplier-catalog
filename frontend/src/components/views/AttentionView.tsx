@@ -12,7 +12,7 @@ import {
 } from '../ui/table';
 import { DeadLetterIssue } from '../../types';
 import { formatDateTime, formatNumber } from '../../lib/utils';
-import { AlertTriangle, Wrench, ChevronLeft, ChevronRight, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { Wrench, ChevronLeft, ChevronRight, ShieldAlert, CheckCircle2, RotateCcw } from 'lucide-react';
 
 interface AttentionViewProps {
   issues: DeadLetterIssue[];
@@ -69,27 +69,40 @@ export const AttentionView: React.FC<AttentionViewProps> = ({
               <option value="ZERO_OR_MISSING_TIMESTAMP">Missing Timestamp</option>
               <option value="CORRUPTED_JSON">Malformed Schema</option>
             </select>
+
+            {reason && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onReasonChange('')}
+                className="h-8 px-2.5 text-xs text-slate-500 hover:text-slate-900"
+                title="Clear filter"
+              >
+                <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                Clear
+              </Button>
+            )}
           </div>
         </div>
       </Card>
 
       {/* Issues Table Card */}
-      <Card className="border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
+      <Card className="border-slate-200/80 bg-white shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
-            <TableHeader className="bg-slate-50/75 dark:bg-slate-800/60">
-              <TableRow className="border-slate-200 dark:border-slate-800">
-                <TableHead className="w-28 text-slate-700 dark:text-slate-300">Issue ID</TableHead>
-                <TableHead className="w-36 text-slate-700 dark:text-slate-300">SKU</TableHead>
-                <TableHead className="text-slate-700 dark:text-slate-300">Quarantine Reason & Defect Preview</TableHead>
-                <TableHead className="w-44 text-slate-700 dark:text-slate-300">Detected Timestamp</TableHead>
-                <TableHead className="w-36 text-center text-slate-700 dark:text-slate-300">Remediation</TableHead>
+            <TableHeader className="bg-slate-50/75">
+              <TableRow className="border-slate-200">
+                <TableHead className="w-28 text-slate-700">Issue ID</TableHead>
+                <TableHead className="w-36 text-slate-700">SKU</TableHead>
+                <TableHead className="text-slate-700">Quarantine Reason & Defect Preview</TableHead>
+                <TableHead className="w-44 text-slate-700">Detected Timestamp</TableHead>
+                <TableHead className="w-36 text-center text-slate-700">Remediation</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {issues.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-36 text-center text-slate-400 dark:text-slate-500 text-xs">
+                  <TableCell colSpan={5} className="h-36 text-center text-slate-400 text-xs">
                     <CheckCircle2 className="h-6 w-6 text-emerald-500 mx-auto mb-1.5 opacity-80" />
                     Zero quarantined defects. All supplier records ingested cleanly!
                   </TableCell>
@@ -104,25 +117,25 @@ export const AttentionView: React.FC<AttentionViewProps> = ({
                   return (
                     <TableRow
                       key={iss.issue_id}
-                      className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 border-slate-200 dark:border-slate-800"
+                      className="hover:bg-slate-50/70 border-slate-200"
                     >
-                      <TableCell className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                      <TableCell className="font-mono text-xs text-slate-500">
                         #{(iss.issue_id || '').substring(0, 8)}
                       </TableCell>
-                      <TableCell className="font-mono font-bold text-slate-900 dark:text-slate-100">
-                        {iss.sku || <span className="text-red-500 italic">EMPTY SKU</span>}
+                      <TableCell className="font-mono font-bold text-slate-900">
+                        {iss.sku || <span className="text-rose-500 italic">EMPTY SKU</span>}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Badge variant="destructive" className="text-[10px] uppercase font-bold shrink-0">
                             {iss.reason}
                           </Badge>
-                          <span className="text-xs text-slate-600 dark:text-slate-300 truncate max-w-md">
+                          <span className="text-xs text-slate-600 truncate max-w-md">
                             {parsed.name ? `"${parsed.name}" (Price: $${parsed.price})` : 'Malformed Record'}
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                      <TableCell className="text-slate-500 font-mono text-[11px]">
                         {formatDateTime(iss.created_at)}
                       </TableCell>
                       <TableCell className="text-center">
@@ -130,7 +143,7 @@ export const AttentionView: React.FC<AttentionViewProps> = ({
                           variant="outline"
                           size="xs"
                           onClick={() => onRemediateClick(iss)}
-                          className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 border-indigo-200 dark:border-indigo-800 font-semibold"
+                          className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 border-indigo-200 font-semibold"
                         >
                           <Wrench className="h-3 w-3 mr-1" />
                           <span>Review & Fix</span>
@@ -145,7 +158,7 @@ export const AttentionView: React.FC<AttentionViewProps> = ({
         </div>
 
         {/* Pagination Bar */}
-        <div className="flex items-center justify-between p-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+        <div className="flex items-center justify-between p-4 border-t border-slate-200/80 text-xs text-slate-500 bg-slate-50/40">
           <div>
             Showing {issues.length > 0 ? (page - 1) * limit + 1 : 0} to{' '}
             {Math.min(page * limit, total)} of {formatNumber(total)} quarantined records
@@ -156,12 +169,12 @@ export const AttentionView: React.FC<AttentionViewProps> = ({
               size="sm"
               onClick={() => onPageChange(page - 1)}
               disabled={page <= 1}
-              className="h-8 px-2.5 border-slate-300 dark:border-slate-700"
+              className="h-8 px-2.5 border-slate-200"
             >
               <ChevronLeft className="h-3.5 w-3.5 mr-1" />
               <span>Prev</span>
             </Button>
-            <span className="font-mono font-semibold text-slate-700 dark:text-slate-300 px-2">
+            <span className="font-mono font-semibold text-slate-700 px-2">
               {page} / {totalPages}
             </span>
             <Button
@@ -169,7 +182,7 @@ export const AttentionView: React.FC<AttentionViewProps> = ({
               size="sm"
               onClick={() => onPageChange(page + 1)}
               disabled={page >= totalPages}
-              className="h-8 px-2.5 border-slate-300 dark:border-slate-700"
+              className="h-8 px-2.5 border-slate-200"
             >
               <span>Next</span>
               <ChevronRight className="h-3.5 w-3.5 ml-1" />

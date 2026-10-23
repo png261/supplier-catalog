@@ -199,6 +199,29 @@ func (h *Handler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	tenant.Lock()
 	if tenant.GetActiveJobID() != jobID || tenant.GetActiveCancel() == nil {
 		tenant.Unlock()
+		// Fallback: if job is orphaned in RUNNING/PENDING state in storage without an active in-memory runner, mark INTERRUPTED
+		if job, getErr := tenant.GetStorage().GetJob(r.Context(), jobID); getErr == nil && job != nil &&
+			(job.Status == domain.JobStatusRunning || job.Status == domain.JobStatusPending) {
+			_ = tenant.GetStorage().UpdateJobStatus(r.Context(), jobID, domain.JobStatusInterrupted)
+			tenant.GetBroker().Publish(Event{
+				Type:  "job_interrupted",
+				JobID: jobID,
+				Data: map[string]any{
+					"job_id":                jobID,
+					"status":                string(domain.JobStatusInterrupted),
+					"committed_batch_index": job.CommittedBatchIndex,
+					"total_batches":         job.TotalBatches,
+					"summary":               job.Summary,
+					"reason":                "cancelled by user request",
+				},
+			})
+			h.writeJSON(w, http.StatusOK, JobCancelResponse{
+				Status:  "cancelling",
+				JobID:   jobID,
+				Message: "cancellation signal sent successfully",
+			})
+			return
+		}
 		h.writeError(w, http.StatusNotFound, fmt.Sprintf("job %s is not currently running or active", jobID), ErrCodeJobNotFound)
 		return
 	}
@@ -374,6 +397,20 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 		if req.InvalidRatio != nil {
 			cfg.InvalidRatio = *req.InvalidRatio
 		}
+		if req.BaseTime != nil && strings.TrimSpace(*req.BaseTime) != "" {
+			if parsed, err := parseFlexTime(strings.TrimSpace(*req.BaseTime), false); err == nil {
+				cfg.BaseTime = parsed
+			}
+			if tsProvider, ok := tenant.GetStorage().(interface {
+				GetMaxSupplierTimestamp(context.Context) (time.Time, error)
+			}); ok {
+				if maxTs, err := tsProvider.GetMaxSupplierTimestamp(ctx); err == nil && !maxTs.IsZero() {
+					if cfg.BaseTime.IsZero() || !cfg.BaseTime.After(maxTs) {
+						cfg.BaseTime = maxTs.Add(24 * time.Hour)
+					}
+				}
+			}
+		}
 
 		// Validate ratio ranges
 		ratios := []float64{cfg.UpdateRatio, cfg.DuplicateRatio, cfg.OutOfOrderRatio, cfg.WithdrawnRatio, cfg.InvalidRatio}
@@ -421,9 +458,14 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if active != nil {
-		tenant.Unlock()
-		h.writeError(w, http.StatusConflict, fmt.Sprintf("a synchronization job is already running: %s", active.JobID), ErrCodeJobConflict)
-		return
+		// If there is no active in-memory runner and the DB job hasn't updated for > 15s, auto-recover it as INTERRUPTED
+		if time.Since(active.UpdatedAt) > 15*time.Second {
+			_ = tenant.GetStorage().UpdateJobStatus(ctx, active.JobID, domain.JobStatusInterrupted)
+		} else {
+			tenant.Unlock()
+			h.writeError(w, http.StatusConflict, fmt.Sprintf("a synchronization job is already running: %s", active.JobID), ErrCodeJobConflict)
+			return
+		}
 	}
 
 	// 3. Atomically create initial job state in storage while holding lock
@@ -615,9 +657,13 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if active != nil {
-		tenant.Unlock()
-		h.writeError(w, http.StatusConflict, fmt.Sprintf("job %s is already running", active.JobID), ErrCodeJobConflict)
-		return
+		if time.Since(active.UpdatedAt) > 15*time.Second {
+			_ = tenant.GetStorage().UpdateJobStatus(ctx, active.JobID, domain.JobStatusInterrupted)
+		} else {
+			tenant.Unlock()
+			h.writeError(w, http.StatusConflict, fmt.Sprintf("job %s is already running", active.JobID), ErrCodeJobConflict)
+			return
+		}
 	}
 
 	// Check 2c: Fetch target job
@@ -1540,6 +1586,9 @@ func (h *Handler) handleRollbackVersion(w http.ResponseWriter, r *http.Request) 
 	}
 
 	author := strings.TrimSpace(req.Author)
+	if author == "" {
+		author = strings.TrimSpace(req.Operator)
+	}
 	if author == "" {
 		author = "system"
 	}

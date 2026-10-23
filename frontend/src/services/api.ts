@@ -13,14 +13,17 @@ const RECENT_SHOPS_KEY = 'catalog_sync_recent_shops';
 const CLOUDFLARE_WORKER_URL = 'https://catalog-sync-worker.ezcert.workers.dev';
 
 export function getApiBaseUrl(): string {
-  const envUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-  if (envUrl) return envUrl;
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return '';
+    }
     if (host.includes('pages.dev') || host.includes('workers.dev')) {
       return CLOUDFLARE_WORKER_URL;
     }
   }
+  const envUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  if (envUrl) return envUrl;
   return '';
 }
 
@@ -105,10 +108,17 @@ async function shopFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   if (typeof input === 'string' && input.startsWith('/api') && base) {
     finalInput = `${base}${input}`;
   }
-  return fetch(finalInput, {
-    ...init,
-    headers,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  try {
+    return await fetch(finalInput, {
+      ...init,
+      headers,
+      signal: init?.signal || controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function handleResponse<T = any>(res: Response, fallbackErrMsg: string): Promise<T> {
@@ -211,10 +221,11 @@ export async function startJob(payload: any): Promise<{ job_id: string; status: 
   return handleResponse<{ job_id: string; status: string }>(res, 'Failed to start synchronization');
 }
 
-export async function resumeJob(jobId: string): Promise<any> {
+export async function resumeJob(jobId: string, payload?: any): Promise<any> {
   const res = await shopFetch(`/api/jobs/${encodeURIComponent(jobId)}/resume`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    body: payload ? JSON.stringify(payload) : undefined,
   });
   return handleResponse<any>(res, 'Failed to resume synchronization');
 }
@@ -253,21 +264,59 @@ export async function remediateProduct(payload: {
   return handleResponse<any>(res, 'Failed to remediate product');
 }
 
+function normalizeCatalogVersion(v: any): CatalogVersion {
+  if (!v || typeof v !== 'object') return v;
+  const summary = v.summary || {};
+  const added = v.items_added ?? summary.added ?? 0;
+  const updated = v.items_updated ?? summary.updated ?? 0;
+  const withdrawn = v.items_withdrawn ?? summary.withdrawn ?? 0;
+  const skipped = v.items_skipped ?? summary.skipped ?? 0;
+  const deadLetter = v.items_dead_letter ?? summary.dead_letter ?? 0;
+  return {
+    ...v,
+    items_added: added,
+    items_updated: updated,
+    items_withdrawn: withdrawn,
+    items_skipped: skipped,
+    items_dead_letter: deadLetter,
+    total_items_affected: v.total_items_affected ?? (added + updated + withdrawn),
+  };
+}
+
 export async function fetchVersions(limit = 50, offset = 0): Promise<{ versions: CatalogVersion[]; total: number }> {
   const res = await shopFetch(`/api/versions?limit=${limit}&offset=${offset}`);
-  return handleResponse<{ versions: CatalogVersion[]; total: number }>(res, 'Failed to fetch catalog versions');
+  const data = await handleResponse<{ versions: any[]; total: number }>(res, 'Failed to fetch catalog versions');
+  return {
+    ...data,
+    versions: Array.isArray(data.versions) ? data.versions.map(normalizeCatalogVersion) : [],
+    total: data.total ?? 0,
+  };
 }
 
 export async function fetchVersionDiff(versionId: string): Promise<VersionDiffResponse> {
   const res = await shopFetch(`/api/versions/${encodeURIComponent(versionId)}/diff`);
-  return handleResponse<VersionDiffResponse>(res, 'Failed to fetch version diff');
+  const data = await handleResponse<any>(res, 'Failed to fetch version diff');
+  if (Array.isArray(data)) {
+    return {
+      version: null as any,
+      changes: data,
+    };
+  }
+  return {
+    version: data?.version ? normalizeCatalogVersion(data.version) : (null as any),
+    changes: Array.isArray(data?.changes) ? data.changes : Array.isArray(data?.deltas) ? data.deltas : [],
+  };
 }
 
 export async function rollbackVersion(versionId: string, operator = 'staff'): Promise<{ status: string; version: CatalogVersion }> {
   const res = await shopFetch(`/api/versions/${encodeURIComponent(versionId)}/rollback`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ operator }),
+    body: JSON.stringify({ operator, author: operator }),
   });
-  return handleResponse<{ status: string; version: CatalogVersion }>(res, 'Failed to rollback version');
+  const data = await handleResponse<any>(res, 'Failed to rollback version');
+  return {
+    status: data?.status || 'success',
+    version: normalizeCatalogVersion(data?.version),
+  };
 }

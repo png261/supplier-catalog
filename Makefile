@@ -141,10 +141,14 @@ swagger: ## Generate declarative Swagger 2.0 / OpenAPI documentation using swagg
 docs: swagger ## Alias for swagger target
 
 ##@ Testing & Quality Assurance
-.PHONY: test test-race coverage lint fmt vet
+.PHONY: test test-race test-playwright coverage lint fmt vet
 test: ## Execute unit and integration tests with race detector
 	@echo "==> Executing test suite with race detector (go test -race ./...)..."
 	$(GO) test -race ./...
+
+test-playwright: build ## Execute full Playwright API and UI E2E tests
+	@echo "==> Running Playwright API & UI E2E test suite..."
+	npx playwright test
 
 test-race: ## Execute 5-iteration race stress tests (go test -race -count=5 ./...)
 	@echo "==> Executing 5-iteration race stress tests (go test -race -count=5 ./...)..."
