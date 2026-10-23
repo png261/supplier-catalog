@@ -1704,6 +1704,11 @@ export const AppContent: React.FC = () => {
     setActiveSyncingUpdateId(null);
     activeSyncingUpdateIdRef.current = null;
     setSyncedUpdateIds([]);
+    setVersions([]);
+    setVersionTotal(0);
+    setCatalog({ products: [], total: 0 });
+    setDlq({ issues: [], total: 0 });
+    setHistory({ jobs: [], total: 0 });
     setCurrentBatch(0);
     setTotalBatches(10);
     setThroughput(0);

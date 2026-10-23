@@ -82,12 +82,13 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
       else if (act === 'DEAD_LETTER') dlq++;
       else updated++;
     }
+    const hasChanges = changes.length > 0;
     return {
       all: changes.length,
-      added: added || version?.items_added || 0,
-      updated: updated || version?.items_updated || 0,
-      withdrawn: withdrawn || version?.items_withdrawn || 0,
-      dlq: dlq || version?.items_dead_letter || 0,
+      added: hasChanges ? added : (version?.items_added ?? 0),
+      updated: hasChanges ? updated : (version?.items_updated ?? 0),
+      withdrawn: hasChanges ? withdrawn : (version?.items_withdrawn ?? 0),
+      dlq: hasChanges ? dlq : (version?.items_dead_letter ?? 0),
     };
   }, [changes, version]);
 
