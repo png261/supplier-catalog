@@ -11,7 +11,6 @@ import {
 
 const SHOP_STORAGE_KEY = 'catalog_sync_active_shop_id';
 const RECENT_SHOPS_KEY = 'catalog_sync_recent_shops';
-const CLOUDFLARE_WORKER_URL = 'https://supplier-catalog-api.pages.dev';
 
 export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
@@ -19,13 +18,9 @@ export function getApiBaseUrl(): string {
     if (host === 'localhost' || host === '127.0.0.1') {
       return '';
     }
-    if (host.includes('pages.dev') || host.includes('workers.dev')) {
-      return CLOUDFLARE_WORKER_URL;
-    }
   }
-  const envUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-  if (envUrl) return envUrl;
-  return '';
+  const envUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
+  return envUrl;
 }
 
 export function getActiveShopId(): string {

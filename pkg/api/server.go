@@ -2,6 +2,9 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"strconv"
+	"time"
 
 	_ "coderpush/docs"
 	"coderpush/pkg/domain"
@@ -81,6 +84,11 @@ func NewProgressHook(broker *Broker) catalogSync.ProgressHook {
 					"total_dead_letter": cumulative.DeadLetter,
 				},
 			})
+		}
+		if delayStr := os.Getenv("SYNC_BATCH_DELAY_MS"); delayStr != "" {
+			if ms, err := strconv.Atoi(delayStr); err == nil && ms > 0 {
+				time.Sleep(time.Duration(ms) * time.Millisecond)
+			}
 		}
 	}
 }

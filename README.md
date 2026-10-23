@@ -13,14 +13,22 @@ A fault-tolerant supplier catalog synchronization engine built in **pure Go (`CG
 
 ## Live Links, API Docs & Video Demo
 
-| Resource | Cloud Production URL | Local / Docker Container URL |
+| Resource | Cloud Production URL | Local / Repository Path |
 |---|---|---|
 | **Frontend Web Dashboard** | **[https://supplier-catalog-frontend.pages.dev](https://supplier-catalog-frontend.pages.dev)** | **[http://localhost:8080](http://localhost:8080)** |
 | **Multi-Tenant Direct Link** | **[https://supplier-catalog-frontend.pages.dev/?shop=store-flagship](https://supplier-catalog-frontend.pages.dev/?shop=store-flagship)** | **[http://localhost:8080/?shop=store-flagship](http://localhost:8080/?shop=store-flagship)** |
 | **Backend REST API** | **[https://supplier-catalog-api.pages.dev](https://supplier-catalog-api.pages.dev)** | **[http://localhost:8080/api/jobs](http://localhost:8080/api/jobs)** |
 | **API Docs (Swagger UI)** | **[https://supplier-catalog-api.pages.dev/swagger/index.html](https://supplier-catalog-api.pages.dev/swagger/index.html)** | **[http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)** |
 | **OpenAPI 2.0 Spec (JSON)** | **[https://supplier-catalog-api.pages.dev/swagger/doc.json](https://supplier-catalog-api.pages.dev/swagger/doc.json)** | **[http://localhost:8080/swagger/doc.json](http://localhost:8080/swagger/doc.json)** |
-| **Full HD Video Demo (1080p)** | **[https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** | **[`./demo_walkthrough.mp4`](./demo_walkthrough.mp4)** *(3m42s, 1080p, clear natural voiceover)* |
+| **Full HD Video Demo (1080p)** | **[https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** | **[`docs/demo/demo_walkthrough.mp4`](./docs/demo/demo_walkthrough.mp4)** *(1080p live interaction + OpenMOSS/MOSS-TTS voiceover & BGM)* |
+
+### Video Walkthrough (`docs/demo/demo_walkthrough.mp4`)
+
+[![Watch Full HD Demo Video (1080p with OpenMOSS/MOSS-TTS Voiceover & BGM)](./docs/demo/demo_preview.gif)](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)
+
+<video src="./docs/demo/demo_walkthrough.mp4" controls width="100%"></video>
+
+> **Direct Video Links (1080p + Voiceover & BGM)**: **[Watch on Cloudflare Pages](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** · **[Open Local File (`docs/demo/demo_walkthrough.mp4`)](./docs/demo/demo_walkthrough.mp4)**
 
 ---
 
@@ -110,6 +118,7 @@ make test-playwright
 Detailed architecture diagrams, API specifications, and Assessment 1 notes are organized in the [`docs/`](./docs/README.md) directory:
 
 - **[`docs/README.md`](./docs/README.md)** — Documentation index & high-level system map
+- **[`docs/demo/demo_walkthrough.mp4`](./docs/demo/demo_walkthrough.mp4)** — Full HD 1080p live interactive walkthrough video with OpenMOSS/MOSS-TTS narration and background music
 - **[`docs/architecture-and-invariants.md`](./docs/architecture-and-invariants.md)** — Detailed Mermaid flowcharts, state machines, ER diagram, and mathematical invariants (A–E)
 - **[`docs/deployment-and-local-setup.md`](./docs/deployment-and-local-setup.md)** — Docker Compose, Native Go, CLI Generator, `curl` walkthrough, and CI/CD pipeline
 - **[`docs/api-and-dashboard-features.md`](./docs/api-and-dashboard-features.md)** — Sequence diagrams for Pre-Sync/Pre-Revert Diff Preview, Quarantine Remediation, Product History, and full REST/SSE API table

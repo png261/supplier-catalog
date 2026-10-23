@@ -15,6 +15,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  MIN_COVERAGE_PCT: ${{ vars.MIN_COVERAGE_PCT || '90.0' }}
+  MAX_IMAGE_SIZE_MB: ${{ vars.MAX_IMAGE_SIZE_MB || '25' }}
+  CF_D1_DATABASE_NAME: ${{ vars.CF_D1_DATABASE_NAME || 'catalog-db' }}
+  CF_API_PROJECT_NAME: ${{ vars.CF_API_PROJECT_NAME || 'supplier-catalog-api' }}
+  CF_FRONTEND_PROJECT_NAME: ${{ vars.CF_FRONTEND_PROJECT_NAME || 'supplier-catalog-frontend' }}
+  VITE_API_URL: ${{ vars.VITE_API_URL || format('https://{0}.pages.dev', vars.CF_API_PROJECT_NAME || 'supplier-catalog-api') }}
+
 jobs:
   # ============================================================================
   # 1. SECURITY & LINT GATES
@@ -23,7 +31,7 @@ jobs:
     name: Security & Lint Gates
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository (Full History for Secret Scanning)
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -41,22 +49,15 @@ jobs:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
           GITLEAKS_ENABLE_SUMMARY: true
 
-      - name: Verify Go Formatting (gofmt)
+      - name: Verify Go Formatting & Static Analysis
         run: |
-          echo "Verifying code formatting with gofmt..."
           UNFORMATTED=$(gofmt -l .)
           if [ -n "$UNFORMATTED" ]; then
             echo "::error::The following Go files are not formatted according to gofmt:"
             echo "$UNFORMATTED"
             exit 1
           fi
-          echo "gofmt check passed: all files formatted properly."
-
-      - name: Run Go Static Analysis (go vet)
-        run: |
-          echo "Running go vet ./... analysis..."
           go vet ./...
-          echo "go vet check passed: 0 static issues detected."
 
   # ============================================================================
   # 2. TEST RIGOR & COVERAGE ENFORCEMENT GATE
@@ -74,38 +75,13 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Execute Multi-Iteration Race Tests (count=5)
-        run: |
-          echo "Executing race detection tests across 5 iterations..."
-          go test -v -race -count=5 ./...
+      - name: Execute Multi-Iteration Race Tests
+        run: go test -v -race -count=5 ./...
 
-      - name: Generate Coverage Profile & Enforce Threshold (>= 90.0%)
+      - name: Generate Coverage Profile & Enforce Threshold
         run: |
-          echo "Generating statement coverage profile across all packages..."
           go test -v -coverprofile=coverage.out -covermode=atomic -coverpkg=./pkg/... ./...
-          go tool cover -func=coverage.out
-          
-          # Extract total statement coverage percentage
-          TOTAL_COVERAGE=$(go tool cover -func=coverage.out | grep "total:" | awk '{print $3}' | tr -d '%')
-          echo "Evaluated Project Total Statement Coverage: ${TOTAL_COVERAGE}%"
-          
-          if [ -z "$TOTAL_COVERAGE" ]; then
-            echo "::error::Failed to extract statement coverage percentage from coverage.out!"
-            exit 1
-          fi
-          
-          # Enforce >= 90.0% threshold using POSIX awk
-          awk -v cov="$TOTAL_COVERAGE" -v min="90.0" 'BEGIN {
-            if (cov + 0 < min + 0) {
-              printf("::error::Project statement coverage (%.2f%%) is below the required 90.0%% threshold!\n", cov);
-              exit 1;
-            }
-            printf("Statement coverage threshold satisfied: %.2f%% >= %.1f%%\n", cov, min);
-            exit 0;
-          }'
-
-      - name: Generate HTML Coverage Report
-        run: |
+          ./scripts/check-coverage.sh coverage.out "${MIN_COVERAGE_PCT}"
           go tool cover -html=coverage.out -o coverage.html
 
       - name: Upload Test Coverage Artifacts
@@ -159,22 +135,22 @@ jobs:
           context: .
           file: ./Dockerfile
           load: true
-          tags: coderpush-engine:validation
+          tags: ${{ github.event.repository.name }}:validation
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Assert Docker Image Size <= 25MB
+      - name: Assert Docker Image Size Limit
+        env:
+          IMAGE_TAG: ${{ github.event.repository.name }}:validation
         run: |
-          SIZE_BYTES=$(docker image inspect coderpush-engine:validation --format='{{.Size}}')
-          MAX_BYTES=26214400 # 25MB (25 * 1024 * 1024 bytes)
+          SIZE_BYTES=$(docker image inspect "${IMAGE_TAG}" --format='{{.Size}}')
+          MAX_BYTES=$((MAX_IMAGE_SIZE_MB * 1024 * 1024))
           SIZE_MB=$(awk -v b="$SIZE_BYTES" 'BEGIN { printf("%.2f", b / (1024 * 1024)) }')
           echo "Evaluated Docker Image Size: ${SIZE_MB} MB (${SIZE_BYTES} bytes)"
-          
           if [ "$SIZE_BYTES" -gt "$MAX_BYTES" ]; then
-            echo "::error::Docker image size (${SIZE_MB} MB / ${SIZE_BYTES} bytes) exceeds maximum limit of 25MB (${MAX_BYTES} bytes)!"
+            echo "::error::Docker image size (${SIZE_MB} MB) exceeds maximum limit of ${MAX_IMAGE_SIZE_MB} MB!"
             exit 1
           fi
-          echo "Docker image size constraint validated: ${SIZE_MB} MB <= 25.00 MB."
 
       - name: Publish Docker Image to GHCR
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
@@ -188,13 +164,12 @@ jobs:
           cache-from: type=gha
 
   # ============================================================================
-  # 4. CONTINUOUS DEPLOYMENT (CLOUDFLARE)
+  # 4. CONTINUOUS DEPLOYMENT (CLOUDFLARE NATIVE ACTIONS)
   # ============================================================================
   deploy-to-cloudflare:
     name: Deploy to Cloudflare (Pages + Worker + D1)
     runs-on: ubuntu-latest
     needs: [build-and-package]
-    # Deploy exclusively when code is merged into main
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     concurrency:
       group: cloudflare-deploy-${{ github.ref }}
@@ -208,14 +183,14 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            worker/package-lock.json
 
-      - name: Install Dependencies
+      - name: Install Dependencies & Run Worker Tests
         run: |
-          npm --prefix frontend install
-          npm --prefix worker install
-
-      - name: Run Worker Tests
-        run: |
+          npm --prefix frontend ci
+          npm --prefix worker ci
           npm --prefix worker test
 
       - name: Apply Cloudflare D1 Migrations
@@ -223,33 +198,32 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4.144.0"
-          command: d1 migrations apply catalog-db --remote
+          command: d1 migrations apply ${{ env.CF_D1_DATABASE_NAME }} --remote
 
-      - name: Bundle Backend Worker for Cloudflare Pages
-        run: |
-          npx wrangler deploy --dry-run --outdir worker/dist-pages
-          cp worker/dist-pages/index.js worker/dist-pages/_worker.js
-          rm -f worker/dist-pages/index.js*
+      - name: Bundle Backend Worker via Wrangler Action
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --dry-run --outdir worker/dist-pages
+          postCommands: |
+            cp worker/dist-pages/index.js worker/dist-pages/_worker.js
+            rm -f worker/dist-pages/index.js*
 
-      - name: Deploy Cloudflare Backend API (supplier-catalog-api)
+      - name: Deploy Cloudflare Backend API
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: worker
-          wranglerVersion: "4.144.0"
-          command: pages deploy dist-pages --project-name supplier-catalog-api --branch main
+          command: pages deploy dist-pages --project-name ${{ env.CF_API_PROJECT_NAME }} --branch ${{ github.ref_name }}
 
-      - name: Build Frontend for Cloudflare Pages
-        run: |
-          npm --prefix frontend run build:pages
-
-      - name: Deploy Cloudflare Pages (Frontend SPA)
+      - name: Build & Deploy Cloudflare Pages (Frontend SPA)
         uses: cloudflare/wrangler-action@v3
+        env:
+          VITE_API_URL: ${{ env.VITE_API_URL }}
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4.144.0"
-          command: pages deploy frontend/dist --project-name supplier-catalog-frontend --branch main
-
+          preCommands: npm --prefix frontend run build:pages
+          command: pages deploy frontend/dist --project-name ${{ env.CF_FRONTEND_PROJECT_NAME }} --branch ${{ github.ref_name }}

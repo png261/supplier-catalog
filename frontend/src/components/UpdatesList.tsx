@@ -140,11 +140,11 @@ export const UpdatesList: React.FC<UpdatesListProps> = ({
       {/* Updates List */}
       <div className="divide-y divide-slate-100">
         {updates.map((update) => {
-          const isSynced = syncedIds.includes(update.id);
           const isThisSyncing = isAnySyncing && activeSyncingId === update.id;
           const isThisReverting = isRollingBack && activeRevertingId === update.id;
           const isThisInterrupted =
             !isAnySyncing && !isRollingBack && isInterrupted && targetInterruptedId === update.id;
+          const isSynced = !isThisInterrupted && syncedIds.includes(update.id);
 
           return (
             <div

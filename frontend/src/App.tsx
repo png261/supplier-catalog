@@ -196,6 +196,7 @@ export const AppContent: React.FC = () => {
       localStorage.removeItem(`active_sync_total_${currentShop}`);
     } catch (_) {}
     setInterruptedUpdateId(null);
+    setInterruptedJob(null);
     if (activeSyncingUpdateIdRef.current === updateId) {
       activeSyncingUpdateIdRef.current = null;
       setActiveSyncingUpdateId(null);
@@ -542,12 +543,15 @@ export const AppContent: React.FC = () => {
           });
         }
         if (activeSyncingUpdateIdRef.current) {
-          setInterruptedUpdateId(activeSyncingUpdateIdRef.current);
+          const haltedId = activeSyncingUpdateIdRef.current;
+          setInterruptedUpdateId(haltedId);
+          setSyncedUpdateIds((prev) => prev.filter((id) => id !== haltedId));
           try {
             localStorage.setItem(
               `interrupted_sync_update_id_${shopIdRef.current}`,
-              activeSyncingUpdateIdRef.current
+              haltedId
             );
+            localStorage.removeItem(`active_sync_update_id_${shopIdRef.current}`);
           } catch (_) {}
         }
         setActiveJob(null);
@@ -880,6 +884,12 @@ export const AppContent: React.FC = () => {
       if (p === 1 && list.length > 0) {
         const activeSyncVers = getActiveSyncVersions(list);
         setSyncedUpdateIds(() => {
+          const currentInterruptedId =
+            interruptedUpdateId ||
+            localStorage.getItem(`interrupted_sync_update_id_${shopIdRef.current}`);
+          const currentActiveId =
+            activeSyncingUpdateIdRef.current ||
+            localStorage.getItem(`active_sync_update_id_${shopIdRef.current}`);
           const reconciled = new Set<string>();
           let unmatchedGenericCount = 0;
           for (const sv of activeSyncVers) {
@@ -887,14 +897,19 @@ export const AppContent: React.FC = () => {
               (u) => sv.description?.includes(u.title) || sv.description?.includes(u.version)
             );
             if (matched) {
-              reconciled.add(matched.id);
+              if (matched.id !== currentInterruptedId && matched.id !== currentActiveId) {
+                reconciled.add(matched.id);
+              }
             } else {
               unmatchedGenericCount++;
             }
           }
           if (reconciled.size === 0 && unmatchedGenericCount > 0) {
             for (let i = 0; i < Math.min(unmatchedGenericCount, catalogUpdates.length); i++) {
-              reconciled.add(catalogUpdates[i].id);
+              const cid = catalogUpdates[i].id;
+              if (cid !== currentInterruptedId && cid !== currentActiveId) {
+                reconciled.add(cid);
+              }
             }
           }
           const next = Array.from(reconciled);
