@@ -1253,7 +1253,7 @@ export const AppContent: React.FC = () => {
         withdrawn_ratio: update.withdrawnRatio / 100,
         invalid_ratio: update.invalidRatio / 100,
         base_time: update.baseTime,
-        description: `${update.title} — ${update.description}`,
+        description: `${update.version ? `${update.version} — ` : ''}${update.title} — ${update.description}`,
       });
       const rawChanges = previewRes.changes || [];
       const finalChanges = mode === 'revert' ? toRevertDiffItems(rawChanges) : rawChanges;
@@ -1549,7 +1549,7 @@ export const AppContent: React.FC = () => {
       withdrawn_ratio: update.withdrawnRatio / 100,
       invalid_ratio: update.invalidRatio / 100,
       base_time: update.baseTime,
-      description: `${update.title} — ${update.description}`,
+      description: `${update.version ? `${update.version} — ` : ''}${update.title} — ${update.description}`,
     };
 
     const now = Date.now();
@@ -1955,8 +1955,8 @@ export const AppContent: React.FC = () => {
                 syncedUpdateIds={syncedUpdateIds}
                 activeSyncingUpdateId={activeSyncingUpdateId}
                 activeRevertingUpdateId={activeRevertingUpdateId}
-                onSyncUpdate={(u) => handleInspectUpdate(u, 'sync')}
-                onRevertUpdate={(u) => handleInspectUpdate(u, 'revert')}
+                onSyncUpdate={(u) => handleSyncUpdate(u)}
+                onRevertUpdate={(u) => handleRevertUpdate(u)}
                 onInspectUpdate={(u) => handleInspectUpdate(u, 'inspect')}
                 isRollingBack={isRollingBack}
                 analyticsRange={analyticsRange}

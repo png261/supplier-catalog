@@ -1763,12 +1763,11 @@ func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID str
 		if exists {
 			targetStatus := baseline.Status
 			targetTimestamp := now
-			if isSyncRevertMode {
-				if !baseline.SupplierTimestamp.IsZero() {
-					targetTimestamp = baseline.SupplierTimestamp
-				}
-			} else if live.Status == domain.StatusWithdrawn && baseline.Status == domain.StatusActive {
-				// CRITICAL INVARIANT A ENFORCEMENT (for manual PATCH versions):
+			if isSyncRevertMode && !baseline.SupplierTimestamp.IsZero() {
+				targetTimestamp = baseline.SupplierTimestamp
+			}
+			if live.Status == domain.StatusWithdrawn && baseline.Status == domain.StatusActive {
+				// Invariant C (Permanent Tombstone): Withdrawn products cannot be resurrected
 				targetStatus = domain.StatusWithdrawn
 			}
 

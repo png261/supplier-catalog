@@ -220,8 +220,8 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
                         ? `Preview Sync: ${previewUpdate.title}`
                         : previewUpdate.title
                       : version.version_number > 0
-                      ? `Version v${version.version_number} Row-Level Diff`
-                      : `Session ${version.version_id} Row-Level Diff`}
+                      ? `Version v${version.version_number} Diff`
+                      : `Session ${version.version_id} Diff`}
                   </span>
                   {previewMode === 'revert' ? (
                     <Badge variant="outline" className="border-amber-500 text-amber-700 bg-amber-50 font-mono text-[10px]">

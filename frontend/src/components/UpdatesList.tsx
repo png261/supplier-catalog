@@ -240,7 +240,7 @@ export const UpdatesList: React.FC<UpdatesListProps> = ({
                           onClick={() => onRevert(update)}
                           disabled={isAnySyncing || isRollingBack}
                           className="h-7 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 hover:text-amber-800 font-medium shadow-none"
-                          title={`Revert ${update.title}`}
+                          title={`Revert to version before ${update.title}`}
                         >
                           <RotateCcw className="h-3 w-3 mr-1" />
                           Revert
