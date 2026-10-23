@@ -51,6 +51,7 @@ definitions:
     - NOT_FOUND
     - JOB_CONFLICT
     - INTERNAL_ERROR
+    - COMMIT_BLOCKED
     type: string
     x-enum-varnames:
     - ErrCodeInvalidRequest
@@ -58,6 +59,7 @@ definitions:
     - ErrCodeNotFound
     - ErrCodeJobConflict
     - ErrCodeInternalError
+    - ErrCodeCommitBlocked
   api.ErrorResponse:
     properties:
       code:
@@ -147,6 +149,15 @@ definitions:
           $ref: '#/definitions/domain.SyncJob'
         type: array
     type: object
+  api.PatchPublishResponse:
+    properties:
+      deltas:
+        items:
+          $ref: '#/definitions/domain.ItemDelta'
+        type: array
+      version:
+        $ref: '#/definitions/domain.CatalogVersion'
+    type: object
   api.ProductListResponse:
     properties:
       limit:
@@ -189,6 +200,24 @@ definitions:
         example: success
         type: string
     type: object
+  api.RollbackRequest:
+    properties:
+      author:
+        example: ops-team
+        type: string
+      description:
+        example: Rollback due to supplier pricing error
+        type: string
+    type: object
+  api.RollbackResponse:
+    properties:
+      deltas:
+        items:
+          $ref: '#/definitions/domain.ItemDelta'
+        type: array
+      version:
+        $ref: '#/definitions/domain.CatalogVersion'
+    type: object
   api.SyncJobResponse:
     properties:
       committed_batch_index:
@@ -207,6 +236,19 @@ definitions:
         type: integer
       updated_at:
         type: string
+    type: object
+  api.VersionListResponse:
+    properties:
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+      versions:
+        items:
+          $ref: '#/definitions/domain.CatalogVersion'
+        type: array
     type: object
   domain.AggregatedMetrics:
     properties:
@@ -238,6 +280,42 @@ definitions:
       summary:
         $ref: '#/definitions/domain.ChangeSummary'
     type: object
+  domain.CatalogPatch:
+    properties:
+      author:
+        type: string
+      description:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/domain.PatchItem'
+        type: array
+      patch_id:
+        type: string
+    type: object
+  domain.CatalogVersion:
+    properties:
+      author:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      metadata:
+        type: string
+      revert_of_version_id:
+        type: string
+      summary:
+        $ref: '#/definitions/domain.ChangeSummary'
+      total_items_affected:
+        type: integer
+      type:
+        $ref: '#/definitions/domain.VersionType'
+      version_id:
+        type: string
+      version_number:
+        type: integer
+    type: object
   domain.ChangeSummary:
     properties:
       added:
@@ -250,6 +328,17 @@ definitions:
         type: integer
       withdrawn:
         type: integer
+    type: object
+  domain.DeadLetterItem:
+    properties:
+      raw_payload:
+        type: string
+      reason:
+        type: string
+      sku:
+        type: string
+      timestamp:
+        type: string
     type: object
   domain.DeadLetterRecord:
     properties:
@@ -266,6 +355,43 @@ definitions:
       reason:
         type: string
       sku:
+        type: string
+    type: object
+  domain.DeltaAction:
+    enum:
+    - ADDED
+    - UPDATED
+    - WITHDRAWN
+    type: string
+    x-enum-varnames:
+    - DeltaActionAdded
+    - DeltaActionUpdated
+    - DeltaActionWithdrawn
+  domain.ItemDelta:
+    properties:
+      action:
+        $ref: '#/definitions/domain.DeltaAction'
+      delta_id:
+        type: integer
+      new_name:
+        type: string
+      new_price:
+        type: number
+      new_status:
+        $ref: '#/definitions/domain.ProductStatus'
+      new_timestamp:
+        type: string
+      old_name:
+        type: string
+      old_price:
+        type: number
+      old_status:
+        $ref: '#/definitions/domain.ProductStatus'
+      old_timestamp:
+        type: string
+      sku:
+        type: string
+      version_id:
         type: string
     type: object
   domain.JobStatus:
@@ -293,6 +419,52 @@ definitions:
         type: string
       to:
         type: string
+    type: object
+  domain.PatchItem:
+    properties:
+      name:
+        type: string
+      price:
+        type: number
+      sku:
+        type: string
+      status:
+        $ref: '#/definitions/domain.ProductStatus'
+      timestamp:
+        type: string
+    type: object
+  domain.PatchPreviewResult:
+    properties:
+      added_count:
+        type: integer
+      can_commit:
+        type: boolean
+      catalog_checksum:
+        type: string
+      dead_letter_count:
+        type: integer
+      dead_letter_items:
+        items:
+          $ref: '#/definitions/domain.DeadLetterItem'
+        type: array
+      deltas:
+        items:
+          $ref: '#/definitions/domain.ItemDelta'
+        type: array
+      invalid_records:
+        items:
+          $ref: '#/definitions/domain.DeadLetterRecord'
+        type: array
+      skipped_count:
+        type: integer
+      summary:
+        $ref: '#/definitions/domain.ChangeSummary'
+      total_items:
+        type: integer
+      updated_count:
+        type: integer
+      withdrawn_count:
+        type: integer
     type: object
   domain.Product:
     properties:
@@ -337,6 +509,18 @@ definitions:
       updated_at:
         type: string
     type: object
+  domain.VersionType:
+    enum:
+    - INITIAL
+    - PATCH
+    - ROLLBACK
+    - SYNC
+    type: string
+    x-enum-varnames:
+    - VersionTypeInitial
+    - VersionTypePatch
+    - VersionTypeRollback
+    - VersionTypeSync
 host: localhost:8080
 info:
   contact:
@@ -498,7 +682,8 @@ paths:
   /api/events:
     get:
       description: Establishes a persistent Server-Sent Events (SSE) connection streaming
-        real-time job progress, status changes, and dead-letter notifications.
+        real-time job progress, status changes, dead-letter notifications, and catalog
+        version events (version_created, version_rollback).
       parameters:
       - description: 'Isolated shop tenant ID (default: ''default'')'
         in: header
@@ -818,6 +1003,100 @@ paths:
       summary: Get synchronization metrics and analytics
       tags:
       - Metrics
+  /api/patches/preview:
+    post:
+      consumes:
+      - application/json
+      description: Performs an immutable, dry-run in-memory projection of a sparse
+        catalog patch without database writes, validating invariants and returning
+        projected item deltas, checksum, and quarantined issues.
+      parameters:
+      - description: 'Isolated shop tenant ID (default: ''default'')'
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      - description: Catalog patch payload containing sparse item updates
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain.CatalogPatch'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Dry-run simulation diff preview and invariant checks
+          schema:
+            $ref: '#/definitions/domain.PatchPreviewResult'
+        "400":
+          description: Malformed JSON, empty items, or invalid shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Failed to snapshot catalog or internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Preview catalog patch updates
+      tags:
+      - Patches
+  /api/patches/publish:
+    post:
+      consumes:
+      - application/json
+      description: Commits a validated catalog patch atomically to the live catalog,
+        journals pre-image deltas, creates a new PATCH milestone version, and broadcasts
+        real-time SSE notification. Blocked if dead-letter issues are detected.
+      parameters:
+      - description: 'Isolated shop tenant ID (default: ''default'')'
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      - description: Catalog patch payload containing sparse item updates
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain.CatalogPatch'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Version published successfully with recorded item deltas
+          schema:
+            $ref: '#/definitions/api.PatchPublishResponse'
+        "400":
+          description: Malformed JSON, empty author/description/items, or invalid
+            shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "422":
+          description: Patch commit blocked due to quarantined dead letters or invariant
+            violations
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Transaction or database storage error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Publish catalog patch updates
+      tags:
+      - Patches
   /api/products:
     get:
       description: Retrieves a paginated list of catalog products, with optional status
@@ -869,4 +1148,148 @@ paths:
       summary: List catalog products
       tags:
       - Products
+  /api/versions:
+    get:
+      description: Retrieves a paginated list of catalog version milestones with summary
+        counts and author metadata, ordered newest first.
+      parameters:
+      - description: Maximum versions to return (default 20, min 1, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0, min 0)
+        in: query
+        name: offset
+        type: integer
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Paginated list of catalog versions
+          schema:
+            $ref: '#/definitions/api.VersionListResponse'
+        "400":
+          description: Invalid limit, offset, or shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal database query error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List catalog versions
+      tags:
+      - Versions
+  /api/versions/{id}/diff:
+    get:
+      description: Retrieves all item-level pre-image deltas (previous and new prices,
+        names, and statuses) associated with a specific catalog version milestone.
+      parameters:
+      - description: Catalog Version ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Array of pre-image item deltas recorded for the version
+          schema:
+            items:
+              $ref: '#/definitions/domain.ItemDelta'
+            type: array
+        "400":
+          description: Missing version ID in URL path or invalid shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Catalog version not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal database query error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get catalog version diff
+      tags:
+      - Versions
+  /api/versions/{id}/rollback:
+    post:
+      consumes:
+      - application/json
+      description: Reconstructs baseline catalog state at target version, calculates
+        inverse deltas preserving tombstones (Invariant A), updates live catalog,
+        generates a forward ROLLBACK version milestone, and broadcasts real-time SSE
+        notification.
+      parameters:
+      - description: Target Catalog Version ID to revert to
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Isolated shop tenant ID
+        in: header
+        name: X-Shop-Id
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop
+        type: string
+      - description: Tenant shop identifier alias
+        in: query
+        name: shop_id
+        type: string
+      - description: Rollback author and audit description
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.RollbackRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Catalog reverted successfully with new forward version and
+            deltas
+          schema:
+            $ref: '#/definitions/api.RollbackResponse'
+        "400":
+          description: Missing version ID in URL path, malformed request body, or
+            invalid shop ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Target catalog version not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Rollback transaction or storage error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Rollback catalog to target version (Git-revert)
+      tags:
+      - Versions
 swagger: "2.0"

@@ -16,6 +16,7 @@ CGO_ENABLED ?= 0
 BIN_DIR := bin
 SERVER_BIN := $(BIN_DIR)/server
 GENERATOR_BIN := $(BIN_DIR)/generator
+MIGRATE_BIN := $(BIN_DIR)/migrate
 
 # ------------------------------------------------------------------------------
 # Runtime Parameters (Configurable via CLI arguments or environment)
@@ -93,6 +94,12 @@ build-generator: ## Compile standalone mock generator binary (bin/generator)
 	@mkdir -p $(BIN_DIR)
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) build $(GOFLAGS) -trimpath -ldflags="-s -w" -o $(GENERATOR_BIN) ./cmd/generator
 	@echo "✅ Compiled: $(GENERATOR_BIN)"
+
+build-migrate: ## Compile database migration tool binary (bin/migrate)
+	@echo "==> Building migration binary (CGO_ENABLED=$(CGO_ENABLED))..."
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) build $(GOFLAGS) -trimpath -ldflags="-s -w" -o $(MIGRATE_BIN) ./cmd/migrate
+	@echo "✅ Compiled: $(MIGRATE_BIN)"
 
 .PHONY: run-server run-generator
 run-server: ## Build and run HTTP catalog server with defaults (cmd/server)
@@ -203,6 +210,23 @@ docker-down: ## Stop and remove docker compose containers and networks
 
 docker-logs: ## Tail docker compose container logs
 	$(COMPOSE) logs -f
+
+##@ Database Migrations (golang-migrate)
+.PHONY: migrate-up migrate-down migrate-version migrate-create
+migrate-up: ## Apply pending SQLite migrations (golang-migrate)
+	@echo "==> Running SQLite migrations up on $(DB_PATH)..."
+	@$(GO) run ./cmd/migrate -action up -db $(DB_PATH)
+
+migrate-down: ## Rollback all SQLite migrations (golang-migrate)
+	@echo "==> Rolling back SQLite migrations on $(DB_PATH)..."
+	@$(GO) run ./cmd/migrate -action down -db $(DB_PATH)
+
+migrate-version: ## Check current SQLite schema version (golang-migrate)
+	@$(GO) run ./cmd/migrate -action version -db $(DB_PATH)
+
+migrate-create: ## Create a new pair of up/down migration files (usage: make migrate-create NAME=my_migration)
+	@if [ -z "$(NAME)" ]; then echo "Error: NAME is required. Example: make migrate-create NAME=add_audit_log"; exit 1; fi
+	@$(GO) run ./cmd/migrate -action create -name $(NAME)
 
 ##@ Cloud Deployment (Cloudflare)
 .PHONY: deploy-cloudflare cf-dev cf-d1-migrate cf-test

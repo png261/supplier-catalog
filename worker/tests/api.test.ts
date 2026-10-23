@@ -143,4 +143,59 @@ describe('Cloudflare Worker REST API', () => {
     const data = await prods.json();
     expect(data.total).toBe(0);
   });
+
+  it('GET /api/versions and POST /api/versions/:id/rollback executes non-destructive rollback', async () => {
+    // 1. Seed version v1 and deltas
+    await mockDB.exec(`
+      INSERT INTO catalog_versions (
+        shop_id, version_id, version_number, description, author, type,
+        items_added, items_updated, items_withdrawn, total_items_affected, metadata, created_at
+      ) VALUES (
+        'default', 'v1-init', 1, 'Initial Catalog Baseline', 'seed', 'INITIAL',
+        1, 0, 0, 1, '{}', '2026-01-01T00:00:00Z'
+      );
+
+      INSERT INTO catalog_version_deltas (
+        shop_id, version_id, sku, action, old_name, new_name, old_price, new_price,
+        old_status, new_status, old_timestamp, new_timestamp
+      ) VALUES (
+        'default', 'v1-init', 'SKU-001', 'ADDED', NULL, 'Widget v1', NULL, 100.0,
+        NULL, 'ACTIVE', NULL, '2026-01-01T00:00:00Z'
+      );
+
+      INSERT INTO products (shop_id, sku, name, price, status, supplier_timestamp, updated_at)
+      VALUES ('default', 'SKU-001', 'Widget v2 Modified', 150.0, 'ACTIVE', '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z');
+    `);
+
+    // 2. Query versions list
+    const listRes = await makeRequest('/api/versions');
+    expect(listRes.status).toBe(200);
+    const listData = await listRes.json();
+    expect(listData.total).toBe(1);
+    expect(listData.versions[0].version_id).toBe('v1-init');
+
+    // 3. Query diff
+    const diffRes = await makeRequest('/api/versions/v1-init/diff');
+    expect(diffRes.status).toBe(200);
+    const diffData = await diffRes.json();
+    expect(diffData.changes.length).toBe(1);
+    expect(diffData.changes[0].sku).toBe('SKU-001');
+
+    // 4. Execute rollback to v1-init
+    const rollbackRes = await makeRequest('/api/versions/v1-init/rollback', {
+      method: 'POST',
+      body: JSON.stringify({ operator: 'test-staff', description: 'Revert to initial widget price' }),
+    });
+    expect(rollbackRes.status).toBe(200);
+    const rollbackData = await rollbackRes.json();
+    expect(rollbackData.version.type).toBe('ROLLBACK');
+    expect(rollbackData.version.version_number).toBe(2);
+    expect(rollbackData.version.revert_of_version_id).toBe('v1-init');
+
+    // 5. Verify live product was restored to price 100.0 and name 'Widget v1'
+    const prodRes = await makeRequest('/api/products');
+    const prodData = await prodRes.json();
+    expect(prodData.products[0].price).toBe(100.0);
+    expect(prodData.products[0].name).toBe('Widget v1');
+  });
 });

@@ -47,9 +47,12 @@ export class MockD1Database {
   }
 
   private initSchema() {
-    const migrationFile = path.resolve(__dirname, '../../migrations/0001_initial.sql');
-    const sql = fs.readFileSync(migrationFile, 'utf-8');
-    this.db.exec(sql);
+    const migrationsDir = path.resolve(__dirname, '../../migrations');
+    const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
+    for (const file of files) {
+      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
+      this.db.exec(sql);
+    }
   }
 
   prepare(query: string): MockD1PreparedStatement {

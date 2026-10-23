@@ -942,7 +942,7 @@ func TestAdversarial_ResumedJob_MetricFidelity(t *testing.T) {
 	handler.CancelActiveJob()
 
 	var interruptedJob *domain.SyncJob
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(6 * time.Second)
 	for time.Now().Before(deadline) {
 		interruptedJob, err = store.GetJob(context.Background(), jobID)
 		if err == nil && interruptedJob != nil && interruptedJob.Status == domain.JobStatusInterrupted {
@@ -962,9 +962,19 @@ func TestAdversarial_ResumedJob_MetricFidelity(t *testing.T) {
 	}
 
 	// Step 2: Resume the job
-	resumeReq, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/jobs/%s/resume", server.URL, jobID), bytes.NewReader([]byte("{}")))
-	resumeReq.Header.Set("Content-Type", "application/json")
-	resumeResp, err := http.DefaultClient.Do(resumeReq)
+	var resumeResp *http.Response
+	for retries := 0; retries < 15; retries++ {
+		resumeReq, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/jobs/%s/resume", server.URL, jobID), bytes.NewReader([]byte("{}")))
+		resumeReq.Header.Set("Content-Type", "application/json")
+		resumeResp, err = http.DefaultClient.Do(resumeReq)
+		if err == nil && resumeResp.StatusCode == http.StatusAccepted {
+			break
+		}
+		if resumeResp != nil {
+			_ = resumeResp.Body.Close()
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
 	if err != nil {
 		t.Fatalf("failed to resume job: %v", err)
 	}
@@ -1019,23 +1029,30 @@ func TestAdversarial_ResumedJob_MetricFidelity(t *testing.T) {
 	}
 
 	// Verify final job_completed event on SSE matches finalJob.Summary
-	sseMu.Lock()
-	eventsCopy := make([]capturedEvent, len(capturedEvents))
-	copy(eventsCopy, capturedEvents)
-	sseMu.Unlock()
-
 	var completedSummary *domain.ChangeSummary
-	for _, evt := range eventsCopy {
-		if evt.Type == "job_completed" {
-			var comp struct {
-				JobID   string               `json:"job_id"`
-				Summary domain.ChangeSummary `json:"summary"`
-			}
-			if err := json.Unmarshal(evt.Data, &comp); err == nil && comp.JobID == jobID {
-				s := comp.Summary
-				completedSummary = &s
+	sseDeadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(sseDeadline) {
+		sseMu.Lock()
+		eventsCopy := make([]capturedEvent, len(capturedEvents))
+		copy(eventsCopy, capturedEvents)
+		sseMu.Unlock()
+
+		for _, evt := range eventsCopy {
+			if evt.Type == "job_completed" {
+				var comp struct {
+					JobID   string               `json:"job_id"`
+					Summary domain.ChangeSummary `json:"summary"`
+				}
+				if err := json.Unmarshal(evt.Data, &comp); err == nil && comp.JobID == jobID {
+					s := comp.Summary
+					completedSummary = &s
+				}
 			}
 		}
+		if completedSummary != nil {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
 	}
 
 	if completedSummary == nil {

@@ -75,7 +75,7 @@ func TestSwaggerUIEndpoints(t *testing.T) {
 		t.Errorf("expected API title, got %v", info)
 	}
 
-	// Verify all 10 distinct API paths are documented
+	// Verify all 15 distinct API paths are documented
 	paths, ok := doc["paths"].(map[string]any)
 	if !ok {
 		t.Fatalf("doc has no paths object")
@@ -91,6 +91,11 @@ func TestSwaggerUIEndpoints(t *testing.T) {
 		"/api/metrics",
 		"/api/database/reset",
 		"/api/events",
+		"/api/patches/preview",
+		"/api/patches/publish",
+		"/api/versions",
+		"/api/versions/{id}/diff",
+		"/api/versions/{id}/rollback",
 	}
 	for _, p := range expectedPaths {
 		if _, exists := paths[p]; !exists {
@@ -112,5 +117,41 @@ func TestSwaggerUIEndpoints(t *testing.T) {
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for /swagger/nonexistent.xyz, got %d", rec.Code)
+	}
+}
+
+func TestSwagger_Milestone4EndpointsDocumented(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/swagger/doc.json", nil)
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /swagger/doc.json, got %d", rec.Code)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("failed parsing doc.json: %v", err)
+	}
+
+	paths, ok := doc["paths"].(map[string]any)
+	if !ok {
+		t.Fatalf("doc has no paths object")
+	}
+
+	requiredM4Routes := []string{
+		"/api/patches/preview",
+		"/api/patches/publish",
+		"/api/versions",
+		"/api/versions/{id}/diff",
+		"/api/versions/{id}/rollback",
+	}
+
+	for _, route := range requiredM4Routes {
+		if _, exists := paths[route]; !exists {
+			t.Errorf("CRITICAL SWAGGER DEFECT: required Milestone 4 route %s missing from /swagger/doc.json", route)
+		}
 	}
 }

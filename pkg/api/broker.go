@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"coderpush/pkg/domain"
 )
 
 // Event represents an SSE event frame or keepalive comment.
@@ -146,6 +148,70 @@ func (b *Broker) Publish(evt Event) {
 	case b.broadcast <- evt:
 	case <-b.quit:
 	}
+}
+
+// VersionCreatedPayload defines the real-time event payload emitted when a catalog version is published.
+type VersionCreatedPayload struct {
+	VersionID     string               `json:"version_id"`
+	VersionNumber int                  `json:"version_number"`
+	Type          domain.VersionType   `json:"type"`
+	Summary       domain.ChangeSummary `json:"summary"`
+	Author        string               `json:"author"`
+	Timestamp     time.Time            `json:"timestamp"`
+}
+
+// VersionRollbackPayload defines the real-time event payload emitted when a catalog version rollback is executed.
+type VersionRollbackPayload struct {
+	VersionID         string               `json:"version_id"`
+	VersionNumber     int                  `json:"version_number"`
+	RevertOfVersionID string               `json:"revert_of_version_id"`
+	Summary           domain.ChangeSummary `json:"summary"`
+	Author            string               `json:"author"`
+	Timestamp         time.Time            `json:"timestamp"`
+}
+
+// PublishVersionCreated broadcasts a "version_created" event to all connected tenant SSE subscribers.
+func (b *Broker) PublishVersionCreated(ver *domain.CatalogVersion) {
+	if b == nil || ver == nil {
+		return
+	}
+	b.Publish(Event{
+		Type:      "version_created",
+		JobID:     ver.VersionID,
+		Timestamp: ver.CreatedAt,
+		Data: VersionCreatedPayload{
+			VersionID:     ver.VersionID,
+			VersionNumber: ver.VersionNumber,
+			Type:          ver.Type,
+			Summary:       ver.Summary,
+			Author:        ver.Author,
+			Timestamp:     ver.CreatedAt,
+		},
+	})
+}
+
+// PublishVersionRollback broadcasts a "version_rollback" event to all connected tenant SSE subscribers.
+func (b *Broker) PublishVersionRollback(ver *domain.CatalogVersion) {
+	if b == nil || ver == nil {
+		return
+	}
+	revertOf := ""
+	if ver.RevertOfVersionID != nil {
+		revertOf = *ver.RevertOfVersionID
+	}
+	b.Publish(Event{
+		Type:      "version_rollback",
+		JobID:     ver.VersionID,
+		Timestamp: ver.CreatedAt,
+		Data: VersionRollbackPayload{
+			VersionID:         ver.VersionID,
+			VersionNumber:     ver.VersionNumber,
+			RevertOfVersionID: revertOf,
+			Summary:           ver.Summary,
+			Author:            ver.Author,
+			Timestamp:         ver.CreatedAt,
+		},
+	})
 }
 
 // ClientCount returns the number of currently active subscribers.

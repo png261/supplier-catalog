@@ -94,3 +94,57 @@ export interface AggregatedMetrics {
   total_syncs: number;
   completed_syncs: number;
 }
+
+export type VersionType = 'INITIAL' | 'PATCH' | 'ROLLBACK' | 'SYNC';
+export type DeltaAction = 'ADDED' | 'UPDATED' | 'WITHDRAWN';
+
+export interface CatalogVersion {
+  shop_id: string;
+  version_id: string;
+  version_number: number;
+  description: string;
+  author: string;
+  type: VersionType;
+  revert_of_version_id?: string | null;
+  items_added: number;
+  items_updated: number;
+  items_withdrawn: number;
+  items_skipped: number;
+  items_dead_letter: number;
+  total_items_affected: number;
+  metadata: string;
+  created_at: string;
+}
+
+export interface ItemDelta {
+  delta_id?: number;
+  shop_id?: string;
+  version_id: string;
+  sku: string;
+  action: DeltaAction;
+  old_name?: string | null;
+  new_name: string;
+  old_price?: number | null;
+  new_price: number;
+  old_status?: ProductStatus | null;
+  new_status: ProductStatus;
+  old_timestamp?: string | null;
+  new_timestamp: string;
+}
+
+export interface VersionDiffItem {
+  sku: string;
+  action: DeltaAction;
+  old_name?: string | null;
+  new_name: string;
+  old_price?: number | null;
+  new_price: number;
+  old_status?: ProductStatus | null;
+  new_status: ProductStatus;
+}
+
+export interface VersionDiffResponse {
+  version: CatalogVersion;
+  changes: VersionDiffItem[];
+}
+

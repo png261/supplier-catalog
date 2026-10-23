@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strconv"
@@ -123,10 +124,17 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/products", h.handleListProducts)
 	mux.HandleFunc("GET /api/metrics", h.handleGetMetrics)
 	mux.HandleFunc("GET /api/events", h.handleEvents)
+
+	// Catalog Versioning & Patch Management (Milestone 4)
+	mux.HandleFunc("POST /api/patches/preview", h.handlePreviewPatch)
+	mux.HandleFunc("POST /api/patches/publish", h.handlePublishPatch)
+	mux.HandleFunc("GET /api/versions", h.handleListVersions)
+	mux.HandleFunc("GET /api/versions/{id}/diff", h.handleGetVersionDiff)
+	mux.HandleFunc("POST /api/versions/{id}/rollback", h.handleRollbackVersion)
 }
 
 // @Summary Stream real-time synchronization events (SSE)
-// @Description Establishes a persistent Server-Sent Events (SSE) connection streaming real-time job progress, status changes, and dead-letter notifications.
+// @Description Establishes a persistent Server-Sent Events (SSE) connection streaming real-time job progress, status changes, dead-letter notifications, and catalog version events (version_created, version_rollback).
 // @Tags Events
 // @Produce text/event-stream
 // @Param X-Shop-Id header string false "Isolated shop tenant ID (default: 'default')"
@@ -198,6 +206,7 @@ func (h *Handler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	tenant.Unlock()
 
 	cancel()
+
 	h.writeJSON(w, http.StatusOK, JobCancelResponse{
 		Status:  "cancelling",
 		JobID:   jobID,
@@ -419,12 +428,27 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Atomically create initial job state in storage while holding lock
 	now := time.Now().UTC()
+	type persistedJobSpec struct {
+		Mode            string            `json:"mode"`
+		GeneratorConfig *generator.Config `json:"generator_config,omitempty"`
+		Batches         []domain.Batch    `json:"batches,omitempty"`
+	}
+	spec := persistedJobSpec{Mode: req.Mode}
+	if req.Mode == "batches" {
+		spec.Batches = directBatches
+	} else {
+		cfgCopy := cfg
+		spec.GeneratorConfig = &cfgCopy
+	}
+	specBytes, _ := json.Marshal(spec)
+
 	job := &domain.SyncJob{
 		JobID:               jobID,
 		Status:              domain.JobStatusRunning,
 		TotalBatches:        totalBatches,
 		CommittedBatchIndex: -1,
 		Summary:             domain.ChangeSummary{},
+		JobConfig:           string(specBytes),
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
@@ -497,6 +521,7 @@ func (h *Handler) handleStartJob(w http.ResponseWriter, r *http.Request) {
 
 		finalJob, err := tenant.GetEngine().RunJob(bgCtx, jobID, stream)
 		if err != nil {
+			_ = tenant.GetStorage().UpdateJobStatus(context.Background(), jobID, domain.JobStatusInterrupted)
 			var committedIdx int = -1
 			var sum domain.ChangeSummary
 			if finalJob != nil {
@@ -619,26 +644,53 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Resolve and validate generator config for resumption
+	// 3. Resolve and validate generator/batches config for resumption (including across process restarts)
+	var resumeBatches []domain.Batch
+	resumeMode := "generator"
 	cfg, ok := tenant.GetActiveConfig(jobID)
 	if !ok {
 		cfg = generator.DefaultConfig()
 		cfg.TotalBatches = job.TotalBatches
+		if job.JobConfig != "" {
+			var persisted struct {
+				Mode            string            `json:"mode"`
+				GeneratorConfig *generator.Config `json:"generator_config,omitempty"`
+				Batches         []domain.Batch    `json:"batches,omitempty"`
+			}
+			if err := json.Unmarshal([]byte(job.JobConfig), &persisted); err == nil {
+				if persisted.Mode == "batches" && len(persisted.Batches) > 0 {
+					resumeMode = "batches"
+					resumeBatches = persisted.Batches
+				} else if persisted.GeneratorConfig != nil {
+					cfg = *persisted.GeneratorConfig
+					if cfg.ReservoirCapacity <= 0 {
+						cfg.ReservoirCapacity = 1000
+					}
+				}
+			}
+		}
 	}
-	if resumeReq.Seed != nil {
-		cfg.Seed = *resumeReq.Seed
-	}
-	if resumeReq.TotalBatches != nil {
-		cfg.TotalBatches = *resumeReq.TotalBatches
-	}
-	if resumeReq.BatchSize != nil {
-		cfg.BatchSize = *resumeReq.BatchSize
+	if resumeMode == "generator" {
+		if resumeReq.Seed != nil {
+			cfg.Seed = *resumeReq.Seed
+		}
+		if resumeReq.TotalBatches != nil {
+			cfg.TotalBatches = *resumeReq.TotalBatches
+		}
+		if resumeReq.BatchSize != nil {
+			cfg.BatchSize = *resumeReq.BatchSize
+		}
+
+		if err := cfg.Validate(); err != nil {
+			tenant.Unlock()
+			h.writeError(w, http.StatusBadRequest, "invalid resume config: "+err.Error(), ErrCodeInvalidRequest)
+			return
+		}
 	}
 
-	if err := cfg.Validate(); err != nil {
-		tenant.Unlock()
-		h.writeError(w, http.StatusBadRequest, "invalid resume config: "+err.Error(), ErrCodeInvalidRequest)
-		return
+	resumedTotalBatches := cfg.TotalBatches
+	if resumeMode == "batches" {
+		resumedTotalBatches = len(resumeBatches)
 	}
 
 	// 4. CRITICAL: Atomically transition job status to RUNNING in storage while holding lock
@@ -652,7 +704,9 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	bgCtx, cancel := context.WithCancel(context.Background())
 	tenant.SetActiveJobID(jobID)
 	tenant.SetActiveCancel(cancel)
-	tenant.SetActiveConfig(jobID, cfg)
+	if resumeMode == "generator" {
+		tenant.SetActiveConfig(jobID, cfg)
+	}
 	tenant.Unlock()
 
 	// 6. Respond 202 Accepted
@@ -660,7 +714,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusAccepted, SyncJobResponse{
 		JobID:               job.JobID,
 		Status:              domain.JobStatusRunning,
-		TotalBatches:        cfg.TotalBatches,
+		TotalBatches:        resumedTotalBatches,
 		CommittedBatchIndex: job.CommittedBatchIndex,
 		Summary:             job.Summary,
 		CreatedAt:           job.CreatedAt,
@@ -675,7 +729,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 			"job_id":             jobID,
 			"status":             string(domain.JobStatusRunning),
 			"resumed_from_batch": job.CommittedBatchIndex + 1,
-			"total_batches":      cfg.TotalBatches,
+			"total_batches":      resumedTotalBatches,
 			"timestamp":          now,
 		},
 	})
@@ -692,14 +746,25 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 			tenant.Unlock()
 		}()
 
-		gen, err := generator.New(cfg)
-		if err != nil {
-			return
+		var stream <-chan domain.Batch
+		if resumeMode == "batches" {
+			ch := make(chan domain.Batch, len(resumeBatches))
+			for _, b := range resumeBatches {
+				ch <- b
+			}
+			close(ch)
+			stream = ch
+		} else {
+			gen, err := generator.New(cfg)
+			if err != nil {
+				return
+			}
+			stream = gen.StreamBatches(bgCtx, jobID)
 		}
-		stream := gen.StreamBatches(bgCtx, jobID)
 
 		finalJob, err := tenant.GetEngine().ResumeJob(bgCtx, jobID, stream)
 		if err != nil {
+			_ = tenant.GetStorage().UpdateJobStatus(context.Background(), jobID, domain.JobStatusInterrupted)
 			var committedIdx int = -1
 			var sum domain.ChangeSummary
 			if finalJob != nil {
@@ -713,7 +778,7 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 					"job_id":                jobID,
 					"status":                string(domain.JobStatusInterrupted),
 					"committed_batch_index": committedIdx,
-					"total_batches":         cfg.TotalBatches,
+					"total_batches":         resumedTotalBatches,
 					"summary":               sum,
 					"reason":                err.Error(),
 				},
@@ -794,21 +859,10 @@ func (h *Handler) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	jobs, total, err := tenant.GetStorage().ListJobs(ctx, limit, offset)
+	jobs, total, err := tenant.GetStorage().ListJobsByStatus(ctx, statusFilter, limit, offset)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "failed to query sync jobs: "+err.Error(), ErrCodeInternalError)
 		return
-	}
-
-	if statusFilter != "" {
-		filtered := make([]domain.SyncJob, 0)
-		for _, j := range jobs {
-			if string(j.Status) == statusFilter {
-				filtered = append(filtered, j)
-			}
-		}
-		jobs = filtered
-		total = len(filtered)
 	}
 
 	if jobs == nil {
@@ -1026,6 +1080,10 @@ func (h *Handler) handleResolveDeadLetter(w http.ResponseWriter, r *http.Request
 			h.writeError(w, http.StatusNotFound, "dead letter issue not found", ErrCodeNotFound)
 			return
 		}
+		if errors.Is(err, domain.ErrResurrectionRestricted) || errors.Is(err, domain.ErrOutdatedTimestamp) {
+			h.writeError(w, http.StatusConflict, err.Error(), ErrCodeCommitBlocked)
+			return
+		}
 		h.writeError(w, http.StatusInternalServerError, "failed to resolve dead letter record: "+err.Error(), ErrCodeInternalError)
 		return
 	}
@@ -1223,4 +1281,288 @@ func parseFlexTime(s string, isEndOfDay bool) (time.Time, error) {
 		return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC), nil
 	}
 	return time.Time{}, errors.New("cannot parse time string")
+}
+
+// @Summary Preview catalog patch updates
+// @Description Performs an immutable, dry-run in-memory projection of a sparse catalog patch without database writes, validating invariants and returning projected item deltas, checksum, and quarantined issues.
+// @Tags Patches
+// @Accept json
+// @Produce json
+// @Param X-Shop-Id header string false "Isolated shop tenant ID (default: 'default')"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Param request body domain.CatalogPatch true "Catalog patch payload containing sparse item updates"
+// @Success 200 {object} domain.PatchPreviewResult "Dry-run simulation diff preview and invariant checks"
+// @Failure 400 {object} ErrorResponse "Malformed JSON, empty items, or invalid shop ID"
+// @Failure 500 {object} ErrorResponse "Failed to snapshot catalog or internal server error"
+// @Router /api/patches/preview [post]
+func (h *Handler) handlePreviewPatch(w http.ResponseWriter, r *http.Request) {
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	if r.Body == nil {
+		h.writeError(w, http.StatusBadRequest, "request body cannot be empty", ErrCodeInvalidRequest)
+		return
+	}
+
+	var patch domain.CatalogPatch
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		h.writeError(w, http.StatusBadRequest, "malformed JSON request body", ErrCodeInvalidRequest)
+		return
+	}
+
+	if len(patch.Items) == 0 {
+		h.writeError(w, http.StatusBadRequest, "patch items cannot be empty", ErrCodeInvalidRequest)
+		return
+	}
+
+	preview, err := catalogSync.PreviewPatch(r.Context(), tenant.GetStorage(), patch)
+	if err != nil {
+		if errors.Is(err, domain.ErrEmptyPatchItems) {
+			h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+			return
+		}
+		h.writeError(w, http.StatusInternalServerError, "failed to preview patch: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, preview)
+}
+
+// @Summary Publish catalog patch updates
+// @Description Commits a validated catalog patch atomically to the live catalog, journals pre-image deltas, creates a new PATCH milestone version, and broadcasts real-time SSE notification. Blocked if dead-letter issues are detected.
+// @Tags Patches
+// @Accept json
+// @Produce json
+// @Param X-Shop-Id header string false "Isolated shop tenant ID (default: 'default')"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Param request body domain.CatalogPatch true "Catalog patch payload containing sparse item updates"
+// @Success 201 {object} PatchPublishResponse "Version published successfully with recorded item deltas"
+// @Failure 400 {object} ErrorResponse "Malformed JSON, empty author/description/items, or invalid shop ID"
+// @Failure 422 {object} ErrorResponse "Patch commit blocked due to quarantined dead letters or invariant violations"
+// @Failure 500 {object} ErrorResponse "Transaction or database storage error"
+// @Router /api/patches/publish [post]
+func (h *Handler) handlePublishPatch(w http.ResponseWriter, r *http.Request) {
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	if r.Body == nil {
+		h.writeError(w, http.StatusBadRequest, "request body cannot be empty", ErrCodeInvalidRequest)
+		return
+	}
+
+	var patch domain.CatalogPatch
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		h.writeError(w, http.StatusBadRequest, "malformed JSON request body", ErrCodeInvalidRequest)
+		return
+	}
+
+	if err := patch.Validate(); err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	engine := catalogSync.NewPatchEngine(tenant.GetStorage())
+	ver, deltas, err := engine.PublishPatch(r.Context(), patch)
+	if err != nil {
+		if errors.Is(err, domain.ErrPatchContainsInvalidRecords) {
+			h.writeError(w, http.StatusUnprocessableEntity, err.Error(), ErrCodeCommitBlocked)
+			return
+		}
+		if errors.Is(err, domain.ErrEmptyPatchDescription) ||
+			errors.Is(err, domain.ErrEmptyPatchAuthor) ||
+			errors.Is(err, domain.ErrEmptyPatchItems) {
+			h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+			return
+		}
+		h.writeError(w, http.StatusInternalServerError, "failed to publish patch: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+
+	// Broadcast SSE event
+	tenant.GetBroker().PublishVersionCreated(ver)
+
+	h.writeJSON(w, http.StatusCreated, PatchPublishResponse{
+		Version: *ver,
+		Deltas:  deltas,
+	})
+}
+
+// @Summary List catalog versions
+// @Description Retrieves a paginated list of catalog version milestones with summary counts and author metadata, ordered newest first.
+// @Tags Versions
+// @Produce json
+// @Param limit query int false "Maximum versions to return (default 20, min 1, max 100)"
+// @Param offset query int false "Pagination offset (default 0, min 0)"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {object} VersionListResponse "Paginated list of catalog versions"
+// @Failure 400 {object} ErrorResponse "Invalid limit, offset, or shop ID"
+// @Failure 500 {object} ErrorResponse "Internal database query error"
+// @Router /api/versions [get]
+func (h *Handler) handleListVersions(w http.ResponseWriter, r *http.Request) {
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	q := r.URL.Query()
+	limit := 20
+	if lStr := q.Get("limit"); lStr != "" {
+		val, err := strconv.Atoi(lStr)
+		if err != nil || val < 1 {
+			h.writeError(w, http.StatusBadRequest, "invalid limit parameter", ErrCodeInvalidRequest)
+			return
+		}
+		limit = val
+	}
+
+	offset := 0
+	if oStr := q.Get("offset"); oStr != "" {
+		val, err := strconv.Atoi(oStr)
+		if err != nil || val < 0 {
+			h.writeError(w, http.StatusBadRequest, "invalid offset parameter", ErrCodeInvalidRequest)
+			return
+		}
+		offset = val
+	}
+
+	versions, total, err := tenant.GetStorage().ListVersions(r.Context(), limit, offset)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "failed to query versions: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+	if versions == nil {
+		versions = []domain.CatalogVersion{}
+	}
+
+	h.writeJSON(w, http.StatusOK, VersionListResponse{
+		Versions: versions,
+		Total:    total,
+		Limit:    limit,
+		Offset:   offset,
+	})
+}
+
+// @Summary Get catalog version diff
+// @Description Retrieves all item-level pre-image deltas (previous and new prices, names, and statuses) associated with a specific catalog version milestone.
+// @Tags Versions
+// @Produce json
+// @Param id path string true "Catalog Version ID"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Success 200 {array} domain.ItemDelta "Array of pre-image item deltas recorded for the version"
+// @Failure 400 {object} ErrorResponse "Missing version ID in URL path or invalid shop ID"
+// @Failure 404 {object} ErrorResponse "Catalog version not found"
+// @Failure 500 {object} ErrorResponse "Internal database query error"
+// @Router /api/versions/{id}/diff [get]
+func (h *Handler) handleGetVersionDiff(w http.ResponseWriter, r *http.Request) {
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	versionID := strings.TrimSpace(r.PathValue("id"))
+	if versionID == "" {
+		h.writeError(w, http.StatusBadRequest, "version ID is required in URL path", ErrCodeInvalidRequest)
+		return
+	}
+
+	// Verify version exists
+	_, err = tenant.GetStorage().GetVersion(r.Context(), versionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrVersionNotFound) {
+			h.writeError(w, http.StatusNotFound, "catalog version not found: "+versionID, ErrCodeNotFound)
+			return
+		}
+		h.writeError(w, http.StatusInternalServerError, "failed to retrieve catalog version: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+
+	deltas, err := tenant.GetStorage().GetVersionDeltas(r.Context(), versionID)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "failed to retrieve version deltas: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+	if deltas == nil {
+		deltas = []domain.ItemDelta{}
+	}
+
+	h.writeJSON(w, http.StatusOK, deltas)
+}
+
+// @Summary Rollback catalog to target version (Git-revert)
+// @Description Reconstructs baseline catalog state at target version, calculates inverse deltas preserving tombstones (Invariant A), updates live catalog, generates a forward ROLLBACK version milestone, and broadcasts real-time SSE notification.
+// @Tags Versions
+// @Accept json
+// @Produce json
+// @Param id path string true "Target Catalog Version ID to revert to"
+// @Param X-Shop-Id header string false "Isolated shop tenant ID"
+// @Param shop query string false "Tenant shop identifier alias"
+// @Param shop_id query string false "Tenant shop identifier alias"
+// @Param request body RollbackRequest false "Rollback author and audit description"
+// @Success 200 {object} RollbackResponse "Catalog reverted successfully with new forward version and deltas"
+// @Failure 400 {object} ErrorResponse "Missing version ID in URL path, malformed request body, or invalid shop ID"
+// @Failure 404 {object} ErrorResponse "Target catalog version not found"
+// @Failure 500 {object} ErrorResponse "Rollback transaction or storage error"
+// @Router /api/versions/{id}/rollback [post]
+func (h *Handler) handleRollbackVersion(w http.ResponseWriter, r *http.Request) {
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	targetVersionID := strings.TrimSpace(r.PathValue("id"))
+	if targetVersionID == "" {
+		h.writeError(w, http.StatusBadRequest, "version ID is required in URL path", ErrCodeInvalidRequest)
+		return
+	}
+
+	var req RollbackRequest
+	if r.Body != nil {
+		dec := json.NewDecoder(r.Body)
+		if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			h.writeError(w, http.StatusBadRequest, "malformed JSON request body", ErrCodeInvalidRequest)
+			return
+		}
+	}
+
+	author := strings.TrimSpace(req.Author)
+	if author == "" {
+		author = "system"
+	}
+	description := strings.TrimSpace(req.Description)
+	if description == "" {
+		description = fmt.Sprintf("Rollback to version %s", targetVersionID)
+	}
+
+	rollbackVer, deltas, err := tenant.GetStorage().RollbackVersion(r.Context(), targetVersionID, author, description)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrVersionNotFound) {
+			h.writeError(w, http.StatusNotFound, "catalog version not found: "+targetVersionID, ErrCodeNotFound)
+			return
+		}
+		h.writeError(w, http.StatusInternalServerError, "failed to execute rollback: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+
+	// Broadcast SSE event
+	tenant.GetBroker().PublishVersionRollback(rollbackVer)
+
+	h.writeJSON(w, http.StatusOK, RollbackResponse{
+		Version: *rollbackVer,
+		Deltas:  deltas,
+	})
 }

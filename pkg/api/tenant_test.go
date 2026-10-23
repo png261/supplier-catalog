@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -345,7 +346,7 @@ func TestMultiTenantCleanup(t *testing.T) {
 	}
 
 	// Manually age the tenant and file
-	tenant.LastAccess = time.Now().Add(-2 * time.Hour)
+	tenant.SetLastAccess(time.Now().Add(-2 * time.Hour))
 	past := time.Now().Add(-10 * time.Hour)
 	_ = os.Chtimes(dbFile, past, past)
 
@@ -355,4 +356,49 @@ func TestMultiTenantCleanup(t *testing.T) {
 	if _, err := os.Stat(dbFile); !os.IsNotExist(err) {
 		t.Errorf("expected DB file to be pruned, but stat returned err=%v", err)
 	}
+}
+
+func TestMultiTenantConcurrentGetOrCreateRace(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "coderpush-race-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, _ := storage.Open(filepath.Join(tempDir, "main.db"))
+	defer store.Close()
+	broker := NewBroker()
+	defer broker.Close()
+	eng := catalogSync.NewEngine(store)
+
+	handler := NewHandler(store, eng, broker, WithHandlerDataDir(tempDir))
+	tm := handler.tenantManager
+
+	const numGoroutines = 50
+	const iterationsPerGoroutine = 100
+	var wg sync.WaitGroup
+	startBarrier := make(chan struct{})
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-startBarrier
+			for j := 0; j < iterationsPerGoroutine; j++ {
+				tenant, err := tm.GetOrCreate("shared-race-shop")
+				if err != nil {
+					t.Errorf("GetOrCreate error: %v", err)
+					return
+				}
+				if tenant == nil {
+					t.Errorf("expected tenant not nil")
+					return
+				}
+				_ = tenant.GetLastAccess()
+			}
+		}()
+	}
+
+	close(startBarrier)
+	wg.Wait()
 }

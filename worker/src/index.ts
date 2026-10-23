@@ -128,6 +128,18 @@ app.post('/api/jobs', async (c) => {
       return c.json({ error: 'sum of anomaly and update ratios cannot exceed 1.0', code: 'INVALID_REQUEST' }, 400);
     }
 
+    let baseTime = body.base_time;
+    const maxTs = await storage.getMaxSupplierTimestamp(shopId);
+    if (maxTs) {
+      const maxDate = new Date(maxTs).getTime();
+      const reqDate = baseTime ? new Date(baseTime).getTime() : 0;
+      if (!baseTime || isNaN(reqDate) || reqDate <= maxDate) {
+        baseTime = new Date(maxDate + 86400000).toISOString();
+      }
+    } else if (!baseTime) {
+      baseTime = '2026-01-01T00:00:00.000Z';
+    }
+
     generatorConfig = {
       seed: body.seed ?? 42,
       total_batches: totalBatches,
@@ -138,6 +150,7 @@ app.post('/api/jobs', async (c) => {
       withdrawn_ratio: body.withdrawn_ratio ?? 0.05,
       invalid_ratio: body.invalid_ratio ?? 0.05,
       reservoir_capacity: 1000,
+      base_time: baseTime,
     };
   } else {
     return c.json({ error: `unsupported mode: ${mode}`, code: 'INVALID_REQUEST' }, 400);
@@ -162,6 +175,7 @@ app.post('/api/jobs', async (c) => {
   // Broadcast job_started
   broker.publish(shopId, {
     type: 'JOB_STARTED',
+    shop_id: shopId,
     job_id: jobId,
     status: 'RUNNING',
     total_batches: totalBatches,
@@ -186,6 +200,7 @@ app.post('/api/jobs', async (c) => {
             activeJobs.delete(shopId);
             broker.publish(shopId, {
               type: 'JOB_INTERRUPTED',
+              shop_id: shopId,
               job_id: jobId,
               status: 'INTERRUPTED',
               committed_batch_index: batchIndex - 1,
@@ -214,6 +229,7 @@ app.post('/api/jobs', async (c) => {
           // Emit BATCH_COMMITTED
           broker.publish(shopId, {
             type: 'BATCH_COMMITTED',
+            shop_id: shopId,
             job_id: jobId,
             batch_index: batchIndex,
             total_batches: totalBatches,
@@ -225,6 +241,7 @@ app.post('/api/jobs', async (c) => {
           if (delta.dead_letter > 0) {
             broker.publish(shopId, {
               type: 'dead_letter',
+              shop_id: shopId,
               job_id: jobId,
               batch_index: batchIndex,
               new_issues: delta.dead_letter,
@@ -240,6 +257,7 @@ app.post('/api/jobs', async (c) => {
 
         broker.publish(shopId, {
           type: 'JOB_COMPLETED',
+          shop_id: shopId,
           job_id: jobId,
           status: 'COMPLETED',
           total_batches: totalBatches,
@@ -251,6 +269,7 @@ app.post('/api/jobs', async (c) => {
         activeJobs.delete(shopId);
         broker.publish(shopId, {
           type: 'JOB_FAILED',
+          shop_id: shopId,
           job_id: jobId,
           error: err?.message || 'internal batch execution error',
         });
@@ -299,6 +318,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
   const now = new Date().toISOString();
   broker.publish(shopId, {
     type: 'JOB_STARTED',
+    shop_id: shopId,
     job_id: jobId,
     status: 'RUNNING',
     resumed_from_batch: startBatchIndex,
@@ -328,6 +348,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
             activeJobs.delete(shopId);
             broker.publish(shopId, {
               type: 'JOB_INTERRUPTED',
+              shop_id: shopId,
               job_id: jobId,
               status: 'INTERRUPTED',
               committed_batch_index: batchIndex - 1,
@@ -348,6 +369,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
 
           broker.publish(shopId, {
             type: 'BATCH_COMMITTED',
+            shop_id: shopId,
             job_id: jobId,
             batch_index: batchIndex,
             total_batches: totalBatches,
@@ -362,6 +384,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
 
         broker.publish(shopId, {
           type: 'JOB_COMPLETED',
+          shop_id: shopId,
           job_id: jobId,
           status: 'COMPLETED',
           total_batches: totalBatches,
@@ -373,6 +396,7 @@ app.post('/api/jobs/:id/resume', async (c) => {
         activeJobs.delete(shopId);
         broker.publish(shopId, {
           type: 'JOB_FAILED',
+          shop_id: shopId,
           job_id: jobId,
           error: err?.message || 'internal error on resume',
         });
@@ -573,6 +597,96 @@ app.get('/api/metrics', async (c) => {
   });
 });
 
+// --- Catalog Versions & Rollback Endpoints ---
+
+app.get('/api/versions', async (c) => {
+  const shopId = getTenantShopId(c);
+  const storage = new D1Storage(c.env.DB);
+  const limit = parseInt(c.req.query('limit') || '20', 10);
+  const offset = parseInt(c.req.query('offset') || '0', 10);
+
+  const { versions, total } = await storage.listVersions(shopId, limit, offset);
+  return c.json({
+    versions,
+    total,
+    limit,
+    offset,
+  });
+});
+
+app.get('/api/versions/:id/diff', async (c) => {
+  const shopId = getTenantShopId(c);
+  const storage = new D1Storage(c.env.DB);
+  const versionId = c.req.param('id');
+
+  const version = await storage.getVersion(shopId, versionId);
+  if (!version) {
+    return c.json({ error: `version ${versionId} not found`, code: 'NOT_FOUND' }, 404);
+  }
+
+  const deltas = await storage.getVersionDeltas(shopId, versionId);
+  const changes = deltas.map((d) => ({
+    sku: d.sku,
+    action: d.action,
+    old_name: d.old_name,
+    new_name: d.new_name,
+    old_price: d.old_price,
+    new_price: d.new_price,
+    old_status: d.old_status,
+    new_status: d.new_status,
+  }));
+
+  return c.json({
+    version,
+    changes,
+  });
+});
+
+app.post('/api/versions/:id/rollback', async (c) => {
+  const shopId = getTenantShopId(c);
+  const storage = new D1Storage(c.env.DB);
+  const targetVersionId = c.req.param('id');
+
+  let body: any = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    body = {};
+  }
+
+  const operator = body.operator || 'staff';
+  const description = body.description || '';
+
+  try {
+    const result = await storage.rollbackVersion(shopId, targetVersionId, operator, description);
+
+    // Notify real-time subscribers via SSE broker
+    broker.publish(shopId, {
+      type: 'version_rollback',
+      data: {
+        shop_id: shopId,
+        reverted_version_id: targetVersionId,
+        new_version_id: result.version.version_id,
+        new_version_number: result.version.version_number,
+        items_affected: result.version.total_items_affected,
+        author: operator,
+        timestamp: result.version.created_at,
+      },
+    });
+
+    return c.json({
+      status: 'success',
+      version: result.version,
+      deltas: result.deltas,
+    });
+  } catch (err: any) {
+    if (err.message && err.message.includes('not found')) {
+      return c.json({ error: err.message, code: 'NOT_FOUND' }, 404);
+    }
+    return c.json({ error: err.message || 'failed to rollback version', code: 'INTERNAL_ERROR' }, 500);
+  }
+});
+
 // --- Database Reset ---
 
 app.post('/api/database/reset', async (c) => {
@@ -580,7 +694,14 @@ app.post('/api/database/reset', async (c) => {
   const storage = new D1Storage(c.env.DB);
 
   if (activeJobs.has(shopId)) {
-    return c.json({ error: 'cannot reset database while a job is running', code: 'JOB_CONFLICT' }, 409);
+    const activeJobId = activeJobs.get(shopId);
+    if (activeJobId) {
+      cancelledJobs.add(activeJobId);
+      try {
+        await storage.updateJobStatus(shopId, activeJobId, 'INTERRUPTED');
+      } catch (_) {}
+    }
+    activeJobs.delete(shopId);
   }
 
   await storage.resetDatabase(shopId);
