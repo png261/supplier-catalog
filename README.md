@@ -22,13 +22,9 @@ A fault-tolerant supplier catalog synchronization engine built in **pure Go (`CG
 | **OpenAPI 2.0 Spec (JSON)** | **[https://supplier-catalog-api.pages.dev/swagger/doc.json](https://supplier-catalog-api.pages.dev/swagger/doc.json)** | **[http://localhost:8080/swagger/doc.json](http://localhost:8080/swagger/doc.json)** |
 | **Full HD Video Demo (1080p)** | **[https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** | **[`docs/demo/demo_walkthrough.mp4`](./docs/demo/demo_walkthrough.mp4)** *(1080p live interaction + OpenMOSS/MOSS-TTS voiceover & BGM)* |
 
-### Video Walkthrough (`docs/demo/demo_walkthrough.mp4`)
+### Video Walkthrough
 
-[![Watch Full HD Demo Video (1080p with OpenMOSS/MOSS-TTS Voiceover & BGM)](./docs/demo/demo_preview.gif)](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)
-
-<video src="./docs/demo/demo_walkthrough.mp4" controls width="100%"></video>
-
-> **Direct Video Links (1080p + Voiceover & BGM)**: **[Watch on Cloudflare Pages](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** · **[Open Local File (`docs/demo/demo_walkthrough.mp4`)](./docs/demo/demo_walkthrough.mp4)**
+![Supplier Catalog Synchronization Demo Walkthrough](./docs/demo/demo_preview.gif)
 
 ---
 
