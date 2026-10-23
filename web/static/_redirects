@@ -1,2 +1,2 @@
-/api/* https://catalog-sync-worker.ezcert.workers.dev/api/:splat 200
+/api/* https://supplier-catalog-api.pages.dev/api/:splat 200
 /* /index.html 200

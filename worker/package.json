@@ -1,5 +1,5 @@
 {
-  "name": "catalog-sync-worker",
+  "name": "supplier-catalog-api",
   "version": "1.0.0",
   "description": "Cloudflare Worker backend for Resilient Catalog Synchronization Engine",
   "main": "src/index.ts",

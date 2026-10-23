@@ -1,4 +1,4 @@
-name = "catalog-sync-worker"
+name = "supplier-catalog-api"
 main = "worker/src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]

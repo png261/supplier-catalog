@@ -11,7 +11,7 @@ import {
 
 const SHOP_STORAGE_KEY = 'catalog_sync_active_shop_id';
 const RECENT_SHOPS_KEY = 'catalog_sync_recent_shops';
-const CLOUDFLARE_WORKER_URL = 'https://catalog-sync-worker.ezcert.workers.dev';
+const CLOUDFLARE_WORKER_URL = 'https://supplier-catalog-api.pages.dev';
 
 export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
