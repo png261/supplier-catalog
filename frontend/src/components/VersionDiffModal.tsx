@@ -30,6 +30,7 @@ import {
   TrendingUp,
   TrendingDown,
   Play,
+  RotateCcw,
   AlertTriangle,
 } from 'lucide-react';
 
@@ -43,8 +44,10 @@ interface VersionDiffModalProps {
   onRollbackClick?: (targetVersion: CatalogVersion, undoneVersion?: CatalogVersion) => void;
   isCurrentVersion?: boolean;
   previewUpdate?: CatalogUpdate | null;
+  previewMode?: 'inspect' | 'sync' | 'revert';
   isUpdateSynced?: boolean;
   onSyncUpdateClick?: (update: CatalogUpdate) => void;
+  onRevertUpdateClick?: (update: CatalogUpdate) => void;
 }
 
 export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
@@ -57,8 +60,10 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
   onRollbackClick,
   isCurrentVersion = false,
   previewUpdate = null,
+  previewMode = 'inspect',
   isUpdateSynced = false,
   onSyncUpdateClick,
+  onRevertUpdateClick,
 }) => {
   const [actionFilter, setActionFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -209,12 +214,22 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
                 <DialogTitle className="text-base sm:text-lg font-semibold text-slate-900 flex items-center gap-2 flex-wrap">
                   <span>
                     {previewUpdate
-                      ? previewUpdate.title
+                      ? previewMode === 'revert'
+                        ? `Preview Revert: ${previewUpdate.title}`
+                        : previewMode === 'sync'
+                        ? `Preview Sync: ${previewUpdate.title}`
+                        : previewUpdate.title
                       : version.version_number > 0
                       ? `Version v${version.version_number} Row-Level Diff`
                       : `Session ${version.version_id} Row-Level Diff`}
                   </span>
-                  {versionTypeBadge(version.type || version.trigger_type)}
+                  {previewMode === 'revert' ? (
+                    <Badge variant="outline" className="border-amber-500 text-amber-700 bg-amber-50 font-mono text-[10px]">
+                      REVERT PREVIEW
+                    </Badge>
+                  ) : (
+                    versionTypeBadge(version.type || version.trigger_type)
+                  )}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-500 flex items-center gap-2.5 mt-1 flex-wrap">
                   <span className="font-mono text-slate-600 font-medium">{version.version_id}</span>
@@ -529,11 +544,12 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-              Close
+              Cancel
             </Button>
             {previewUpdate && !isUpdateSynced && onSyncUpdateClick && (
               <Button
                 size="sm"
+                disabled={isLoading}
                 onClick={() => {
                   onOpenChange(false);
                   onSyncUpdateClick(previewUpdate);
@@ -541,7 +557,21 @@ export const VersionDiffModal: React.FC<VersionDiffModalProps> = ({
                 className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs"
               >
                 <Play className="h-3 w-3 mr-1.5 fill-white" />
-                Sync {previewUpdate.title} Now
+                Confirm & Sync {previewUpdate.title}
+              </Button>
+            )}
+            {previewUpdate && isUpdateSynced && onRevertUpdateClick && (
+              <Button
+                size="sm"
+                disabled={isLoading}
+                onClick={() => {
+                  onOpenChange(false);
+                  onRevertUpdateClick(previewUpdate);
+                }}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs"
+              >
+                <RotateCcw className="h-3 w-3 mr-1.5" />
+                Confirm & Revert {previewUpdate.title}
               </Button>
             )}
             {!isPreviewMode && !isCurrentVersion && onRollbackClick && (

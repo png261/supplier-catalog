@@ -292,6 +292,7 @@ export const AppContent: React.FC = () => {
 
   // --- Update Diff Preview / Inspection Modal State ---
   const [inspectedUpdate, setInspectedUpdate] = useState<CatalogUpdate | null>(null);
+  const [updateDiffMode, setUpdateDiffMode] = useState<'inspect' | 'sync' | 'revert'>('inspect');
   const [updateDiffVersion, setUpdateDiffVersion] = useState<CatalogVersion | null>(null);
   const [updateDiffChanges, setUpdateDiffChanges] = useState<VersionDiffItem[]>([]);
   const [isLoadingUpdateDiff, setIsLoadingUpdateDiff] = useState<boolean>(false);
@@ -1108,8 +1109,71 @@ export const AppContent: React.FC = () => {
     return res.changes || [];
   };
 
-  const handleInspectUpdate = async (update: CatalogUpdate) => {
+  const toRevertDiffItems = (items: VersionDiffItem[]): VersionDiffItem[] => {
+    return items.map((d) => {
+      const act = (d.action || d.operation || 'UPDATED').toUpperCase();
+      if (act === 'ADDED') {
+        return {
+          ...d,
+          action: 'WITHDRAWN',
+          operation: 'WITHDRAWN',
+          old_name: d.new_name,
+          new_name: d.new_name,
+          old_price: d.new_price,
+          new_price: d.new_price,
+          old_status: d.new_status || 'ACTIVE',
+          new_status: 'WITHDRAWN',
+        };
+      }
+      if (act === 'UPDATED') {
+        return {
+          ...d,
+          action: 'UPDATED',
+          operation: 'UPDATED',
+          old_name: d.new_name,
+          new_name: d.old_name ?? d.new_name,
+          old_price: d.new_price,
+          new_price: d.old_price ?? d.new_price,
+          old_status: d.new_status || 'ACTIVE',
+          new_status: d.old_status ?? 'ACTIVE',
+        };
+      }
+      if (act === 'WITHDRAWN') {
+        if (d.old_status) {
+          return {
+            ...d,
+            action: 'UPDATED',
+            operation: 'UPDATED',
+            old_name: d.new_name,
+            new_name: d.old_name ?? d.new_name,
+            old_price: d.new_price,
+            new_price: d.old_price ?? d.new_price,
+            old_status: 'WITHDRAWN',
+            new_status: d.old_status,
+          };
+        }
+        return {
+          ...d,
+          action: 'WITHDRAWN',
+          operation: 'WITHDRAWN',
+          old_name: d.new_name,
+          new_name: d.new_name,
+          old_price: d.new_price,
+          new_price: d.new_price,
+          old_status: 'WITHDRAWN',
+          new_status: 'WITHDRAWN',
+        };
+      }
+      return d;
+    });
+  };
+
+  const handleInspectUpdate = async (
+    update: CatalogUpdate,
+    mode: 'inspect' | 'sync' | 'revert' = 'inspect'
+  ) => {
     setInspectedUpdate(update);
+    setUpdateDiffMode(mode);
     const isSynced = syncedUpdateIds.includes(update.id);
     const activeSyncs = getActiveSyncVersions(versions);
     const matchedVer = isSynced
@@ -1127,9 +1191,12 @@ export const AppContent: React.FC = () => {
       matchedVer || {
         version_id: 'preview',
         version_number: 0,
-        type: 'SYNC',
-        description: `${update.title} — ${update.description}`,
-        author: 'supplier-sync',
+        type: mode === 'revert' ? 'ROLLBACK' : 'SYNC',
+        description:
+          mode === 'revert'
+            ? `Revert preview for ${update.title} — All items added by this feed will be removed and modified items restored.`
+            : `${update.title} — ${update.description}`,
+        author: mode === 'revert' ? 'staff-admin' : 'supplier-sync',
         created_at: update.baseTime || new Date().toISOString(),
       }
     );
@@ -1142,10 +1209,20 @@ export const AppContent: React.FC = () => {
         try {
           const committedDiff = await fetchVersionDiff(matchedVer.version_id);
           if (committedDiff.changes && committedDiff.changes.length > 0) {
+            const finalChanges =
+              mode === 'revert' ? toRevertDiffItems(committedDiff.changes) : committedDiff.changes;
             if (committedDiff.version) {
-              setUpdateDiffVersion(committedDiff.version);
+              setUpdateDiffVersion(
+                mode === 'revert'
+                  ? {
+                      ...committedDiff.version,
+                      type: 'ROLLBACK',
+                      description: `Revert preview for ${update.title} (${committedDiff.version.version_id}) — Undoing changes from this update.`,
+                    }
+                  : committedDiff.version
+              );
             }
-            setUpdateDiffChanges(committedDiff.changes);
+            setUpdateDiffChanges(finalChanges);
             return;
           }
         } catch (_) {}
@@ -1163,15 +1240,21 @@ export const AppContent: React.FC = () => {
         base_time: update.baseTime,
         description: `${update.title} — ${update.description}`,
       });
+      const rawChanges = previewRes.changes || [];
+      const finalChanges = mode === 'revert' ? toRevertDiffItems(rawChanges) : rawChanges;
       if (previewRes.version) {
         setUpdateDiffVersion({
           ...previewRes.version,
           version_id: matchedVer ? matchedVer.version_id : 'preview',
           version_number: matchedVer ? matchedVer.version_number : 0,
-          description: `${update.title} — ${update.description}`,
+          type: mode === 'revert' ? 'ROLLBACK' : previewRes.version.type,
+          description:
+            mode === 'revert'
+              ? `Revert preview for ${update.title} — Undoing changes from this update.`
+              : `${update.title} — ${update.description}`,
         });
       }
-      setUpdateDiffChanges(previewRes.changes || []);
+      setUpdateDiffChanges(finalChanges);
     } catch (err) {
       console.error('Failed to inspect update diff:', err);
       toast.error('Failed to load update diff preview');
@@ -1857,9 +1940,9 @@ export const AppContent: React.FC = () => {
                 syncedUpdateIds={syncedUpdateIds}
                 activeSyncingUpdateId={activeSyncingUpdateId}
                 activeRevertingUpdateId={activeRevertingUpdateId}
-                onSyncUpdate={handleSyncUpdate}
-                onRevertUpdate={handleRevertUpdate}
-                onInspectUpdate={handleInspectUpdate}
+                onSyncUpdate={(u) => handleInspectUpdate(u, 'sync')}
+                onRevertUpdate={(u) => handleInspectUpdate(u, 'revert')}
+                onInspectUpdate={(u) => handleInspectUpdate(u, 'inspect')}
                 isRollingBack={isRollingBack}
                 analyticsRange={analyticsRange}
                 analyticsFrom={analyticsFrom}
@@ -2007,8 +2090,10 @@ export const AppContent: React.FC = () => {
         changes={updateDiffChanges}
         isLoading={isLoadingUpdateDiff}
         previewUpdate={inspectedUpdate}
+        previewMode={updateDiffMode}
         isUpdateSynced={Boolean(inspectedUpdate && syncedUpdateIds.includes(inspectedUpdate.id))}
         onSyncUpdateClick={(u) => handleSyncUpdate(u)}
+        onRevertUpdateClick={(u) => handleRevertUpdate(u)}
       />
     </div>
   );
