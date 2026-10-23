@@ -58,7 +58,11 @@ $WRANGLER_CMD deploy
 echo ""
 echo "🌐 Step 3/3: Building and deploying Cloudflare Pages (Frontend SPA)..."
 npm --prefix frontend run build:pages
-$WRANGLER_CMD pages deploy frontend/dist --project-name supplier-catalog-frontend --branch main || true
+if [ -f "demo_walkthrough.mp4" ]; then
+  cp demo_walkthrough.mp4 web/static/demo_walkthrough.mp4
+fi
+$WRANGLER_CMD pages deploy web/static --project-name supplier-catalog-frontend --branch main || true
+rm -f web/static/demo_walkthrough.mp4
 
 echo ""
 echo "=========================================================="

@@ -77,6 +77,7 @@ build: build-frontend build-server build-generator ## Compile frontend and both 
 build-frontend: ## Build modern shadcn/ui React frontend into web/static/
 	@echo "==> Building frontend assets (Vite + React + Tailwind + shadcn/ui)..."
 	@if [ -d "frontend" ] && command -v npm >/dev/null 2>&1; then \
+		rm -rf web/static/assets; \
 		(cd frontend && npm run build); \
 		echo "✅ Frontend build complete: web/static/"; \
 	else \
@@ -199,14 +200,15 @@ vet: ## Run go vet static analyzer across all packages
 
 ##@ Container & Docker
 .PHONY: docker-build docker-up docker-down docker-logs
-docker-build: ## Build lightweight multi-stage Docker image (<= 25MB)
+docker-build: build-frontend ## Build lightweight multi-stage Docker image (<= 25MB)
 	@echo "==> Building Docker image $(IMAGE_NAME):$(IMAGE_TAG)..."
 	$(DOCKER) build -t $(IMAGE_NAME):$(IMAGE_TAG) -f Dockerfile .
 	@echo "✅ Docker build complete: $(IMAGE_NAME):$(IMAGE_TAG)"
 
-docker-up: ## Start application container in background via docker compose
+docker-up: build-frontend ## Start application container in background via docker compose
 	@echo "==> Starting containers via Docker Compose (detached)..."
-	$(COMPOSE) up -d
+	@mkdir -p data && chmod 777 data
+	$(COMPOSE) up -d --build
 
 docker-down: ## Stop and remove docker compose containers and networks
 	@echo "==> Stopping Docker Compose containers..."
