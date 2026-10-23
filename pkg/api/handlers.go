@@ -1887,6 +1887,7 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 
 	var summary domain.ChangeSummary
 	dlqChanges := make([]UpdatePreviewItem, 0, 64)
+	firstInsertedState := make(map[string]domain.Product, cfg.TotalBatches*cfg.BatchSize)
 	touchedOrder := make([]string, 0, cfg.TotalBatches*cfg.BatchSize)
 	touchedSet := make(map[string]bool, cfg.TotalBatches*cfg.BatchSize)
 	stream := gen.StreamBatches(ctx, "preview")
@@ -1894,13 +1895,17 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 	for batch := range stream {
 		for _, rec := range batch.Records {
 			sku := strings.TrimSpace(rec.SKU)
+			safePrice := rec.Price
+			if math.IsNaN(safePrice) || math.IsInf(safePrice, 0) {
+				safePrice = -1
+			}
 			if sku == "" {
 				summary.DeadLetter++
 				dlqChanges = append(dlqChanges, UpdatePreviewItem{
 					SKU:          "(EMPTY SKU)",
 					Action:       "DEAD_LETTER",
 					NewName:      rec.Name,
-					NewPrice:     rec.Price,
+					NewPrice:     safePrice,
 					NewStatus:    rec.Status,
 					NewTimestamp: rec.Timestamp,
 					Reason:       "sku cannot be empty",
@@ -1913,7 +1918,7 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 					SKU:          sku,
 					Action:       "DEAD_LETTER",
 					NewName:      rec.Name,
-					NewPrice:     rec.Price,
+					NewPrice:     safePrice,
 					NewStatus:    rec.Status,
 					NewTimestamp: rec.Timestamp,
 					Reason:       "price cannot be negative or invalid",
@@ -1926,7 +1931,7 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 					SKU:          sku,
 					Action:       "DEAD_LETTER",
 					NewName:      rec.Name,
-					NewPrice:     rec.Price,
+					NewPrice:     safePrice,
 					NewStatus:    rec.Status,
 					NewTimestamp: rec.Timestamp,
 					Reason:       "status must be ACTIVE or WITHDRAWN",
@@ -1939,7 +1944,7 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 					SKU:       sku,
 					Action:    "DEAD_LETTER",
 					NewName:   rec.Name,
-					NewPrice:  rec.Price,
+					NewPrice:  safePrice,
 					NewStatus: rec.Status,
 					Reason:    "timestamp must not be zero",
 				})
@@ -1957,6 +1962,7 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 					UpdatedAt:         rec.Timestamp,
 				}
 				simState[sku] = newProd
+				firstInsertedState[sku] = newProd
 				if !touchedSet[sku] {
 					touchedSet[sku] = true
 					touchedOrder = append(touchedOrder, sku)
@@ -1999,13 +2005,56 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 		finalProd := simState[sku]
 		baseProd, existedInCatalog := baselineState[sku]
 		if !existedInCatalog {
-			summary.Added++
+			firstProd := firstInsertedState[sku]
+			nameChanged := finalProd.Name != firstProd.Name
+			priceChanged := math.Abs(finalProd.Price-firstProd.Price) > 1e-6
+			statusChanged := finalProd.Status != firstProd.Status
+			if !nameChanged && !priceChanged && !statusChanged {
+				if finalProd.Status == domain.StatusWithdrawn {
+					summary.Withdrawn++
+					changes = append(changes, UpdatePreviewItem{
+						SKU:          sku,
+						Action:       string(domain.DeltaActionWithdrawn),
+						NewName:      finalProd.Name,
+						NewPrice:     finalProd.Price,
+						NewStatus:    domain.StatusWithdrawn,
+						NewTimestamp: finalProd.SupplierTimestamp,
+					})
+				} else {
+					summary.Added++
+					changes = append(changes, UpdatePreviewItem{
+						SKU:          sku,
+						Action:       string(domain.DeltaActionAdded),
+						NewName:      finalProd.Name,
+						NewPrice:     finalProd.Price,
+						NewStatus:    domain.StatusActive,
+						NewTimestamp: finalProd.SupplierTimestamp,
+					})
+				}
+				continue
+			}
+			// Intra-stream modification after initial insert in earlier batch
+			oldName := firstProd.Name
+			oldPrice := firstProd.Price
+			oldStatus := firstProd.Status
+			oldTS := firstProd.SupplierTimestamp
+			action := domain.DeltaActionUpdated
+			if finalProd.Status == domain.StatusWithdrawn {
+				summary.Withdrawn++
+				action = domain.DeltaActionWithdrawn
+			} else {
+				summary.Updated++
+			}
 			changes = append(changes, UpdatePreviewItem{
 				SKU:          sku,
-				Action:       string(domain.DeltaActionAdded),
+				Action:       string(action),
+				OldName:      &oldName,
 				NewName:      finalProd.Name,
+				OldPrice:     &oldPrice,
 				NewPrice:     finalProd.Price,
-				NewStatus:    domain.StatusActive,
+				OldStatus:    &oldStatus,
+				NewStatus:    finalProd.Status,
+				OldTimestamp: &oldTS,
 				NewTimestamp: finalProd.SupplierTimestamp,
 			})
 			continue

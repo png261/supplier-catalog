@@ -7,6 +7,7 @@ Welcome to the technical documentation for the **Supplier Catalog Synchronizatio
 | Document | Description |
 |---|---|
 | **[Root `README.md`](../README.md)** | Minimalist project overview, live links, quickstart, and documentation map |
+| **[`demo/demo_walkthrough.mp4`](./demo/demo_walkthrough.mp4)** | Full HD (1920x1080) live browser walkthrough video with OpenMOSS/MOSS-TTS narration & BGM |
 | **[`architecture-and-invariants.md`](./architecture-and-invariants.md)** | System architecture, database ER diagram, product lifecycle state machine, and the 5 Core Invariants (A–E) |
 | **[`deployment-and-local-setup.md`](./deployment-and-local-setup.md)** | Native Go, Docker Compose container, CLI generator, sample fixtures walkthrough, and CI/CD pipeline |
 | **[`api-and-dashboard-features.md`](./api-and-dashboard-features.md)** | REST API & SSE reference, Pre-Sync/Pre-Revert Diff Preview flows, Quarantine Remediation, and Product History |
