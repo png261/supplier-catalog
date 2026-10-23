@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"coderpush/pkg/generator"
@@ -39,15 +40,15 @@ type tenantOps interface {
 
 // TenantContext encapsulates the isolated runtime resources for a single shop/tenant.
 type TenantContext struct {
-	ID            string
-	Storage       storage.Storage
-	Engine        catalogSync.Engine
-	Broker        *Broker
-	Mu            sync.Mutex
-	ActiveJobID   string
-	ActiveCancel  context.CancelFunc
-	ActiveConfigs map[string]generator.Config
-	LastAccess    time.Time
+	ID                 string
+	Storage            storage.Storage
+	Engine             catalogSync.Engine
+	Broker             *Broker
+	Mu                 sync.Mutex
+	ActiveJobID        string
+	ActiveCancel       context.CancelFunc
+	ActiveConfigs      map[string]generator.Config
+	lastAccessUnixNano atomic.Int64
 }
 
 func (t *TenantContext) GetID() string                             { return t.ID }
@@ -85,6 +86,34 @@ func (t *TenantContext) RemoveActiveConfig(jobID string) {
 func (t *TenantContext) ResetActive() {
 	t.ActiveJobID = ""
 	t.ActiveCancel = nil
+}
+
+// Touch updates the last access timestamp to the current time atomically.
+func (t *TenantContext) Touch() {
+	t.lastAccessUnixNano.Store(time.Now().UnixNano())
+}
+
+// GetLastAccess returns the last access time atomically as time.Time.
+func (t *TenantContext) GetLastAccess() time.Time {
+	nano := t.lastAccessUnixNano.Load()
+	if nano == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, nano)
+}
+
+// LastAccess returns the last access time atomically as time.Time.
+func (t *TenantContext) LastAccess() time.Time {
+	return t.GetLastAccess()
+}
+
+// SetLastAccess explicitly sets the last access time atomically (primarily for testing and lifecycle management).
+func (t *TenantContext) SetLastAccess(at time.Time) {
+	if at.IsZero() {
+		t.lastAccessUnixNano.Store(0)
+		return
+	}
+	t.lastAccessUnixNano.Store(at.UnixNano())
 }
 
 // Ensure TenantContext implements tenantOps.
@@ -141,7 +170,7 @@ func (tm *TenantManager) GetOrCreate(shopID string) (*TenantContext, error) {
 
 	tm.mu.RLock()
 	if t, exists := tm.tenants[shopID]; exists {
-		t.LastAccess = time.Now()
+		t.Touch()
 		tm.mu.RUnlock()
 		return t, nil
 	}
@@ -152,7 +181,7 @@ func (tm *TenantManager) GetOrCreate(shopID string) (*TenantContext, error) {
 
 	// Double-check after acquiring write lock
 	if t, exists := tm.tenants[shopID]; exists {
-		t.LastAccess = time.Now()
+		t.Touch()
 		return t, nil
 	}
 
@@ -186,8 +215,8 @@ func (tm *TenantManager) GetOrCreate(shopID string) (*TenantContext, error) {
 		Engine:        eng,
 		Broker:        broker,
 		ActiveConfigs: make(map[string]generator.Config),
-		LastAccess:    time.Now(),
 	}
+	tenant.Touch()
 
 	tm.tenants[shopID] = tenant
 	return tenant, nil
@@ -235,7 +264,7 @@ func (tm *TenantManager) PruneStaleTenants() {
 		activeJob := t.ActiveJobID
 		t.Mu.Unlock()
 
-		if activeJob == "" && now.Sub(t.LastAccess) >= tm.maxIdleAge {
+		if activeJob == "" && now.Sub(t.GetLastAccess()) >= tm.maxIdleAge {
 			t.Broker.Close()
 			_ = t.Storage.Close()
 			delete(tm.tenants, id)

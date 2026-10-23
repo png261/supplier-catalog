@@ -231,7 +231,7 @@
         },
         "/api/events": {
             "get": {
-                "description": "Establishes a persistent Server-Sent Events (SSE) connection streaming real-time job progress, status changes, and dead-letter notifications.",
+                "description": "Establishes a persistent Server-Sent Events (SSE) connection streaming real-time job progress, status changes, dead-letter notifications, and catalog version events (version_created, version_rollback).",
                 "produces": [
                     "text/event-stream"
                 ],
@@ -706,6 +706,140 @@
                 }
             }
         },
+        "/api/patches/preview": {
+            "post": {
+                "description": "Performs an immutable, dry-run in-memory projection of a sparse catalog patch without database writes, validating invariants and returning projected item deltas, checksum, and quarantined issues.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Patches"
+                ],
+                "summary": "Preview catalog patch updates",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Isolated shop tenant ID (default: 'default')",
+                        "name": "X-Shop-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Catalog patch payload containing sparse item updates",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain.CatalogPatch"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Dry-run simulation diff preview and invariant checks",
+                        "schema": {
+                            "$ref": "#/definitions/domain.PatchPreviewResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed JSON, empty items, or invalid shop ID",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to snapshot catalog or internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/patches/publish": {
+            "post": {
+                "description": "Commits a validated catalog patch atomically to the live catalog, journals pre-image deltas, creates a new PATCH milestone version, and broadcasts real-time SSE notification. Blocked if dead-letter issues are detected.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Patches"
+                ],
+                "summary": "Publish catalog patch updates",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Isolated shop tenant ID (default: 'default')",
+                        "name": "X-Shop-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Catalog patch payload containing sparse item updates",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain.CatalogPatch"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Version published successfully with recorded item deltas",
+                        "schema": {
+                            "$ref": "#/definitions/api.PatchPublishResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed JSON, empty author/description/items, or invalid shop ID",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Patch commit blocked due to quarantined dead letters or invariant violations",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Transaction or database storage error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/products": {
             "get": {
                 "description": "Retrieves a paginated list of catalog products, with optional status filtering and text search.",
@@ -775,6 +909,214 @@
                     },
                     "500": {
                         "description": "Internal database query error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/versions": {
+            "get": {
+                "description": "Retrieves a paginated list of catalog version milestones with summary counts and author metadata, ordered newest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Versions"
+                ],
+                "summary": "List catalog versions",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Maximum versions to return (default 20, min 1, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset (default 0, min 0)",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Isolated shop tenant ID",
+                        "name": "X-Shop-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated list of catalog versions",
+                        "schema": {
+                            "$ref": "#/definitions/api.VersionListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid limit, offset, or shop ID",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal database query error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/versions/{id}/diff": {
+            "get": {
+                "description": "Retrieves all item-level pre-image deltas (previous and new prices, names, and statuses) associated with a specific catalog version milestone.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Versions"
+                ],
+                "summary": "Get catalog version diff",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Catalog Version ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Isolated shop tenant ID",
+                        "name": "X-Shop-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Array of pre-image item deltas recorded for the version",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain.ItemDelta"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing version ID in URL path or invalid shop ID",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Catalog version not found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal database query error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/versions/{id}/rollback": {
+            "post": {
+                "description": "Reconstructs baseline catalog state at target version, calculates inverse deltas preserving tombstones (Invariant A), updates live catalog, generates a forward ROLLBACK version milestone, and broadcasts real-time SSE notification.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Versions"
+                ],
+                "summary": "Rollback catalog to target version (Git-revert)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Target Catalog Version ID to revert to",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Isolated shop tenant ID",
+                        "name": "X-Shop-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant shop identifier alias",
+                        "name": "shop_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Rollback author and audit description",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/api.RollbackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Catalog reverted successfully with new forward version and deltas",
+                        "schema": {
+                            "$ref": "#/definitions/api.RollbackResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing version ID in URL path, malformed request body, or invalid shop ID",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Target catalog version not found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Rollback transaction or storage error",
                         "schema": {
                             "$ref": "#/definitions/api.ErrorResponse"
                         }
@@ -858,14 +1200,16 @@
                 "JOB_NOT_FOUND",
                 "NOT_FOUND",
                 "JOB_CONFLICT",
-                "INTERNAL_ERROR"
+                "INTERNAL_ERROR",
+                "COMMIT_BLOCKED"
             ],
             "x-enum-varnames": [
                 "ErrCodeInvalidRequest",
                 "ErrCodeJobNotFound",
                 "ErrCodeNotFound",
                 "ErrCodeJobConflict",
-                "ErrCodeInternalError"
+                "ErrCodeInternalError",
+                "ErrCodeCommitBlocked"
             ]
         },
         "api.ErrorResponse": {
@@ -1003,6 +1347,20 @@
                 }
             }
         },
+        "api.PatchPublishResponse": {
+            "type": "object",
+            "properties": {
+                "deltas": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain.ItemDelta"
+                    }
+                },
+                "version": {
+                    "$ref": "#/definitions/domain.CatalogVersion"
+                }
+            }
+        },
         "api.ProductListResponse": {
             "type": "object",
             "properties": {
@@ -1064,6 +1422,33 @@
                 }
             }
         },
+        "api.RollbackRequest": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string",
+                    "example": "ops-team"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Rollback due to supplier pricing error"
+                }
+            }
+        },
+        "api.RollbackResponse": {
+            "type": "object",
+            "properties": {
+                "deltas": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain.ItemDelta"
+                    }
+                },
+                "version": {
+                    "$ref": "#/definitions/domain.CatalogVersion"
+                }
+            }
+        },
         "api.SyncJobResponse": {
             "type": "object",
             "properties": {
@@ -1090,6 +1475,26 @@
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "api.VersionListResponse": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain.CatalogVersion"
+                    }
                 }
             }
         },
@@ -1139,6 +1544,61 @@
                 }
             }
         },
+        "domain.CatalogPatch": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain.PatchItem"
+                    }
+                },
+                "patch_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain.CatalogVersion": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "string"
+                },
+                "revert_of_version_id": {
+                    "type": "string"
+                },
+                "summary": {
+                    "$ref": "#/definitions/domain.ChangeSummary"
+                },
+                "total_items_affected": {
+                    "type": "integer"
+                },
+                "type": {
+                    "$ref": "#/definitions/domain.VersionType"
+                },
+                "version_id": {
+                    "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
+                }
+            }
+        },
         "domain.ChangeSummary": {
             "type": "object",
             "properties": {
@@ -1156,6 +1616,23 @@
                 },
                 "withdrawn": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain.DeadLetterItem": {
+            "type": "object",
+            "properties": {
+                "raw_payload": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "sku": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
                 }
             }
         },
@@ -1181,6 +1658,60 @@
                     "type": "string"
                 },
                 "sku": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain.DeltaAction": {
+            "type": "string",
+            "enum": [
+                "ADDED",
+                "UPDATED",
+                "WITHDRAWN"
+            ],
+            "x-enum-varnames": [
+                "DeltaActionAdded",
+                "DeltaActionUpdated",
+                "DeltaActionWithdrawn"
+            ]
+        },
+        "domain.ItemDelta": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "$ref": "#/definitions/domain.DeltaAction"
+                },
+                "delta_id": {
+                    "type": "integer"
+                },
+                "new_name": {
+                    "type": "string"
+                },
+                "new_price": {
+                    "type": "number"
+                },
+                "new_status": {
+                    "$ref": "#/definitions/domain.ProductStatus"
+                },
+                "new_timestamp": {
+                    "type": "string"
+                },
+                "old_name": {
+                    "type": "string"
+                },
+                "old_price": {
+                    "type": "number"
+                },
+                "old_status": {
+                    "$ref": "#/definitions/domain.ProductStatus"
+                },
+                "old_timestamp": {
+                    "type": "string"
+                },
+                "sku": {
+                    "type": "string"
+                },
+                "version_id": {
                     "type": "string"
                 }
             }
@@ -1217,6 +1748,76 @@
                 },
                 "to": {
                     "type": "string"
+                }
+            }
+        },
+        "domain.PatchItem": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "price": {
+                    "type": "number"
+                },
+                "sku": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/domain.ProductStatus"
+                },
+                "timestamp": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain.PatchPreviewResult": {
+            "type": "object",
+            "properties": {
+                "added_count": {
+                    "type": "integer"
+                },
+                "can_commit": {
+                    "type": "boolean"
+                },
+                "catalog_checksum": {
+                    "type": "string"
+                },
+                "dead_letter_count": {
+                    "type": "integer"
+                },
+                "dead_letter_items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain.DeadLetterItem"
+                    }
+                },
+                "deltas": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain.ItemDelta"
+                    }
+                },
+                "invalid_records": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain.DeadLetterRecord"
+                    }
+                },
+                "skipped_count": {
+                    "type": "integer"
+                },
+                "summary": {
+                    "$ref": "#/definitions/domain.ChangeSummary"
+                },
+                "total_items": {
+                    "type": "integer"
+                },
+                "updated_count": {
+                    "type": "integer"
+                },
+                "withdrawn_count": {
+                    "type": "integer"
                 }
             }
         },
@@ -1283,6 +1884,21 @@
                     "type": "string"
                 }
             }
+        },
+        "domain.VersionType": {
+            "type": "string",
+            "enum": [
+                "INITIAL",
+                "PATCH",
+                "ROLLBACK",
+                "SYNC"
+            ],
+            "x-enum-varnames": [
+                "VersionTypeInitial",
+                "VersionTypePatch",
+                "VersionTypeRollback",
+                "VersionTypeSync"
+            ]
         }
     }
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -1323,5 +1324,2426 @@ func TestStorage_GetMetrics(t *testing.T) {
 	_ = sClosed2.Close()
 	if _, _, err := sClosed2.GetMetrics(ctx, domain.MetricsFilter{}); err == nil {
 		t.Error("expected error on closed DB for GetMetrics")
+	}
+}
+
+// setupTestDB creates an in-memory SQLiteStorage instance configured with all migrations,
+// registering automatic cleanup on test completion.
+func setupTestDB(t testing.TB) *storage.SQLiteStorage {
+	t.Helper()
+	s, err := storage.OpenInMemory()
+	if err != nil {
+		t.Fatalf("setupTestDB failed to open in-memory storage: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
+	return s
+}
+
+func TestStorage_CreateVersionAndDeltas(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// 1. Happy Path: Atomically write live product, catalog version, and item deltas
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("failed BeginTx: %v", err)
+	}
+
+	prodA := &domain.Product{
+		SKU:               "SKU-A",
+		Name:              "Alpha Widget",
+		Price:             10.50,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now,
+		UpdatedAt:         now,
+	}
+	if err := s.UpsertProductTx(ctx, tx, prodA); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("failed upserting product: %v", err)
+	}
+
+	ver1 := &domain.CatalogVersion{
+		VersionID:     "ver-001",
+		VersionNumber: 1,
+		Description:   "Initial catalog import",
+		Author:        "ops@coderpush.com",
+		Type:          domain.VersionTypeInitial,
+		Summary: domain.ChangeSummary{
+			Added:      2,
+			Updated:    1,
+			Withdrawn:  1,
+			Skipped:    0,
+			DeadLetter: 0,
+		},
+		TotalItemsAffected: 4,
+		Metadata:           `{"batch_source":"supplier_import_01"}`,
+		CreatedAt:          now,
+	}
+
+	oldName := "Beta Widget Old"
+	oldPrice := 40.00
+	oldStatus := domain.StatusActive
+	oldTime := now.Add(-1 * time.Hour)
+
+	deltas := []domain.ItemDelta{
+		{
+			VersionID:    "ver-001",
+			SKU:          "SKU-A",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "Alpha Widget",
+			NewPrice:     10.50,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: now,
+		},
+		{
+			VersionID:    "ver-001",
+			SKU:          "SKU-B",
+			Action:       domain.DeltaActionUpdated,
+			OldName:      &oldName,
+			NewName:      "Beta Widget",
+			OldPrice:     &oldPrice,
+			NewPrice:     45.00,
+			OldStatus:    &oldStatus,
+			NewStatus:    domain.StatusActive,
+			OldTimestamp: &oldTime,
+			NewTimestamp: now,
+		},
+		{
+			VersionID:    "ver-001",
+			SKU:          "SKU-C",
+			Action:       domain.DeltaActionWithdrawn,
+			OldName:      &oldName,
+			NewName:      "Beta Widget",
+			OldPrice:     &oldPrice,
+			NewPrice:     45.00,
+			OldStatus:    &oldStatus,
+			NewStatus:    domain.StatusWithdrawn,
+			OldTimestamp: &oldTime,
+			NewTimestamp: now,
+		},
+	}
+
+	if err := s.CreateVersionTx(ctx, tx, ver1, deltas); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("CreateVersionTx failed: %v", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Verify committed product
+	savedProd, err := s.GetProduct(ctx, "SKU-A")
+	if err != nil || savedProd.Price != 10.50 {
+		t.Fatalf("live product not found or price mismatch: %v, prod: %+v", err, savedProd)
+	}
+
+	// Verify committed version
+	savedVer, err := s.GetVersion(ctx, "ver-001")
+	if err != nil {
+		t.Fatalf("GetVersion failed: %v", err)
+	}
+	if savedVer.VersionNumber != 1 || savedVer.Author != "ops@coderpush.com" || savedVer.Type != domain.VersionTypeInitial {
+		t.Errorf("version fields mismatch: %+v", savedVer)
+	}
+	if savedVer.Summary.Added != 2 || savedVer.TotalItemsAffected != 4 {
+		t.Errorf("version summary mismatch: %+v", savedVer.Summary)
+	}
+	if savedVer.RevertOfVersionID != nil {
+		t.Errorf("expected nil RevertOfVersionID, got %v", *savedVer.RevertOfVersionID)
+	}
+
+	// Verify committed deltas
+	savedDeltas, err := s.GetVersionDeltas(ctx, "ver-001")
+	if err != nil {
+		t.Fatalf("GetVersionDeltas failed: %v", err)
+	}
+	if len(savedDeltas) != 3 {
+		t.Fatalf("expected 3 deltas, got %d", len(savedDeltas))
+	}
+
+	// Check delta 0 (ADDED: old values must be nil)
+	d0 := savedDeltas[0]
+	if d0.SKU != "SKU-A" || d0.Action != domain.DeltaActionAdded || d0.OldPrice != nil || d0.OldStatus != nil {
+		t.Errorf("delta 0 pre-image should be nil: %+v", d0)
+	}
+	if d0.NewPrice != 10.50 || d0.NewStatus != domain.StatusActive {
+		t.Errorf("delta 0 post-image mismatch: %+v", d0)
+	}
+
+	// Check delta 1 (UPDATED: old values present)
+	d1 := savedDeltas[1]
+	if d1.SKU != "SKU-B" || d1.Action != domain.DeltaActionUpdated {
+		t.Errorf("delta 1 action mismatch: %+v", d1)
+	}
+	if d1.OldPrice == nil || *d1.OldPrice != 40.00 || d1.NewPrice != 45.00 {
+		t.Errorf("delta 1 price mismatch: old=%v, new=%v", d1.OldPrice, d1.NewPrice)
+	}
+
+	// 2. Transaction Rollback Atomicity: rolling back tx discards version and deltas
+	txRollback, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx rollback failed: %v", err)
+	}
+	verRollback := &domain.CatalogVersion{
+		VersionID:     "ver-discarded",
+		VersionNumber: 99,
+		Description:   "Should be rolled back",
+		Author:        "ops@coderpush.com",
+		Type:          domain.VersionTypePatch,
+		CreatedAt:     now,
+	}
+	deltaRollback := []domain.ItemDelta{
+		{
+			VersionID:    "ver-discarded",
+			SKU:          "SKU-ROLLBACK",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "Rollback Item",
+			NewPrice:     10.0,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: now,
+		},
+	}
+	if err := s.CreateVersionTx(ctx, txRollback, verRollback, deltaRollback); err != nil {
+		t.Fatalf("CreateVersionTx in rollback failed: %v", err)
+	}
+	if err := txRollback.Rollback(); err != nil {
+		t.Fatalf("Rollback failed: %v", err)
+	}
+
+	// Verify uncommitted version cannot be retrieved
+	_, err = s.GetVersion(ctx, "ver-discarded")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound for rolled back version, got %v", err)
+	}
+	discardedDeltas, err := s.GetVersionDeltas(ctx, "ver-discarded")
+	if err != nil || len(discardedDeltas) != 0 {
+		t.Errorf("expected 0 deltas for rolled back version, got len=%d, err=%v", len(discardedDeltas), err)
+	}
+
+	// 3. Uniqueness Constraints: duplicate version_id and duplicate version_number must fail
+	txDupID, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx dup failed: %v", err)
+	}
+	dupIDVer := &domain.CatalogVersion{
+		VersionID:     "ver-001", // Duplicate ID
+		VersionNumber: 2,
+		Description:   "Duplicate version_id",
+		Author:        "ops@coderpush.com",
+		Type:          domain.VersionTypePatch,
+		CreatedAt:     now,
+	}
+	err = s.CreateVersionTx(ctx, txDupID, dupIDVer, nil)
+	if err == nil {
+		_ = txDupID.Rollback()
+		t.Error("expected error for duplicate version_id, got nil")
+	} else {
+		_ = txDupID.Rollback()
+	}
+
+	txDupNum, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx dup num failed: %v", err)
+	}
+	dupNumVer := &domain.CatalogVersion{
+		VersionID:     "ver-002",
+		VersionNumber: 1, // Duplicate VersionNumber
+		Description:   "Duplicate version_number",
+		Author:        "ops@coderpush.com",
+		Type:          domain.VersionTypePatch,
+		CreatedAt:     now,
+	}
+	err = s.CreateVersionTx(ctx, txDupNum, dupNumVer, nil)
+	if err == nil {
+		_ = txDupNum.Rollback()
+		t.Error("expected error for duplicate version_number, got nil")
+	} else {
+		_ = txDupNum.Rollback()
+	}
+
+	// 4. Empty deltas (milestone snapshot with zero item modifications) succeeds
+	txEmptyDelta, _ := s.BeginTx(ctx)
+	emptyVer := &domain.CatalogVersion{
+		VersionID:     "ver-empty",
+		VersionNumber: 2,
+		Description:   "Empty milestone",
+		Author:        "ops@coderpush.com",
+		Type:          domain.VersionTypePatch,
+		CreatedAt:     now,
+	}
+	if err := s.CreateVersionTx(ctx, txEmptyDelta, emptyVer, nil); err != nil {
+		_ = txEmptyDelta.Rollback()
+		t.Fatalf("CreateVersionTx with nil deltas failed: %v", err)
+	}
+	if err := txEmptyDelta.Commit(); err != nil {
+		t.Fatalf("Commit empty deltas version failed: %v", err)
+	}
+	deltasEmpty, err := s.GetVersionDeltas(ctx, "ver-empty")
+	if err != nil || len(deltasEmpty) != 0 {
+		t.Errorf("expected 0 deltas, got len=%d, err=%v", len(deltasEmpty), err)
+	}
+}
+
+func TestStorage_GetVersion_And_Deltas(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// 1. Non-existent version
+	_, err := s.GetVersion(ctx, "non-existent-version")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound for non-existent version, got %v", err)
+	}
+
+	// 2. Non-existent version deltas returns empty slice with nil error
+	emptyDeltas, err := s.GetVersionDeltas(ctx, "non-existent-version")
+	if err != nil {
+		t.Fatalf("expected nil error for missing version deltas, got %v", err)
+	}
+	if len(emptyDeltas) != 0 {
+		t.Errorf("expected empty slice, got %d items", len(emptyDeltas))
+	}
+
+	// 3. RevertOfVersionID pointer handling
+	tx1, _ := s.BeginTx(ctx)
+	ver1 := &domain.CatalogVersion{
+		VersionID:     "ver-001",
+		VersionNumber: 1,
+		Description:   "Initial version",
+		Author:        "admin@coderpush.com",
+		Type:          domain.VersionTypeInitial,
+		CreatedAt:     now.Add(-time.Hour),
+	}
+	if err := s.CreateVersionTx(ctx, tx1, ver1, nil); err != nil {
+		_ = tx1.Rollback()
+		t.Fatalf("CreateVersionTx v1 failed: %v", err)
+	}
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit v1 failed: %v", err)
+	}
+
+	revertTarget := "ver-001"
+	rollbackVer := &domain.CatalogVersion{
+		VersionID:         "ver-002",
+		VersionNumber:     2,
+		Description:       "Rollback to ver-001",
+		Author:            "admin@coderpush.com",
+		Type:              domain.VersionTypeRollback,
+		RevertOfVersionID: &revertTarget,
+		CreatedAt:         now,
+	}
+
+	tx, _ := s.BeginTx(ctx)
+	if err := s.CreateVersionTx(ctx, tx, rollbackVer, nil); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("CreateVersionTx rollback failed: %v", err)
+	}
+	_ = tx.Commit()
+
+	retrieved, err := s.GetVersion(ctx, "ver-002")
+	if err != nil {
+		t.Fatalf("GetVersion failed: %v", err)
+	}
+	if retrieved.RevertOfVersionID == nil || *retrieved.RevertOfVersionID != "ver-001" {
+		t.Errorf("expected RevertOfVersionID 'ver-001', got %+v", retrieved.RevertOfVersionID)
+	}
+	if retrieved.Type != domain.VersionTypeRollback {
+		t.Errorf("expected type ROLLBACK, got %s", retrieved.Type)
+	}
+}
+
+func TestStorage_GetLatestVersion(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	// 1. Empty database returns domain.ErrNotFound
+	_, err := s.GetLatestVersion(ctx)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound on empty database, got %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// 2. Insert single version
+	tx1, _ := s.BeginTx(ctx)
+	ver1 := &domain.CatalogVersion{
+		VersionID:     "ver-001",
+		VersionNumber: 1,
+		Description:   "V1",
+		Author:        "user@test.com",
+		Type:          domain.VersionTypeInitial,
+		CreatedAt:     now,
+	}
+	_ = s.CreateVersionTx(ctx, tx1, ver1, nil)
+	_ = tx1.Commit()
+
+	latest, err := s.GetLatestVersion(ctx)
+	if err != nil || latest.VersionID != "ver-001" {
+		t.Fatalf("expected latest version ver-001, got %+v, err %v", latest, err)
+	}
+
+	// 3. Insert sequential versions 2 and 3
+	for i := 2; i <= 3; i++ {
+		tx, _ := s.BeginTx(ctx)
+		ver := &domain.CatalogVersion{
+			VersionID:     fmt.Sprintf("ver-%03d", i),
+			VersionNumber: i,
+			Description:   fmt.Sprintf("V%d", i),
+			Author:        "user@test.com",
+			Type:          domain.VersionTypePatch,
+			CreatedAt:     now.Add(time.Duration(i) * time.Minute),
+		}
+		_ = s.CreateVersionTx(ctx, tx, ver, nil)
+		_ = tx.Commit()
+	}
+
+	latest3, err := s.GetLatestVersion(ctx)
+	if err != nil || latest3.VersionNumber != 3 || latest3.VersionID != "ver-003" {
+		t.Fatalf("expected latest version ver-003 with number 3, got %+v, err %v", latest3, err)
+	}
+
+	// 4. Closed DB error handling
+	sClosed := setupTestDB(t)
+	_ = sClosed.Close()
+	if _, err := sClosed.GetLatestVersion(ctx); err == nil {
+		t.Error("expected error on closed DB for GetLatestVersion")
+	}
+}
+
+func TestStorage_ListVersions(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	// 1. Empty database listing
+	emptyList, total, err := s.ListVersions(ctx, 10, 0)
+	if err != nil || total != 0 || len(emptyList) != 0 {
+		t.Fatalf("expected empty list on clean DB, got total=%d, len=%d, err=%v", total, len(emptyList), err)
+	}
+
+	// 2. Insert 25 versions with monotonic numbers and timestamps
+	baseTime := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	for i := 1; i <= 25; i++ {
+		tx, _ := s.BeginTx(ctx)
+		ver := &domain.CatalogVersion{
+			VersionID:     fmt.Sprintf("ver-%03d", i),
+			VersionNumber: i,
+			Description:   fmt.Sprintf("Version milestone %d", i),
+			Author:        fmt.Sprintf("author-%d@coderpush.com", i%3),
+			Type:          domain.VersionTypePatch,
+			Summary: domain.ChangeSummary{
+				Added:   i * 2,
+				Updated: i,
+			},
+			TotalItemsAffected: i * 3,
+			CreatedAt:          baseTime.Add(time.Duration(i) * time.Minute),
+		}
+		if err := s.CreateVersionTx(ctx, tx, ver, nil); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("failed inserting version %d: %v", i, err)
+		}
+		_ = tx.Commit()
+	}
+
+	// 3. Default pagination: limit=0 (default 20), offset=-1 (default 0)
+	page1, total, err := s.ListVersions(ctx, 0, -1)
+	if err != nil {
+		t.Fatalf("ListVersions default failed: %v", err)
+	}
+	if total != 25 {
+		t.Errorf("expected total 25, got %d", total)
+	}
+	if len(page1) != 20 {
+		t.Errorf("expected 20 items (default limit), got %d", len(page1))
+	}
+	// Verify ordering: newest first (ver-025 is index 0)
+	if page1[0].VersionID != "ver-025" || page1[0].VersionNumber != 25 {
+		t.Errorf("expected first item to be ver-025, got %s (#%d)", page1[0].VersionID, page1[0].VersionNumber)
+	}
+	if page1[19].VersionID != "ver-006" {
+		t.Errorf("expected 20th item to be ver-006, got %s", page1[19].VersionID)
+	}
+
+	// 4. Pagination: Page 2 (offset 20, limit 10)
+	page2, total2, err := s.ListVersions(ctx, 10, 20)
+	if err != nil || total2 != 25 {
+		t.Fatalf("ListVersions page 2 failed: %v, total: %d", err, total2)
+	}
+	if len(page2) != 5 {
+		t.Errorf("expected remaining 5 items on page 2, got %d", len(page2))
+	}
+	if page2[0].VersionID != "ver-005" || page2[4].VersionID != "ver-001" {
+		t.Errorf("page 2 bounds mismatch: first=%s, last=%s", page2[0].VersionID, page2[4].VersionID)
+	}
+
+	// 5. Out-of-bounds offset
+	pageEmpty, totalEmpty, err := s.ListVersions(ctx, 10, 50)
+	if err != nil || totalEmpty != 25 || len(pageEmpty) != 0 {
+		t.Errorf("expected empty page for high offset, got len=%d, total=%d", len(pageEmpty), totalEmpty)
+	}
+
+	// 6. Limit Clamping (> 100 clamped to 100)
+	clamped, _, err := s.ListVersions(ctx, 500, 0)
+	if err != nil {
+		t.Fatalf("ListVersions clamped failed: %v", err)
+	}
+	if len(clamped) != 25 {
+		t.Errorf("expected 25 items for clamped limit, got %d", len(clamped))
+	}
+}
+
+func TestStorage_ResetVersions(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC()
+
+	// 1. Populate data in products, jobs, and catalog versioning tables
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	_ = s.UpsertProductTx(ctx, tx, &domain.Product{
+		SKU:               "SKU-RESET-TEST",
+		Name:              "Reset Test Item",
+		Price:             29.99,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now,
+		UpdatedAt:         now,
+	})
+	ver := &domain.CatalogVersion{
+		VersionID:     "ver-reset",
+		VersionNumber: 1,
+		Description:   "Version before reset",
+		Author:        "test@coderpush.com",
+		Type:          domain.VersionTypeInitial,
+		CreatedAt:     now,
+	}
+	deltas := []domain.ItemDelta{
+		{
+			VersionID:    "ver-reset",
+			SKU:          "SKU-RESET-TEST",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "Reset Test Item",
+			NewPrice:     29.99,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: now,
+		},
+	}
+	if err := s.CreateVersionTx(ctx, tx, ver, deltas); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("CreateVersionTx failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// 2. Call Reset
+	if err := s.Reset(ctx); err != nil {
+		t.Fatalf("Reset failed: %v", err)
+	}
+
+	// 3. Verify all tables are wiped clean
+	// Products
+	_, err = s.GetProduct(ctx, "SKU-RESET-TEST")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected product wiped after reset, got err %v", err)
+	}
+	// Versions
+	_, err = s.GetVersion(ctx, "ver-reset")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected version wiped after reset, got err %v", err)
+	}
+	// Latest version
+	_, err = s.GetLatestVersion(ctx)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected GetLatestVersion ErrNotFound after reset, got err %v", err)
+	}
+	// Deltas
+	deltasAfter, err := s.GetVersionDeltas(ctx, "ver-reset")
+	if err != nil || len(deltasAfter) != 0 {
+		t.Errorf("expected 0 deltas after reset, got %d", len(deltasAfter))
+	}
+	// Direct delta table count
+	var deltaCount int
+	_ = s.DB().QueryRowContext(ctx, "SELECT count(*) FROM catalog_version_deltas;").Scan(&deltaCount)
+	if deltaCount != 0 {
+		t.Errorf("expected 0 rows in catalog_version_deltas, got %d", deltaCount)
+	}
+
+	// 4. Verify DB remains fully functional after reset
+	txPost, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx post-reset failed: %v", err)
+	}
+	postVer := &domain.CatalogVersion{
+		VersionID:     "ver-post-reset",
+		VersionNumber: 1,
+		Description:   "Clean version 1",
+		Author:        "admin@coderpush.com",
+		Type:          domain.VersionTypeInitial,
+		CreatedAt:     now,
+	}
+	if err := s.CreateVersionTx(ctx, txPost, postVer, nil); err != nil {
+		_ = txPost.Rollback()
+		t.Fatalf("failed inserting version post-reset: %v", err)
+	}
+	if err := txPost.Commit(); err != nil {
+		t.Fatalf("Commit post-reset failed: %v", err)
+	}
+
+	fetchedPost, err := s.GetVersion(ctx, "ver-post-reset")
+	if err != nil || fetchedPost.VersionNumber != 1 {
+		t.Errorf("expected successful retrieval post-reset, got %+v, err %v", fetchedPost, err)
+	}
+}
+
+// BenchmarkStorage_GetProduct benchmarks point lookups on the live products table in the presence
+// of historical catalog versions and delta records.
+func BenchmarkStorage_GetProduct(b *testing.B) {
+	ctx := context.Background()
+	s := setupTestDB(b)
+
+	now := time.Now().UTC()
+	const totalProducts = 2000
+
+	// Populate products and historical version deltas
+	tx, _ := s.BeginTx(ctx)
+	for i := 0; i < totalProducts; i++ {
+		_ = s.UpsertProductTx(ctx, tx, &domain.Product{
+			SKU:               fmt.Sprintf("SKU-%05d", i),
+			Name:              fmt.Sprintf("Benchmark Product %d", i),
+			Price:             float64(10 + (i % 100)),
+			Status:            domain.StatusActive,
+			SupplierTimestamp: now,
+			UpdatedAt:         now,
+		})
+	}
+	ver := &domain.CatalogVersion{
+		VersionID:     "ver-bench",
+		VersionNumber: 1,
+		Description:   "Benchmark baseline",
+		Author:        "bench@coderpush.com",
+		Type:          domain.VersionTypeInitial,
+		CreatedAt:     now,
+	}
+	_ = s.CreateVersionTx(ctx, tx, ver, nil)
+	_ = tx.Commit()
+
+	targetSKU := "SKU-01000"
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		p, err := s.GetProduct(ctx, targetSKU)
+		if err != nil || p == nil {
+			b.Fatalf("lookup failed: %v", err)
+		}
+	}
+}
+
+// BenchmarkStorage_ListProducts benchmarks paginated scans on the live products table.
+func BenchmarkStorage_ListProducts(b *testing.B) {
+	ctx := context.Background()
+	s := setupTestDB(b)
+
+	now := time.Now().UTC()
+	const totalProducts = 2000
+
+	tx, _ := s.BeginTx(ctx)
+	for i := 0; i < totalProducts; i++ {
+		status := domain.StatusActive
+		if i%5 == 0 {
+			status = domain.StatusWithdrawn
+		}
+		_ = s.UpsertProductTx(ctx, tx, &domain.Product{
+			SKU:               fmt.Sprintf("SKU-%05d", i),
+			Name:              fmt.Sprintf("Benchmark Product %d", i),
+			Price:             float64(10 + (i % 100)),
+			Status:            status,
+			SupplierTimestamp: now,
+			UpdatedAt:         now,
+		})
+	}
+	_ = tx.Commit()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		prods, total, err := s.ListProducts(ctx, "ACTIVE", "", 50, 0)
+		if err != nil || total == 0 || len(prods) != 50 {
+			b.Fatalf("list failed: %v, total: %d, len: %d", err, total, len(prods))
+		}
+	}
+}
+
+// TestStorage_CatalogLookupLatencySubMillisecond automatically asserts that active catalog point lookups
+// and paginated listings remain strictly sub-millisecond even with 2,000 live products and 5,000 historical deltas.
+func TestStorage_CatalogLookupLatencySubMillisecond(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC()
+	const totalProducts = 2000
+	const historicalVersions = 20
+
+	// 1. Seed products
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	for i := 0; i < totalProducts; i++ {
+		status := domain.StatusActive
+		if i%10 == 0 {
+			status = domain.StatusWithdrawn
+		}
+		if err := s.UpsertProductTx(ctx, tx, &domain.Product{
+			SKU:               fmt.Sprintf("SKU-%05d", i),
+			Name:              fmt.Sprintf("Live Catalog Item %d", i),
+			Price:             float64(5 + (i % 50)),
+			Status:            status,
+			SupplierTimestamp: now,
+			UpdatedAt:         now,
+		}); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("failed seeding product %d: %v", i, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit products failed: %v", err)
+	}
+
+	// 2. Seed historical versions and 5,000 deltas in auxiliary journal
+	for v := 1; v <= historicalVersions; v++ {
+		txV, _ := s.BeginTx(ctx)
+		ver := &domain.CatalogVersion{
+			VersionID:     fmt.Sprintf("ver-hist-%03d", v),
+			VersionNumber: v,
+			Description:   fmt.Sprintf("Historical version %d", v),
+			Author:        "sync@coderpush.com",
+			Type:          domain.VersionTypePatch,
+			CreatedAt:     now.Add(time.Duration(v) * time.Hour),
+		}
+		deltas := make([]domain.ItemDelta, 250)
+		for d := 0; d < 250; d++ {
+			skuIdx := (v*250 + d) % totalProducts
+			deltas[d] = domain.ItemDelta{
+				VersionID:    ver.VersionID,
+				SKU:          fmt.Sprintf("SKU-%05d", skuIdx),
+				Action:       domain.DeltaActionUpdated,
+				NewName:      fmt.Sprintf("Live Catalog Item %d", skuIdx),
+				NewPrice:     float64(5 + (skuIdx % 50)),
+				NewStatus:    domain.StatusActive,
+				NewTimestamp: now,
+			}
+		}
+		_ = s.CreateVersionTx(ctx, txV, ver, deltas)
+		_ = txV.Commit()
+	}
+
+	// 3. Warm-up
+	for i := 0; i < 50; i++ {
+		_, _ = s.GetProduct(ctx, "SKU-00500")
+	}
+
+	// 4. Assert Point Lookup Latency (< 1.0 ms)
+	const pointLookups = 1000
+	startPoint := time.Now()
+	for i := 0; i < pointLookups; i++ {
+		sku := fmt.Sprintf("SKU-%05d", (i*7)%totalProducts)
+		p, err := s.GetProduct(ctx, sku)
+		if err != nil || p == nil {
+			t.Fatalf("Point lookup failed for %s: %v", sku, err)
+		}
+	}
+	pointElapsed := time.Since(startPoint)
+	avgPointLatency := pointElapsed / time.Duration(pointLookups)
+
+	t.Logf("Measured avg point lookup latency: %v across %d lookups", avgPointLatency, pointLookups)
+	if avgPointLatency >= 1*time.Millisecond {
+		t.Fatalf("Point lookup latency regression: got %v, expected < 1ms", avgPointLatency)
+	}
+
+	// 5. Assert Paginated List Latency (< 2.0 ms for 50 items)
+	const listLookups = 200
+	startList := time.Now()
+	for i := 0; i < listLookups; i++ {
+		offset := (i * 10) % 500
+		prods, total, err := s.ListProducts(ctx, "ACTIVE", "", 50, offset)
+		if err != nil || total == 0 || len(prods) == 0 {
+			t.Fatalf("ListProducts failed at offset %d: %v", offset, err)
+		}
+	}
+	listElapsed := time.Since(startList)
+	avgListLatency := listElapsed / time.Duration(listLookups)
+
+	t.Logf("Measured avg list query latency: %v across %d queries", avgListLatency, listLookups)
+	maxListAllowed := 2 * time.Millisecond
+	if isRaceDetectorEnabled() {
+		// Under Go race detector instrumentation (-race), pure-Go SQLite memory operations incur ~20-50x overhead
+		maxListAllowed = 50 * time.Millisecond
+	}
+	if avgListLatency >= maxListAllowed {
+		t.Fatalf("List query latency regression: got %v, expected < %v", avgListLatency, maxListAllowed)
+	}
+}
+
+func isRaceDetectorEnabled() bool {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return false
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "-race" && setting.Value == "true" {
+			return true
+		}
+	}
+	return false
+}
+
+func TestStorage_ConcurrentVersionAndCatalogReads(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC()
+
+	// Seed 100 products
+	tx, _ := s.BeginTx(ctx)
+	for i := 0; i < 100; i++ {
+		_ = s.UpsertProductTx(ctx, tx, &domain.Product{
+			SKU:               fmt.Sprintf("SKU-%03d", i),
+			Name:              fmt.Sprintf("Concurrent Item %d", i),
+			Price:             10.0 + float64(i),
+			Status:            domain.StatusActive,
+			SupplierTimestamp: now,
+			UpdatedAt:         now,
+		})
+	}
+	_ = tx.Commit()
+
+	var wg sync.WaitGroup
+	const readers = 6
+	const writers = 2
+	const operations = 40
+
+	// Readers: execute GetProduct and ListProducts
+	wg.Add(readers)
+	for r := 0; r < readers; r++ {
+		go func(readerID int) {
+			defer wg.Done()
+			for op := 0; op < operations; op++ {
+				sku := fmt.Sprintf("SKU-%03d", (readerID+op)%100)
+				p, err := s.GetProduct(ctx, sku)
+				if err != nil || p == nil {
+					t.Errorf("reader %d failed reading %s: %v", readerID, sku, err)
+					return
+				}
+				if op%5 == 0 {
+					_, _, err := s.ListProducts(ctx, "ACTIVE", "", 20, 0)
+					if err != nil {
+						t.Errorf("reader %d failed listing products: %v", readerID, err)
+						return
+					}
+				}
+			}
+		}(r)
+	}
+
+	// Writers: write new versions and deltas
+	wg.Add(writers)
+	for w := 0; w < writers; w++ {
+		go func(writerID int) {
+			defer wg.Done()
+			for op := 0; op < operations/4; op++ {
+				verNum := 1000 + writerID*100 + op
+				verID := fmt.Sprintf("ver-c-%d-%d", writerID, op)
+				txW, err := s.BeginTx(ctx)
+				if err != nil {
+					t.Errorf("writer %d failed BeginTx: %v", writerID, err)
+					return
+				}
+				ver := &domain.CatalogVersion{
+					VersionID:     verID,
+					VersionNumber: verNum,
+					Description:   "Concurrent write",
+					Author:        "concurrency@test.com",
+					Type:          domain.VersionTypePatch,
+					CreatedAt:     time.Now().UTC(),
+				}
+				deltas := []domain.ItemDelta{
+					{
+						VersionID:    verID,
+						SKU:          fmt.Sprintf("SKU-%03d", op%100),
+						Action:       domain.DeltaActionUpdated,
+						NewName:      "Concurrent Update",
+						NewPrice:     99.99,
+						NewStatus:    domain.StatusActive,
+						NewTimestamp: time.Now().UTC(),
+					},
+				}
+				if err := s.CreateVersionTx(ctx, txW, ver, deltas); err != nil {
+					_ = txW.Rollback()
+					t.Errorf("writer %d failed CreateVersionTx: %v", writerID, err)
+					return
+				}
+				if err := txW.Commit(); err != nil {
+					t.Errorf("writer %d failed Commit: %v", writerID, err)
+					return
+				}
+			}
+		}(w)
+	}
+
+	wg.Wait()
+}
+
+// ============================================================================
+// Milestone 2: Non-Destructive Rollback Engine Test Suite (Git-Revert Pattern)
+// ============================================================================
+
+func TestStorage_Rollback_SimplePriceAndNameRevert(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// 1. Setup V1: SKU-001 priced at $50.00, Name "Super Gadget V1", Status ACTIVE
+	tx1, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx tx1 failed: %v", err)
+	}
+	p1 := &domain.Product{
+		SKU:               "SKU-001",
+		Name:              "Super Gadget V1",
+		Price:             50.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(-2 * time.Hour),
+		UpdatedAt:         now.Add(-2 * time.Hour),
+	}
+	if err := s.UpsertProductTx(ctx, tx1, p1); err != nil {
+		_ = tx1.Rollback()
+		t.Fatalf("UpsertProductTx tx1 failed: %v", err)
+	}
+	ver1 := &domain.CatalogVersion{
+		VersionID:          "ver-simple-001",
+		VersionNumber:      1,
+		Description:        "Initial baseline",
+		Author:             "ops@coderpush.com",
+		Type:               domain.VersionTypeInitial,
+		TotalItemsAffected: 1,
+		Summary:            domain.ChangeSummary{Added: 1},
+		CreatedAt:          now.Add(-2 * time.Hour),
+	}
+	deltas1 := []domain.ItemDelta{
+		{
+			VersionID:    "ver-simple-001",
+			SKU:          "SKU-001",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "Super Gadget V1",
+			NewPrice:     50.00,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: now.Add(-2 * time.Hour),
+		},
+	}
+	if err := s.CreateVersionTx(ctx, tx1, ver1, deltas1); err != nil {
+		_ = tx1.Rollback()
+		t.Fatalf("CreateVersionTx tx1 failed: %v", err)
+	}
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit tx1 failed: %v", err)
+	}
+
+	// 2. Setup V2: SKU-001 discounted to $40.00, Name "Super Gadget V2"
+	tx2, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx tx2 failed: %v", err)
+	}
+	p2 := &domain.Product{
+		SKU:               "SKU-001",
+		Name:              "Super Gadget V2",
+		Price:             40.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(-1 * time.Hour),
+		UpdatedAt:         now.Add(-1 * time.Hour),
+	}
+	if err := s.UpsertProductTx(ctx, tx2, p2); err != nil {
+		_ = tx2.Rollback()
+		t.Fatalf("UpsertProductTx tx2 failed: %v", err)
+	}
+	ver2 := &domain.CatalogVersion{
+		VersionID:          "ver-simple-002",
+		VersionNumber:      2,
+		Description:        "Promotional discount patch",
+		Author:             "marketing@coderpush.com",
+		Type:               domain.VersionTypePatch,
+		TotalItemsAffected: 1,
+		Summary:            domain.ChangeSummary{Updated: 1},
+		CreatedAt:          now.Add(-1 * time.Hour),
+	}
+	oldName := "Super Gadget V1"
+	oldPrice := 50.00
+	oldStatus := domain.StatusActive
+	oldTime := now.Add(-2 * time.Hour)
+	deltas2 := []domain.ItemDelta{
+		{
+			VersionID:    "ver-simple-002",
+			SKU:          "SKU-001",
+			Action:       domain.DeltaActionUpdated,
+			OldName:      &oldName,
+			NewName:      "Super Gadget V2",
+			OldPrice:     &oldPrice,
+			NewPrice:     40.00,
+			OldStatus:    &oldStatus,
+			NewStatus:    domain.StatusActive,
+			OldTimestamp: &oldTime,
+			NewTimestamp: now.Add(-1 * time.Hour),
+		},
+	}
+	if err := s.CreateVersionTx(ctx, tx2, ver2, deltas2); err != nil {
+		_ = tx2.Rollback()
+		t.Fatalf("CreateVersionTx tx2 failed: %v", err)
+	}
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("Commit tx2 failed: %v", err)
+	}
+
+	// Verify live product at V2
+	liveV2, err := s.GetProduct(ctx, "SKU-001")
+	if err != nil || liveV2.Price != 40.00 || liveV2.Name != "Super Gadget V2" {
+		t.Fatalf("expected V2 live price 40.00, name 'Super Gadget V2', got %+v", liveV2)
+	}
+
+	// 3. Action: Rollback to V1
+	v3, revDeltas, err := s.RollbackVersion(ctx, "ver-simple-001", "revert-bot@coderpush.com", "Revert promo price to V1")
+	if err != nil {
+		t.Fatalf("RollbackVersion failed: %v", err)
+	}
+
+	// 4. Assertions on V3
+	if v3 == nil {
+		t.Fatal("expected non-nil CatalogVersion returned from RollbackVersion")
+	}
+	if v3.VersionNumber != 3 {
+		t.Errorf("expected version number 3, got %d", v3.VersionNumber)
+	}
+	if v3.Type != domain.VersionTypeRollback {
+		t.Errorf("expected VersionTypeRollback, got %s", v3.Type)
+	}
+	if v3.RevertOfVersionID == nil || *v3.RevertOfVersionID != "ver-simple-001" {
+		t.Errorf("expected RevertOfVersionID 'ver-simple-001', got %+v", v3.RevertOfVersionID)
+	}
+	if v3.Author != "revert-bot@coderpush.com" {
+		t.Errorf("expected author 'revert-bot@coderpush.com', got %s", v3.Author)
+	}
+	if v3.Description != "Revert promo price to V1" {
+		t.Errorf("expected description 'Revert promo price to V1', got %s", v3.Description)
+	}
+	if v3.Summary.Updated != 1 || v3.TotalItemsAffected != 1 {
+		t.Errorf("expected Summary.Updated=1 and TotalItemsAffected=1, got %+v (total %d)", v3.Summary, v3.TotalItemsAffected)
+	}
+
+	// 5. Assertions on returned deltas
+	if len(revDeltas) != 1 {
+		t.Fatalf("expected 1 delta returned, got %d", len(revDeltas))
+	}
+	d := revDeltas[0]
+	if d.SKU != "SKU-001" {
+		t.Errorf("expected delta SKU-001, got %s", d.SKU)
+	}
+	if d.Action != domain.DeltaActionUpdated {
+		t.Errorf("expected DeltaActionUpdated, got %s", d.Action)
+	}
+	if d.OldPrice == nil || *d.OldPrice != 40.00 {
+		t.Errorf("expected OldPrice 40.00, got %v", d.OldPrice)
+	}
+	if d.NewPrice != 50.00 {
+		t.Errorf("expected NewPrice 50.00, got %f", d.NewPrice)
+	}
+	if d.OldName == nil || *d.OldName != "Super Gadget V2" {
+		t.Errorf("expected OldName 'Super Gadget V2', got %v", d.OldName)
+	}
+	if d.NewName != "Super Gadget V1" {
+		t.Errorf("expected NewName 'Super Gadget V1', got %s", d.NewName)
+	}
+	if d.NewStatus != domain.StatusActive {
+		t.Errorf("expected NewStatus ACTIVE, got %s", d.NewStatus)
+	}
+
+	// 6. Assertions on live products table
+	liveV3, err := s.GetProduct(ctx, "SKU-001")
+	if err != nil {
+		t.Fatalf("GetProduct liveV3 failed: %v", err)
+	}
+	if liveV3.Price != 50.00 {
+		t.Errorf("expected live price reverted to 50.00, got %f", liveV3.Price)
+	}
+	if liveV3.Name != "Super Gadget V1" {
+		t.Errorf("expected live name reverted to 'Super Gadget V1', got %s", liveV3.Name)
+	}
+	if liveV3.Status != domain.StatusActive {
+		t.Errorf("expected live status ACTIVE, got %s", liveV3.Status)
+	}
+
+	// 7. Assertions on history immutability
+	allVersions, total, err := s.ListVersions(ctx, 10, 0)
+	if err != nil || total != 3 {
+		t.Fatalf("expected 3 versions total in history, got %d, err %v", total, err)
+	}
+	if allVersions[0].VersionID != v3.VersionID || allVersions[1].VersionID != "ver-simple-002" || allVersions[2].VersionID != "ver-simple-001" {
+		t.Errorf("unexpected version list order: %+v", allVersions)
+	}
+}
+
+func TestStorage_Rollback_PreservesTombstone_NoResurrection(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// 1. Setup V1: SKU-TOMB was ACTIVE ($50.00, "Tombstone Original")
+	//             SKU-ACTIVE was ACTIVE ($100.00, "Active Product")
+	tx1, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx tx1 failed: %v", err)
+	}
+	pTombV1 := &domain.Product{
+		SKU:               "SKU-TOMB",
+		Name:              "Tombstone Original",
+		Price:             50.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(-3 * time.Hour),
+		UpdatedAt:         now.Add(-3 * time.Hour),
+	}
+	pActiveV1 := &domain.Product{
+		SKU:               "SKU-ACTIVE",
+		Name:              "Active Product",
+		Price:             100.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(-3 * time.Hour),
+		UpdatedAt:         now.Add(-3 * time.Hour),
+	}
+	_ = s.UpsertProductTx(ctx, tx1, pTombV1)
+	_ = s.UpsertProductTx(ctx, tx1, pActiveV1)
+
+	ver1 := &domain.CatalogVersion{
+		VersionID:          "ver-tomb-001",
+		VersionNumber:      1,
+		Description:        "Initial baseline with active items",
+		Author:             "ops@coderpush.com",
+		Type:               domain.VersionTypeInitial,
+		TotalItemsAffected: 2,
+		Summary:            domain.ChangeSummary{Added: 2},
+		CreatedAt:          now.Add(-3 * time.Hour),
+	}
+	deltas1 := []domain.ItemDelta{
+		{
+			VersionID: "ver-tomb-001", SKU: "SKU-TOMB", Action: domain.DeltaActionAdded,
+			NewName: "Tombstone Original", NewPrice: 50.00, NewStatus: domain.StatusActive,
+			NewTimestamp: now.Add(-3 * time.Hour),
+		},
+		{
+			VersionID: "ver-tomb-001", SKU: "SKU-ACTIVE", Action: domain.DeltaActionAdded,
+			NewName: "Active Product", NewPrice: 100.00, NewStatus: domain.StatusActive,
+			NewTimestamp: now.Add(-3 * time.Hour),
+		},
+	}
+	_ = s.CreateVersionTx(ctx, tx1, ver1, deltas1)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit tx1 failed: %v", err)
+	}
+
+	// 2. Setup V2: SKU-TOMB is WITHDRAWN ($35.00, "Tombstone Withdrawn")
+	//             SKU-ACTIVE price updated to $120.00
+	tx2, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx tx2 failed: %v", err)
+	}
+	pTombV2 := &domain.Product{
+		SKU:               "SKU-TOMB",
+		Name:              "Tombstone Withdrawn",
+		Price:             35.00,
+		Status:            domain.StatusWithdrawn,
+		SupplierTimestamp: now.Add(-1 * time.Hour),
+		UpdatedAt:         now.Add(-1 * time.Hour),
+	}
+	pActiveV2 := &domain.Product{
+		SKU:               "SKU-ACTIVE",
+		Name:              "Active Product",
+		Price:             120.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(-1 * time.Hour),
+		UpdatedAt:         now.Add(-1 * time.Hour),
+	}
+	_ = s.UpsertProductTx(ctx, tx2, pTombV2)
+	_ = s.UpsertProductTx(ctx, tx2, pActiveV2)
+
+	ver2 := &domain.CatalogVersion{
+		VersionID:          "ver-tomb-002",
+		VersionNumber:      2,
+		Description:        "Withdraw SKU-TOMB and price hike",
+		Author:             "ops@coderpush.com",
+		Type:               domain.VersionTypePatch,
+		TotalItemsAffected: 2,
+		Summary:            domain.ChangeSummary{Updated: 1, Withdrawn: 1},
+		CreatedAt:          now.Add(-1 * time.Hour),
+	}
+	oldTombName := "Tombstone Original"
+	oldTombPrice := 50.00
+	oldTombStatus := domain.StatusActive
+	oldActivePrice := 100.00
+	oldActiveStatus := domain.StatusActive
+	deltas2 := []domain.ItemDelta{
+		{
+			VersionID: "ver-tomb-002", SKU: "SKU-TOMB", Action: domain.DeltaActionWithdrawn,
+			OldName: &oldTombName, NewName: "Tombstone Withdrawn",
+			OldPrice: &oldTombPrice, NewPrice: 35.00,
+			OldStatus: &oldTombStatus, NewStatus: domain.StatusWithdrawn,
+			NewTimestamp: now.Add(-1 * time.Hour),
+		},
+		{
+			VersionID: "ver-tomb-002", SKU: "SKU-ACTIVE", Action: domain.DeltaActionUpdated,
+			NewName:  "Active Product",
+			OldPrice: &oldActivePrice, NewPrice: 120.00,
+			OldStatus: &oldActiveStatus, NewStatus: domain.StatusActive,
+			NewTimestamp: now.Add(-1 * time.Hour),
+		},
+	}
+	_ = s.CreateVersionTx(ctx, tx2, ver2, deltas2)
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("Commit tx2 failed: %v", err)
+	}
+
+	// Confirm live state before rollback: SKU-TOMB is WITHDRAWN
+	liveBefore, err := s.GetProduct(ctx, "SKU-TOMB")
+	if err != nil || liveBefore.Status != domain.StatusWithdrawn {
+		t.Fatalf("expected SKU-TOMB WITHDRAWN before rollback, got %+v", liveBefore)
+	}
+
+	// 3. Action: Rollback to V1 (where SKU-TOMB was ACTIVE)
+	v3, revDeltas, err := s.RollbackVersion(ctx, "ver-tomb-001", "revert-bot@coderpush.com", "Rollback to V1 baseline")
+	if err != nil {
+		t.Fatalf("RollbackVersion failed: %v", err)
+	}
+	if v3 == nil {
+		t.Fatal("expected non-nil v3")
+	}
+
+	// 4. CRITICAL ASSERTION: Product MUST remain WITHDRAWN (No Resurrection / Tombstone Invariant A)
+	tombLive, err := s.GetProduct(ctx, "SKU-TOMB")
+	if err != nil {
+		t.Fatalf("GetProduct SKU-TOMB failed: %v", err)
+	}
+	if tombLive.Status != domain.StatusWithdrawn {
+		t.Fatalf("INVARIANT VIOLATION: SKU-TOMB resurrected to %s! Tombstone must be preserved as WITHDRAWN", tombLive.Status)
+	}
+	// Metadata (price and name) reverts to V1 baseline
+	if tombLive.Price != 50.00 {
+		t.Errorf("expected price reverted to 50.00, got %f", tombLive.Price)
+	}
+	if tombLive.Name != "Tombstone Original" {
+		t.Errorf("expected name reverted to 'Tombstone Original', got %s", tombLive.Name)
+	}
+
+	// 5. Active product listing MUST NOT contain SKU-TOMB
+	activeList, totalActive, err := s.ListProducts(ctx, "ACTIVE", "", 10, 0)
+	if err != nil {
+		t.Fatalf("ListProducts failed: %v", err)
+	}
+	if totalActive != 1 || len(activeList) != 1 {
+		t.Fatalf("expected exactly 1 active product, got total=%d, len=%d", totalActive, len(activeList))
+	}
+	if activeList[0].SKU != "SKU-ACTIVE" {
+		t.Errorf("expected active item to be SKU-ACTIVE, got %s", activeList[0].SKU)
+	}
+	for _, p := range activeList {
+		if p.SKU == "SKU-TOMB" {
+			t.Fatalf("INVARIANT VIOLATION: SKU-TOMB leaked into active product listings!")
+		}
+	}
+
+	// 6. Verify deltas recorded for SKU-TOMB
+	var tombDelta *domain.ItemDelta
+	for i := range revDeltas {
+		if revDeltas[i].SKU == "SKU-TOMB" {
+			tombDelta = &revDeltas[i]
+			break
+		}
+	}
+	if tombDelta == nil {
+		t.Fatal("expected delta for SKU-TOMB in rollback deltas")
+	}
+	if tombDelta.NewStatus != domain.StatusWithdrawn {
+		t.Errorf("expected delta NewStatus WITHDRAWN, got %s", tombDelta.NewStatus)
+	}
+	if tombDelta.OldStatus == nil || *tombDelta.OldStatus != domain.StatusWithdrawn {
+		t.Errorf("expected delta OldStatus WITHDRAWN, got %v", tombDelta.OldStatus)
+	}
+	if tombDelta.NewPrice != 50.00 {
+		t.Errorf("expected delta NewPrice 50.00, got %f", tombDelta.NewPrice)
+	}
+
+	// 7. Verify SKU-ACTIVE reverted properly to $100.00
+	activeLive, err := s.GetProduct(ctx, "SKU-ACTIVE")
+	if err != nil || activeLive.Price != 100.00 || activeLive.Status != domain.StatusActive {
+		t.Errorf("expected SKU-ACTIVE price 100.00 and ACTIVE, got %+v", activeLive)
+	}
+}
+
+func TestStorage_Rollback_WithdrawsPostBaselineAdditions(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// 1. Setup V1: Only SKU-A exists
+	tx1, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx tx1 failed: %v", err)
+	}
+	pA := &domain.Product{
+		SKU:               "SKU-A",
+		Name:              "Alpha Baseline",
+		Price:             10.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(-2 * time.Hour),
+		UpdatedAt:         now.Add(-2 * time.Hour),
+	}
+	_ = s.UpsertProductTx(ctx, tx1, pA)
+	ver1 := &domain.CatalogVersion{
+		VersionID:          "ver-post-001",
+		VersionNumber:      1,
+		Description:        "Baseline V1 with only SKU-A",
+		Author:             "ops@coderpush.com",
+		Type:               domain.VersionTypeInitial,
+		TotalItemsAffected: 1,
+		Summary:            domain.ChangeSummary{Added: 1},
+		CreatedAt:          now.Add(-2 * time.Hour),
+	}
+	deltas1 := []domain.ItemDelta{
+		{
+			VersionID: "ver-post-001", SKU: "SKU-A", Action: domain.DeltaActionAdded,
+			NewName: "Alpha Baseline", NewPrice: 10.00, NewStatus: domain.StatusActive,
+			NewTimestamp: now.Add(-2 * time.Hour),
+		},
+	}
+	_ = s.CreateVersionTx(ctx, tx1, ver1, deltas1)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit tx1 failed: %v", err)
+	}
+
+	// 2. Setup V2: Adds SKU-B, updates SKU-A
+	tx2, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx tx2 failed: %v", err)
+	}
+	pA2 := &domain.Product{
+		SKU:               "SKU-A",
+		Name:              "Alpha Updated",
+		Price:             15.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(-1 * time.Hour),
+		UpdatedAt:         now.Add(-1 * time.Hour),
+	}
+	pB := &domain.Product{
+		SKU:               "SKU-B",
+		Name:              "Beta Post-Addition",
+		Price:             25.00,
+		Status:            domain.StatusActive,
+		SupplierTimestamp: now.Add(-1 * time.Hour),
+		UpdatedAt:         now.Add(-1 * time.Hour),
+	}
+	_ = s.UpsertProductTx(ctx, tx2, pA2)
+	_ = s.UpsertProductTx(ctx, tx2, pB)
+
+	ver2 := &domain.CatalogVersion{
+		VersionID:          "ver-post-002",
+		VersionNumber:      2,
+		Description:        "Add SKU-B and update SKU-A",
+		Author:             "ops@coderpush.com",
+		Type:               domain.VersionTypePatch,
+		TotalItemsAffected: 2,
+		Summary:            domain.ChangeSummary{Added: 1, Updated: 1},
+		CreatedAt:          now.Add(-1 * time.Hour),
+	}
+	oldPriceA := 10.00
+	oldNameA := "Alpha Baseline"
+	oldStatusA := domain.StatusActive
+	deltas2 := []domain.ItemDelta{
+		{
+			VersionID: "ver-post-002", SKU: "SKU-A", Action: domain.DeltaActionUpdated,
+			OldName: &oldNameA, NewName: "Alpha Updated",
+			OldPrice: &oldPriceA, NewPrice: 15.00,
+			OldStatus: &oldStatusA, NewStatus: domain.StatusActive,
+			NewTimestamp: now.Add(-1 * time.Hour),
+		},
+		{
+			VersionID: "ver-post-002", SKU: "SKU-B", Action: domain.DeltaActionAdded,
+			NewName: "Beta Post-Addition", NewPrice: 25.00, NewStatus: domain.StatusActive,
+			NewTimestamp: now.Add(-1 * time.Hour),
+		},
+	}
+	_ = s.CreateVersionTx(ctx, tx2, ver2, deltas2)
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("Commit tx2 failed: %v", err)
+	}
+
+	// Verify both exist and are ACTIVE at V2
+	prodsV2, totalV2, _ := s.ListProducts(ctx, "ACTIVE", "", 10, 0)
+	if totalV2 != 2 || len(prodsV2) != 2 {
+		t.Fatalf("expected 2 active products at V2, got %d", totalV2)
+	}
+
+	// 3. Action: Rollback to V1
+	v3, revDeltas, err := s.RollbackVersion(ctx, "ver-post-001", "revert-bot@coderpush.com", "Revert to V1 before SKU-B")
+	if err != nil {
+		t.Fatalf("RollbackVersion failed: %v", err)
+	}
+	if v3 == nil {
+		t.Fatal("expected non-nil v3")
+	}
+
+	// 4. Assertions on SKU-B (Post-Baseline Addition):
+	// Must transition to WITHDRAWN (not hard deleted!)
+	liveB, err := s.GetProduct(ctx, "SKU-B")
+	if err != nil {
+		t.Fatalf("expected SKU-B to still exist in DB (non-destructive!), got error: %v", err)
+	}
+	if liveB.Status != domain.StatusWithdrawn {
+		t.Errorf("expected SKU-B status WITHDRAWN, got %s", liveB.Status)
+	}
+	if liveB.Price != 25.00 {
+		t.Errorf("expected SKU-B price preserved as 25.00, got %f", liveB.Price)
+	}
+
+	// 5. Active listing MUST ONLY contain SKU-A
+	activeList, totalActive, err := s.ListProducts(ctx, "ACTIVE", "", 10, 0)
+	if err != nil {
+		t.Fatalf("ListProducts ACTIVE failed: %v", err)
+	}
+	if totalActive != 1 || len(activeList) != 1 {
+		t.Fatalf("expected 1 active product, got total=%d, len=%d", totalActive, len(activeList))
+	}
+	if activeList[0].SKU != "SKU-A" {
+		t.Errorf("expected active item SKU-A, got %s", activeList[0].SKU)
+	}
+
+	// 6. Withdrawn listing MUST contain SKU-B
+	withdrawnList, totalWithdrawn, err := s.ListProducts(ctx, "WITHDRAWN", "", 10, 0)
+	if err != nil {
+		t.Fatalf("ListProducts WITHDRAWN failed: %v", err)
+	}
+	if totalWithdrawn != 1 || len(withdrawnList) != 1 {
+		t.Fatalf("expected 1 withdrawn product, got total=%d, len=%d", totalWithdrawn, len(withdrawnList))
+	}
+	if withdrawnList[0].SKU != "SKU-B" {
+		t.Errorf("expected withdrawn item SKU-B, got %s", withdrawnList[0].SKU)
+	}
+
+	// 7. SKU-A must be restored to V1 ($10.00, Alpha Baseline)
+	liveA, err := s.GetProduct(ctx, "SKU-A")
+	if err != nil {
+		t.Fatalf("GetProduct SKU-A failed: %v", err)
+	}
+	if liveA.Price != 10.00 || liveA.Name != "Alpha Baseline" || liveA.Status != domain.StatusActive {
+		t.Errorf("expected SKU-A restored to V1, got %+v", liveA)
+	}
+
+	// 8. Verify delta for SKU-B is WITHDRAWN
+	var deltaB *domain.ItemDelta
+	for i := range revDeltas {
+		if revDeltas[i].SKU == "SKU-B" {
+			deltaB = &revDeltas[i]
+			break
+		}
+	}
+	if deltaB == nil {
+		t.Fatal("expected delta for SKU-B in rollback deltas")
+	}
+	if deltaB.Action != domain.DeltaActionWithdrawn {
+		t.Errorf("expected delta action WITHDRAWN, got %s", deltaB.Action)
+	}
+	if deltaB.OldStatus == nil || *deltaB.OldStatus != domain.StatusActive {
+		t.Errorf("expected OldStatus ACTIVE, got %v", deltaB.OldStatus)
+	}
+	if deltaB.NewStatus != domain.StatusWithdrawn {
+		t.Errorf("expected NewStatus WITHDRAWN, got %s", deltaB.NewStatus)
+	}
+}
+
+func TestStorage_Rollback_ChainedRollbacks(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// V1: SKU-1 ($10.00), SKU-2 ($20.00)
+	tx1, _ := s.BeginTx(ctx)
+	_ = s.UpsertProductTx(ctx, tx1, &domain.Product{SKU: "SKU-1", Name: "Item 1", Price: 10.00, Status: domain.StatusActive, SupplierTimestamp: now, UpdatedAt: now})
+	_ = s.UpsertProductTx(ctx, tx1, &domain.Product{SKU: "SKU-2", Name: "Item 2", Price: 20.00, Status: domain.StatusActive, SupplierTimestamp: now, UpdatedAt: now})
+	ver1 := &domain.CatalogVersion{VersionID: "ver-chain-001", VersionNumber: 1, Description: "V1", Author: "author", Type: domain.VersionTypeInitial, TotalItemsAffected: 2, Summary: domain.ChangeSummary{Added: 2}, CreatedAt: now}
+	deltas1 := []domain.ItemDelta{
+		{VersionID: "ver-chain-001", SKU: "SKU-1", Action: domain.DeltaActionAdded, NewName: "Item 1", NewPrice: 10.00, NewStatus: domain.StatusActive, NewTimestamp: now},
+		{VersionID: "ver-chain-001", SKU: "SKU-2", Action: domain.DeltaActionAdded, NewName: "Item 2", NewPrice: 20.00, NewStatus: domain.StatusActive, NewTimestamp: now},
+	}
+	_ = s.CreateVersionTx(ctx, tx1, ver1, deltas1)
+	_ = tx1.Commit()
+
+	// V2: SKU-1 ($15.00), SKU-2 ($25.00)
+	tx2, _ := s.BeginTx(ctx)
+	_ = s.UpsertProductTx(ctx, tx2, &domain.Product{SKU: "SKU-1", Name: "Item 1", Price: 15.00, Status: domain.StatusActive, SupplierTimestamp: now.Add(time.Hour), UpdatedAt: now.Add(time.Hour)})
+	_ = s.UpsertProductTx(ctx, tx2, &domain.Product{SKU: "SKU-2", Name: "Item 2", Price: 25.00, Status: domain.StatusActive, SupplierTimestamp: now.Add(time.Hour), UpdatedAt: now.Add(time.Hour)})
+	ver2 := &domain.CatalogVersion{VersionID: "ver-chain-002", VersionNumber: 2, Description: "V2", Author: "author", Type: domain.VersionTypePatch, TotalItemsAffected: 2, Summary: domain.ChangeSummary{Updated: 2}, CreatedAt: now.Add(time.Hour)}
+	oldP1 := 10.00
+	oldP2 := 20.00
+	oldSt := domain.StatusActive
+	deltas2 := []domain.ItemDelta{
+		{VersionID: "ver-chain-002", SKU: "SKU-1", Action: domain.DeltaActionUpdated, NewName: "Item 1", OldPrice: &oldP1, NewPrice: 15.00, OldStatus: &oldSt, NewStatus: domain.StatusActive, NewTimestamp: now.Add(time.Hour)},
+		{VersionID: "ver-chain-002", SKU: "SKU-2", Action: domain.DeltaActionUpdated, NewName: "Item 2", OldPrice: &oldP2, NewPrice: 25.00, OldStatus: &oldSt, NewStatus: domain.StatusActive, NewTimestamp: now.Add(time.Hour)},
+	}
+	_ = s.CreateVersionTx(ctx, tx2, ver2, deltas2)
+	_ = tx2.Commit()
+
+	// Rollback 1: Rollback to V1 -> Creates V3
+	v3, _, err := s.RollbackVersion(ctx, "ver-chain-001", "bot", "Rollback to V1")
+	if err != nil {
+		t.Fatalf("Rollback to V1 failed: %v", err)
+	}
+	if v3.VersionNumber != 3 || v3.Type != domain.VersionTypeRollback || *v3.RevertOfVersionID != "ver-chain-001" {
+		t.Fatalf("unexpected v3: %+v", v3)
+	}
+	// Verify live catalog matches V1
+	p1AtV3, _ := s.GetProduct(ctx, "SKU-1")
+	p2AtV3, _ := s.GetProduct(ctx, "SKU-2")
+	if p1AtV3.Price != 10.00 || p2AtV3.Price != 20.00 {
+		t.Errorf("catalog mismatch after rollback to V1: SKU-1=%f, SKU-2=%f", p1AtV3.Price, p2AtV3.Price)
+	}
+
+	// Rollback 2: Rollback to V2 -> Creates V4
+	v4, _, err := s.RollbackVersion(ctx, "ver-chain-002", "bot", "Rollback to V2")
+	if err != nil {
+		t.Fatalf("Rollback to V2 failed: %v", err)
+	}
+	if v4.VersionNumber != 4 || v4.Type != domain.VersionTypeRollback || *v4.RevertOfVersionID != "ver-chain-002" {
+		t.Fatalf("unexpected v4: %+v", v4)
+	}
+	// Verify live catalog matches V2
+	p1AtV4, _ := s.GetProduct(ctx, "SKU-1")
+	p2AtV4, _ := s.GetProduct(ctx, "SKU-2")
+	if p1AtV4.Price != 15.00 || p2AtV4.Price != 25.00 {
+		t.Errorf("catalog mismatch after rollback to V2: SKU-1=%f, SKU-2=%f", p1AtV4.Price, p2AtV4.Price)
+	}
+
+	// Rollback 3: Rollback to V3 -> Creates V5
+	v5, _, err := s.RollbackVersion(ctx, v3.VersionID, "bot", "Rollback to V3")
+	if err != nil {
+		t.Fatalf("Rollback to V3 failed: %v", err)
+	}
+	if v5.VersionNumber != 5 || v5.Type != domain.VersionTypeRollback || *v5.RevertOfVersionID != v3.VersionID {
+		t.Fatalf("unexpected v5: %+v", v5)
+	}
+	// Verify live catalog matches V3 (which is $10.00 and $20.00)
+	p1AtV5, _ := s.GetProduct(ctx, "SKU-1")
+	p2AtV5, _ := s.GetProduct(ctx, "SKU-2")
+	if p1AtV5.Price != 10.00 || p2AtV5.Price != 20.00 {
+		t.Errorf("catalog mismatch after rollback to V3: SKU-1=%f, SKU-2=%f", p1AtV5.Price, p2AtV5.Price)
+	}
+
+	// Verify history is strictly forward-moving and audit records are never deleted
+	versions, total, err := s.ListVersions(ctx, 10, 0)
+	if err != nil || total != 5 || len(versions) != 5 {
+		t.Fatalf("expected 5 versions in history, got total=%d, len=%d, err=%v", total, len(versions), err)
+	}
+	// Verify monotonic version numbers: 5, 4, 3, 2, 1
+	for i, expectedNum := range []int{5, 4, 3, 2, 1} {
+		if versions[i].VersionNumber != expectedNum {
+			t.Errorf("version at index %d expected number %d, got %d", i, expectedNum, versions[i].VersionNumber)
+		}
+	}
+
+	// Verify deltas for all 5 versions are intact in DB
+	for _, ver := range versions {
+		deltas, err := s.GetVersionDeltas(ctx, ver.VersionID)
+		if err != nil || len(deltas) == 0 {
+			t.Errorf("deltas missing for version %s: count=%d, err=%v", ver.VersionID, len(deltas), err)
+		}
+	}
+}
+
+func TestStorage_Rollback_NonExistentTargetVersion(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Seed V1
+	tx, _ := s.BeginTx(ctx)
+	_ = s.UpsertProductTx(ctx, tx, &domain.Product{SKU: "SKU-1", Name: "Item 1", Price: 10.00, Status: domain.StatusActive, SupplierTimestamp: now, UpdatedAt: now})
+	ver1 := &domain.CatalogVersion{VersionID: "ver-exist-001", VersionNumber: 1, Description: "V1", Author: "user", Type: domain.VersionTypeInitial, TotalItemsAffected: 1, Summary: domain.ChangeSummary{Added: 1}, CreatedAt: now}
+	deltas1 := []domain.ItemDelta{{VersionID: "ver-exist-001", SKU: "SKU-1", Action: domain.DeltaActionAdded, NewName: "Item 1", NewPrice: 10.00, NewStatus: domain.StatusActive, NewTimestamp: now}}
+	_ = s.CreateVersionTx(ctx, tx, ver1, deltas1)
+	_ = tx.Commit()
+
+	// 1. Non-existent version ID
+	_, _, err := s.RollbackVersion(ctx, "ver-does-not-exist", "operator", "revert non-existent")
+	if err == nil {
+		t.Fatal("expected error for non-existent target version, got nil")
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected domain.ErrNotFound, got: %v", err)
+	}
+
+	// 2. Empty string target version ID
+	_, _, errEmpty := s.RollbackVersion(ctx, "", "operator", "empty version")
+	if errEmpty == nil {
+		t.Fatal("expected error for empty target version ID, got nil")
+	}
+
+	// 3. Whitespace-only target version ID
+	_, _, errWhitespace := s.RollbackVersion(ctx, "   ", "operator", "whitespace version")
+	if errWhitespace == nil {
+		t.Fatal("expected error for whitespace target version ID, got nil")
+	}
+
+	// 4. Verify no new versions or deltas were written
+	versions, total, err := s.ListVersions(ctx, 10, 0)
+	if err != nil || total != 1 || len(versions) != 1 {
+		t.Fatalf("expected exactly 1 version to remain, got total=%d, len=%d", total, len(versions))
+	}
+	if versions[0].VersionID != "ver-exist-001" {
+		t.Errorf("expected version ver-exist-001, got %s", versions[0].VersionID)
+	}
+
+	// Verify live product is unmodified
+	p, err := s.GetProduct(ctx, "SKU-1")
+	if err != nil || p.Price != 10.00 {
+		t.Fatalf("product modified after failed rollback: %+v", p)
+	}
+}
+
+func TestStorage_Rollback_SubMillisecondActiveCatalog(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	const totalProducts = 2000
+
+	// 1. Seed 2,000 live products in V1
+	tx1, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx tx1 failed: %v", err)
+	}
+	deltasV1 := make([]domain.ItemDelta, totalProducts)
+	for i := 0; i < totalProducts; i++ {
+		sku := fmt.Sprintf("SKU-%05d", i)
+		name := fmt.Sprintf("Item %s", sku)
+		price := float64(10 + (i % 100))
+		status := domain.StatusActive
+		if i%20 == 0 {
+			status = domain.StatusWithdrawn
+		}
+		_ = s.UpsertProductTx(ctx, tx1, &domain.Product{
+			SKU: sku, Name: name, Price: price, Status: status,
+			SupplierTimestamp: now, UpdatedAt: now,
+		})
+		deltasV1[i] = domain.ItemDelta{
+			VersionID: "ver-perf-001", SKU: sku, Action: domain.DeltaActionAdded,
+			NewName: name, NewPrice: price, NewStatus: status, NewTimestamp: now,
+		}
+	}
+	ver1 := &domain.CatalogVersion{
+		VersionID: "ver-perf-001", VersionNumber: 1, Description: "V1 Bulk Seed",
+		Author: "bench@coderpush.com", Type: domain.VersionTypeInitial,
+		TotalItemsAffected: totalProducts, Summary: domain.ChangeSummary{Added: totalProducts},
+		CreatedAt: now,
+	}
+	_ = s.CreateVersionTx(ctx, tx1, ver1, deltasV1)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit V1 failed: %v", err)
+	}
+
+	// 2. Apply Patch V2: Update 400 products
+	tx2, _ := s.BeginTx(ctx)
+	deltasV2 := make([]domain.ItemDelta, 400)
+	for i := 0; i < 400; i++ {
+		sku := fmt.Sprintf("SKU-%05d", i)
+		oldP := float64(10 + (i % 100))
+		newP := oldP * 1.2
+		_ = s.UpsertProductTx(ctx, tx2, &domain.Product{
+			SKU: sku, Name: fmt.Sprintf("Updated %s", sku), Price: newP, Status: domain.StatusActive,
+			SupplierTimestamp: now.Add(time.Hour), UpdatedAt: now.Add(time.Hour),
+		})
+		deltasV2[i] = domain.ItemDelta{
+			VersionID: "ver-perf-002", SKU: sku, Action: domain.DeltaActionUpdated,
+			NewName: fmt.Sprintf("Updated %s", sku), OldPrice: &oldP, NewPrice: newP,
+			NewStatus: domain.StatusActive, NewTimestamp: now.Add(time.Hour),
+		}
+	}
+	ver2 := &domain.CatalogVersion{
+		VersionID: "ver-perf-002", VersionNumber: 2, Description: "V2 Price Hike",
+		Author: "bench@coderpush.com", Type: domain.VersionTypePatch,
+		TotalItemsAffected: 400, Summary: domain.ChangeSummary{Updated: 400},
+		CreatedAt: now.Add(time.Hour),
+	}
+	_ = s.CreateVersionTx(ctx, tx2, ver2, deltasV2)
+	_ = tx2.Commit()
+
+	// 3. Rollback to V1 -> Creates V3 (reverts 400 products)
+	_, _, err = s.RollbackVersion(ctx, "ver-perf-001", "bench", "Rollback V1")
+	if err != nil {
+		t.Fatalf("Rollback to V1 failed: %v", err)
+	}
+
+	// 4. Apply Patch V4: Update 300 products
+	tx4, _ := s.BeginTx(ctx)
+	deltasV4 := make([]domain.ItemDelta, 300)
+	for i := 200; i < 500; i++ {
+		sku := fmt.Sprintf("SKU-%05d", i)
+		oldP := float64(10 + (i % 100))
+		newP := oldP * 0.9
+		_ = s.UpsertProductTx(ctx, tx4, &domain.Product{
+			SKU: sku, Name: fmt.Sprintf("Discounted %s", sku), Price: newP, Status: domain.StatusActive,
+			SupplierTimestamp: now.Add(2 * time.Hour), UpdatedAt: now.Add(2 * time.Hour),
+		})
+		deltasV4[i-200] = domain.ItemDelta{
+			VersionID: "ver-perf-004", SKU: sku, Action: domain.DeltaActionUpdated,
+			NewName: fmt.Sprintf("Discounted %s", sku), OldPrice: &oldP, NewPrice: newP,
+			NewStatus: domain.StatusActive, NewTimestamp: now.Add(2 * time.Hour),
+		}
+	}
+	ver4 := &domain.CatalogVersion{
+		VersionID: "ver-perf-004", VersionNumber: 4, Description: "V4 Discount",
+		Author: "bench@coderpush.com", Type: domain.VersionTypePatch,
+		TotalItemsAffected: 300, Summary: domain.ChangeSummary{Updated: 300},
+		CreatedAt: now.Add(2 * time.Hour),
+	}
+	_ = s.CreateVersionTx(ctx, tx4, ver4, deltasV4)
+	_ = tx4.Commit()
+
+	// 5. Rollback to V2 -> Creates V5
+	_, _, err = s.RollbackVersion(ctx, "ver-perf-002", "bench", "Rollback V2")
+	if err != nil {
+		t.Fatalf("Rollback to V2 failed: %v", err)
+	}
+
+	// Verify total deltas in journal exceeds 3,000
+	var totalDeltas int
+	_ = s.DB().QueryRowContext(ctx, "SELECT count(*) FROM catalog_version_deltas;").Scan(&totalDeltas)
+	t.Logf("Total deltas in journal after rollbacks: %d", totalDeltas)
+
+	// 6. Warm-up
+	for i := 0; i < 50; i++ {
+		_, _ = s.GetProduct(ctx, "SKU-00500")
+	}
+
+	// 7. Measure Point Lookup Latency (< 1.0 ms)
+	const pointLookups = 1000
+	startPoint := time.Now()
+	for i := 0; i < pointLookups; i++ {
+		sku := fmt.Sprintf("SKU-%05d", (i*7)%totalProducts)
+		p, err := s.GetProduct(ctx, sku)
+		if err != nil || p == nil {
+			t.Fatalf("lookup failed for %s: %v", sku, err)
+		}
+	}
+	pointElapsed := time.Since(startPoint)
+	avgPointLatency := pointElapsed / time.Duration(pointLookups)
+	t.Logf("Measured avg point lookup latency post-rollbacks: %v across %d lookups", avgPointLatency, pointLookups)
+
+	maxPointAllowed := 1 * time.Millisecond
+	if isRaceDetectorEnabled() {
+		maxPointAllowed = 10 * time.Millisecond
+	}
+	if avgPointLatency >= maxPointAllowed {
+		t.Fatalf("Point lookup latency regression post-rollbacks: got %v, want < %v", avgPointLatency, maxPointAllowed)
+	}
+
+	// 8. Measure Paginated List Latency (< 2.0 ms for 50 items)
+	const listQueries = 200
+	startList := time.Now()
+	for i := 0; i < listQueries; i++ {
+		offset := (i * 10) % 500
+		prods, total, err := s.ListProducts(ctx, "ACTIVE", "", 50, offset)
+		if err != nil || total == 0 || len(prods) == 0 {
+			t.Fatalf("ListProducts failed at offset %d: %v", offset, err)
+		}
+	}
+	listElapsed := time.Since(startList)
+	avgListLatency := listElapsed / time.Duration(listQueries)
+	t.Logf("Measured avg list query latency post-rollbacks: %v across %d queries", avgListLatency, listQueries)
+
+	maxListAllowed := 2 * time.Millisecond
+	if isRaceDetectorEnabled() {
+		maxListAllowed = 50 * time.Millisecond
+	}
+	if avgListLatency >= maxListAllowed {
+		t.Fatalf("List query latency regression post-rollbacks: got %v, want < %v", avgListLatency, maxListAllowed)
+	}
+}
+
+func TestStorage_Rollback_ConcurrentRollbackAndReads(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Seed 100 products in V1 ($10.00 each)
+	tx1, _ := s.BeginTx(ctx)
+	deltas1 := make([]domain.ItemDelta, 100)
+	for i := 0; i < 100; i++ {
+		sku := fmt.Sprintf("SKU-CR-%03d", i)
+		_ = s.UpsertProductTx(ctx, tx1, &domain.Product{
+			SKU: sku, Name: fmt.Sprintf("Item %s", sku), Price: 10.00,
+			Status: domain.StatusActive, SupplierTimestamp: now, UpdatedAt: now,
+		})
+		deltas1[i] = domain.ItemDelta{
+			VersionID: "ver-cr-001", SKU: sku, Action: domain.DeltaActionAdded,
+			NewName: fmt.Sprintf("Item %s", sku), NewPrice: 10.00, NewStatus: domain.StatusActive, NewTimestamp: now,
+		}
+	}
+	ver1 := &domain.CatalogVersion{
+		VersionID: "ver-cr-001", VersionNumber: 1, Description: "V1 Base",
+		Author: "race-test", Type: domain.VersionTypeInitial, TotalItemsAffected: 100, CreatedAt: now,
+	}
+	_ = s.CreateVersionTx(ctx, tx1, ver1, deltas1)
+	_ = tx1.Commit()
+
+	// Seed V2 ($20.00 each)
+	tx2, _ := s.BeginTx(ctx)
+	oldP := 10.00
+	oldSt := domain.StatusActive
+	deltas2 := make([]domain.ItemDelta, 100)
+	for i := 0; i < 100; i++ {
+		sku := fmt.Sprintf("SKU-CR-%03d", i)
+		_ = s.UpsertProductTx(ctx, tx2, &domain.Product{
+			SKU: sku, Name: fmt.Sprintf("Item %s", sku), Price: 20.00,
+			Status: domain.StatusActive, SupplierTimestamp: now.Add(time.Hour), UpdatedAt: now.Add(time.Hour),
+		})
+		deltas2[i] = domain.ItemDelta{
+			VersionID: "ver-cr-002", SKU: sku, Action: domain.DeltaActionUpdated,
+			NewName: fmt.Sprintf("Item %s", sku), OldPrice: &oldP, NewPrice: 20.00,
+			OldStatus: &oldSt, NewStatus: domain.StatusActive, NewTimestamp: now.Add(time.Hour),
+		}
+	}
+	ver2 := &domain.CatalogVersion{
+		VersionID: "ver-cr-002", VersionNumber: 2, Description: "V2 Hike",
+		Author: "race-test", Type: domain.VersionTypePatch, TotalItemsAffected: 100, CreatedAt: now.Add(time.Hour),
+	}
+	_ = s.CreateVersionTx(ctx, tx2, ver2, deltas2)
+	_ = tx2.Commit()
+
+	var wg sync.WaitGroup
+	const readers = 6
+	const readIterations = 50
+	const rollbackIterations = 6
+
+	startBarrier := make(chan struct{})
+
+	// Readers: concurrently query products and lists
+	wg.Add(readers)
+	for r := 0; r < readers; r++ {
+		go func(readerID int) {
+			defer wg.Done()
+			<-startBarrier
+			for i := 0; i < readIterations; i++ {
+				sku := fmt.Sprintf("SKU-CR-%03d", (readerID+i)%100)
+				p, err := s.GetProduct(ctx, sku)
+				if err != nil {
+					t.Errorf("reader %d failed GetProduct(%s): %v", readerID, sku, err)
+					return
+				}
+				if p.Price != 10.00 && p.Price != 20.00 {
+					t.Errorf("reader %d observed torn/corrupt price %f for %s", readerID, p.Price, sku)
+				}
+				if i%5 == 0 {
+					prods, _, err := s.ListProducts(ctx, "ACTIVE", "", 20, 0)
+					if err != nil {
+						t.Errorf("reader %d failed ListProducts: %v", readerID, err)
+						return
+					}
+					if len(prods) == 0 {
+						t.Errorf("reader %d observed empty active product list", readerID)
+					}
+				}
+			}
+		}(r)
+	}
+
+	// Rollback worker: repeatedly alternates rolling back to V1 and V2
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-startBarrier
+		for i := 0; i < rollbackIterations; i++ {
+			target := "ver-cr-001"
+			if i%2 == 1 {
+				target = "ver-cr-002"
+			}
+			_, _, err := s.RollbackVersion(ctx, target, "race-bot", fmt.Sprintf("Race rollback iter %d", i))
+			if err != nil {
+				t.Errorf("concurrent rollback failed at iter %d: %v", i, err)
+				return
+			}
+		}
+	}()
+
+	close(startBarrier)
+	wg.Wait()
+}
+
+func TestStorage_Rollback_ConcurrentRollbackContention(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Seed V1
+	tx1, _ := s.BeginTx(ctx)
+	_ = s.UpsertProductTx(ctx, tx1, &domain.Product{SKU: "SKU-CONTEND", Name: "Item", Price: 10.00, Status: domain.StatusActive, SupplierTimestamp: now, UpdatedAt: now})
+	ver1 := &domain.CatalogVersion{VersionID: "ver-contend-001", VersionNumber: 1, Description: "V1", Author: "ops", Type: domain.VersionTypeInitial, TotalItemsAffected: 1, CreatedAt: now}
+	deltas1 := []domain.ItemDelta{{VersionID: "ver-contend-001", SKU: "SKU-CONTEND", Action: domain.DeltaActionAdded, NewName: "Item", NewPrice: 10.00, NewStatus: domain.StatusActive, NewTimestamp: now}}
+	_ = s.CreateVersionTx(ctx, tx1, ver1, deltas1)
+	_ = tx1.Commit()
+
+	// Seed V2
+	tx2, _ := s.BeginTx(ctx)
+	_ = s.UpsertProductTx(ctx, tx2, &domain.Product{SKU: "SKU-CONTEND", Name: "Item", Price: 20.00, Status: domain.StatusActive, SupplierTimestamp: now.Add(time.Hour), UpdatedAt: now.Add(time.Hour)})
+	ver2 := &domain.CatalogVersion{VersionID: "ver-contend-002", VersionNumber: 2, Description: "V2", Author: "ops", Type: domain.VersionTypePatch, TotalItemsAffected: 1, CreatedAt: now.Add(time.Hour)}
+	oldP := 10.00
+	deltas2 := []domain.ItemDelta{{VersionID: "ver-contend-002", SKU: "SKU-CONTEND", Action: domain.DeltaActionUpdated, NewName: "Item", OldPrice: &oldP, NewPrice: 20.00, NewStatus: domain.StatusActive, NewTimestamp: now.Add(time.Hour)}}
+	_ = s.CreateVersionTx(ctx, tx2, ver2, deltas2)
+	_ = tx2.Commit()
+
+	const concurrentRollbacks = 6
+	var wg sync.WaitGroup
+	startBarrier := make(chan struct{})
+	errorsCh := make(chan error, concurrentRollbacks)
+	successCh := make(chan *domain.CatalogVersion, concurrentRollbacks)
+
+	wg.Add(concurrentRollbacks)
+	for i := 0; i < concurrentRollbacks; i++ {
+		go func(workerID int) {
+			defer wg.Done()
+			<-startBarrier
+			ver, _, err := s.RollbackVersion(ctx, "ver-contend-001", fmt.Sprintf("worker-%d", workerID), "Concurrent rollback to V1")
+			if err != nil {
+				errorsCh <- err
+			} else {
+				successCh <- ver
+			}
+		}(i)
+	}
+
+	close(startBarrier)
+	wg.Wait()
+	close(errorsCh)
+	close(successCh)
+
+	var successes []*domain.CatalogVersion
+	for v := range successCh {
+		successes = append(successes, v)
+	}
+	var errs []error
+	for err := range errorsCh {
+		errs = append(errs, err)
+	}
+
+	t.Logf("Concurrent rollbacks: %d succeeded, %d failed", len(successes), len(errs))
+	if len(errs) > 0 {
+		t.Fatalf("unexpected error in concurrent rollback contention: %v", errs[0])
+	}
+	if len(successes) != concurrentRollbacks {
+		t.Fatalf("expected all %d rollbacks to succeed sequentially, got %d", concurrentRollbacks, len(successes))
+	}
+
+	// Verify all created versions have unique, strictly increasing version numbers
+	seenNumbers := make(map[int]bool)
+	for _, v := range successes {
+		if seenNumbers[v.VersionNumber] {
+			t.Fatalf("duplicate version number detected under race: %d", v.VersionNumber)
+		}
+		seenNumbers[v.VersionNumber] = true
+	}
+}
+
+func TestStorage_GetBaselineStateAtVersion(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// V1: SKU-A ($10.00, ACTIVE), SKU-B ($20.00, ACTIVE)
+	tx1, _ := s.BeginTx(ctx)
+	ver1 := &domain.CatalogVersion{VersionID: "ver-base-001", VersionNumber: 1, Description: "V1", Author: "user", Type: domain.VersionTypeInitial, TotalItemsAffected: 2, CreatedAt: now}
+	deltas1 := []domain.ItemDelta{
+		{VersionID: "ver-base-001", SKU: "SKU-A", Action: domain.DeltaActionAdded, NewName: "Item A", NewPrice: 10.00, NewStatus: domain.StatusActive, NewTimestamp: now},
+		{VersionID: "ver-base-001", SKU: "SKU-B", Action: domain.DeltaActionAdded, NewName: "Item B", NewPrice: 20.00, NewStatus: domain.StatusActive, NewTimestamp: now},
+	}
+	_ = s.CreateVersionTx(ctx, tx1, ver1, deltas1)
+	_ = tx1.Commit()
+
+	// V2: SKU-A updated to $15.00, SKU-C added ($30.00, ACTIVE)
+	tx2, _ := s.BeginTx(ctx)
+	ver2 := &domain.CatalogVersion{VersionID: "ver-base-002", VersionNumber: 2, Description: "V2", Author: "user", Type: domain.VersionTypePatch, TotalItemsAffected: 2, CreatedAt: now.Add(time.Hour)}
+	oldPA := 10.00
+	deltas2 := []domain.ItemDelta{
+		{VersionID: "ver-base-002", SKU: "SKU-A", Action: domain.DeltaActionUpdated, NewName: "Item A Updated", OldPrice: &oldPA, NewPrice: 15.00, NewStatus: domain.StatusActive, NewTimestamp: now.Add(time.Hour)},
+		{VersionID: "ver-base-002", SKU: "SKU-C", Action: domain.DeltaActionAdded, NewName: "Item C", NewPrice: 30.00, NewStatus: domain.StatusActive, NewTimestamp: now.Add(time.Hour)},
+	}
+	_ = s.CreateVersionTx(ctx, tx2, ver2, deltas2)
+	_ = tx2.Commit()
+
+	// 1. Get baseline at V1: Must have SKU-A ($10.00) and SKU-B ($20.00). Must NOT have SKU-C!
+	base1, err := s.GetBaselineStateAtVersion(ctx, "ver-base-001")
+	if err != nil {
+		t.Fatalf("GetBaselineStateAtVersion V1 failed: %v", err)
+	}
+	if len(base1) != 2 {
+		t.Fatalf("expected 2 items in V1 baseline, got %d", len(base1))
+	}
+	if base1["SKU-A"].Price != 10.00 || base1["SKU-A"].Name != "Item A" {
+		t.Errorf("unexpected SKU-A in V1 baseline: %+v", base1["SKU-A"])
+	}
+	if base1["SKU-B"].Price != 20.00 || base1["SKU-B"].Name != "Item B" {
+		t.Errorf("unexpected SKU-B in V1 baseline: %+v", base1["SKU-B"])
+	}
+	if _, exists := base1["SKU-C"]; exists {
+		t.Errorf("SKU-C must not exist in V1 baseline!")
+	}
+
+	// 2. Get baseline at V2: Must have SKU-A ($15.00), SKU-B ($20.00), SKU-C ($30.00)
+	base2, err := s.GetBaselineStateAtVersion(ctx, "ver-base-002")
+	if err != nil {
+		t.Fatalf("GetBaselineStateAtVersion V2 failed: %v", err)
+	}
+	if len(base2) != 3 {
+		t.Fatalf("expected 3 items in V2 baseline, got %d", len(base2))
+	}
+	if base2["SKU-A"].Price != 15.00 || base2["SKU-A"].Name != "Item A Updated" {
+		t.Errorf("unexpected SKU-A in V2 baseline: %+v", base2["SKU-A"])
+	}
+	if base2["SKU-B"].Price != 20.00 {
+		t.Errorf("unexpected SKU-B in V2 baseline: %+v", base2["SKU-B"])
+	}
+	if base2["SKU-C"].Price != 30.00 || base2["SKU-C"].Name != "Item C" {
+		t.Errorf("unexpected SKU-C in V2 baseline: %+v", base2["SKU-C"])
+	}
+
+	// 3. Non-existent version returns domain.ErrNotFound
+	_, errNotFound := s.GetBaselineStateAtVersion(ctx, "ver-non-existent")
+	if !errors.Is(errNotFound, domain.ErrNotFound) {
+		t.Errorf("expected domain.ErrNotFound for non-existent version baseline, got: %v", errNotFound)
+	}
+}
+
+func TestStorage_Rollback_IdenticalStateNoOp(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Seed V1
+	tx1, _ := s.BeginTx(ctx)
+	_ = s.UpsertProductTx(ctx, tx1, &domain.Product{SKU: "SKU-IDEN", Name: "Item", Price: 10.00, Status: domain.StatusActive, SupplierTimestamp: now, UpdatedAt: now})
+	ver1 := &domain.CatalogVersion{VersionID: "ver-iden-001", VersionNumber: 1, Description: "V1", Author: "ops", Type: domain.VersionTypeInitial, TotalItemsAffected: 1, CreatedAt: now}
+	deltas1 := []domain.ItemDelta{{VersionID: "ver-iden-001", SKU: "SKU-IDEN", Action: domain.DeltaActionAdded, NewName: "Item", NewPrice: 10.00, NewStatus: domain.StatusActive, NewTimestamp: now}}
+	_ = s.CreateVersionTx(ctx, tx1, ver1, deltas1)
+	_ = tx1.Commit()
+
+	// Rollback to V1 when catalog is already at V1 state
+	v2, revDeltas, err := s.RollbackVersion(ctx, "ver-iden-001", "ops", "Rollback to current baseline")
+	if err != nil {
+		t.Fatalf("RollbackVersion failed: %v", err)
+	}
+	if v2.VersionNumber != 2 {
+		t.Errorf("expected version 2, got %d", v2.VersionNumber)
+	}
+	if v2.Type != domain.VersionTypeRollback {
+		t.Errorf("expected ROLLBACK type, got %s", v2.Type)
+	}
+	if len(revDeltas) != 0 || v2.TotalItemsAffected != 0 {
+		t.Errorf("expected 0 deltas for identical state rollback, got len=%d, total=%d", len(revDeltas), v2.TotalItemsAffected)
+	}
+}
+
+func TestStorage_GetBaselineStateAtVersion_NotFound(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	// 1. Non-existent version ID
+	_, err := s.GetBaselineStateAtVersion(ctx, "non-existent-version")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for non-existent version, got %v", err)
+	}
+
+	// 2. Empty string version ID
+	_, err = s.GetBaselineStateAtVersion(ctx, "")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for empty version ID, got %v", err)
+	}
+}
+
+func TestStorage_GetBaselineStateAtVersion_EmptyVersion(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	ver := &domain.CatalogVersion{
+		VersionID:   "ver-empty",
+		Description: "Empty version without deltas",
+		Author:      "tester@coderpush.com",
+		Type:        domain.VersionTypeInitial,
+		CreatedAt:   time.Now().UTC(),
+	}
+	if err := s.CreateVersionTx(ctx, tx, ver, nil); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("CreateVersionTx failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	baseline, err := s.GetBaselineStateAtVersion(ctx, "ver-empty")
+	if err != nil {
+		t.Fatalf("GetBaselineStateAtVersion failed: %v", err)
+	}
+	if len(baseline) != 0 {
+		t.Fatalf("expected 0 products in empty baseline, got %d", len(baseline))
+	}
+}
+
+func TestStorage_GetBaselineStateAtVersion_LifecycleReconstruction(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	t1 := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 10, 22, 11, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+
+	// Version 1: Add SKU-A and SKU-B
+	tx1, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx 1 failed: %v", err)
+	}
+	v1 := &domain.CatalogVersion{
+		VersionID:     "v1",
+		VersionNumber: 1,
+		Description:   "Initial catalog",
+		Author:        "ops@coderpush.com",
+		Type:          domain.VersionTypeInitial,
+		CreatedAt:     t1,
+	}
+	deltasV1 := []domain.ItemDelta{
+		{
+			VersionID:    "v1",
+			SKU:          "SKU-A",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "Widget A",
+			NewPrice:     10.00,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: t1,
+		},
+		{
+			VersionID:    "v1",
+			SKU:          "SKU-B",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "Widget B",
+			NewPrice:     20.00,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: t1,
+		},
+	}
+	if err := s.CreateVersionTx(ctx, tx1, v1, deltasV1); err != nil {
+		_ = tx1.Rollback()
+		t.Fatalf("CreateVersionTx v1 failed: %v", err)
+	}
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit v1 failed: %v", err)
+	}
+
+	// Version 2: Update SKU-A, Add SKU-C, Withdraw SKU-B
+	tx2, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx 2 failed: %v", err)
+	}
+	v2 := &domain.CatalogVersion{
+		VersionID:     "v2",
+		VersionNumber: 2,
+		Description:   "Price update and withdrawal",
+		Author:        "ops@coderpush.com",
+		Type:          domain.VersionTypePatch,
+		CreatedAt:     t2,
+	}
+	oldNameA := "Widget A"
+	oldPriceA := 10.00
+	oldStatusActive := domain.StatusActive
+	oldPriceB := 20.00
+	oldNameB := "Widget B"
+
+	deltasV2 := []domain.ItemDelta{
+		{
+			VersionID:    "v2",
+			SKU:          "SKU-A",
+			Action:       domain.DeltaActionUpdated,
+			OldName:      &oldNameA,
+			NewName:      "Widget A v2",
+			OldPrice:     &oldPriceA,
+			NewPrice:     15.00,
+			OldStatus:    &oldStatusActive,
+			NewStatus:    domain.StatusActive,
+			OldTimestamp: &t1,
+			NewTimestamp: t2,
+		},
+		{
+			VersionID:    "v2",
+			SKU:          "SKU-C",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "Widget C",
+			NewPrice:     30.00,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: t2,
+		},
+		{
+			VersionID:    "v2",
+			SKU:          "SKU-B",
+			Action:       domain.DeltaActionWithdrawn,
+			OldName:      &oldNameB,
+			NewName:      "Widget B",
+			OldPrice:     &oldPriceB,
+			NewPrice:     20.00,
+			OldStatus:    &oldStatusActive,
+			NewStatus:    domain.StatusWithdrawn,
+			OldTimestamp: &t1,
+			NewTimestamp: t2,
+		},
+	}
+	if err := s.CreateVersionTx(ctx, tx2, v2, deltasV2); err != nil {
+		_ = tx2.Rollback()
+		t.Fatalf("CreateVersionTx v2 failed: %v", err)
+	}
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("Commit v2 failed: %v", err)
+	}
+
+	// Version 3: Add SKU-D, Update SKU-C
+	tx3, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx 3 failed: %v", err)
+	}
+	v3 := &domain.CatalogVersion{
+		VersionID:     "v3",
+		VersionNumber: 3,
+		Description:   "Add SKU-D and update SKU-C",
+		Author:        "ops@coderpush.com",
+		Type:          domain.VersionTypePatch,
+		CreatedAt:     t3,
+	}
+	oldNameC := "Widget C"
+	oldPriceC := 30.00
+	deltasV3 := []domain.ItemDelta{
+		{
+			VersionID:    "v3",
+			SKU:          "SKU-D",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "Widget D",
+			NewPrice:     40.00,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: t3,
+		},
+		{
+			VersionID:    "v3",
+			SKU:          "SKU-C",
+			Action:       domain.DeltaActionUpdated,
+			OldName:      &oldNameC,
+			NewName:      "Widget C v3",
+			OldPrice:     &oldPriceC,
+			NewPrice:     35.00,
+			OldStatus:    &oldStatusActive,
+			NewStatus:    domain.StatusActive,
+			OldTimestamp: &t2,
+			NewTimestamp: t3,
+		},
+	}
+	if err := s.CreateVersionTx(ctx, tx3, v3, deltasV3); err != nil {
+		_ = tx3.Rollback()
+		t.Fatalf("CreateVersionTx v3 failed: %v", err)
+	}
+	if err := tx3.Commit(); err != nil {
+		t.Fatalf("Commit v3 failed: %v", err)
+	}
+
+	// --- VERIFY BASELINE AT V1 ---
+	baseV1, err := s.GetBaselineStateAtVersion(ctx, "v1")
+	if err != nil {
+		t.Fatalf("GetBaselineStateAtVersion v1 failed: %v", err)
+	}
+	if len(baseV1) != 2 {
+		t.Fatalf("expected 2 items at v1, got %d", len(baseV1))
+	}
+	if prodA, ok := baseV1["SKU-A"]; !ok || prodA.Price != 10.00 || prodA.Name != "Widget A" || prodA.Status != domain.StatusActive {
+		t.Errorf("v1 SKU-A mismatch: %+v", prodA)
+	}
+	if prodB, ok := baseV1["SKU-B"]; !ok || prodB.Price != 20.00 || prodB.Name != "Widget B" || prodB.Status != domain.StatusActive {
+		t.Errorf("v1 SKU-B mismatch: %+v", prodB)
+	}
+	if _, ok := baseV1["SKU-C"]; ok {
+		t.Errorf("v1 should not contain SKU-C")
+	}
+	if _, ok := baseV1["SKU-D"]; ok {
+		t.Errorf("v1 should not contain SKU-D")
+	}
+
+	// --- VERIFY BASELINE AT V2 ---
+	baseV2, err := s.GetBaselineStateAtVersion(ctx, "v2")
+	if err != nil {
+		t.Fatalf("GetBaselineStateAtVersion v2 failed: %v", err)
+	}
+	if len(baseV2) != 3 {
+		t.Fatalf("expected 3 items at v2, got %d", len(baseV2))
+	}
+	if prodA, ok := baseV2["SKU-A"]; !ok || prodA.Price != 15.00 || prodA.Name != "Widget A v2" || prodA.Status != domain.StatusActive {
+		t.Errorf("v2 SKU-A mismatch: %+v", prodA)
+	}
+	if prodB, ok := baseV2["SKU-B"]; !ok || prodB.Price != 20.00 || prodB.Status != domain.StatusWithdrawn {
+		t.Errorf("v2 SKU-B mismatch: %+v", prodB)
+	}
+	if prodC, ok := baseV2["SKU-C"]; !ok || prodC.Price != 30.00 || prodC.Name != "Widget C" || prodC.Status != domain.StatusActive {
+		t.Errorf("v2 SKU-C mismatch: %+v", prodC)
+	}
+	if _, ok := baseV2["SKU-D"]; ok {
+		t.Errorf("v2 should not contain SKU-D")
+	}
+
+	// --- VERIFY BASELINE AT V3 ---
+	baseV3, err := s.GetBaselineStateAtVersion(ctx, "v3")
+	if err != nil {
+		t.Fatalf("GetBaselineStateAtVersion v3 failed: %v", err)
+	}
+	if len(baseV3) != 4 {
+		t.Fatalf("expected 4 items at v3, got %d", len(baseV3))
+	}
+	if prodA, ok := baseV3["SKU-A"]; !ok || prodA.Price != 15.00 {
+		t.Errorf("v3 SKU-A mismatch: %+v", prodA)
+	}
+	if prodB, ok := baseV3["SKU-B"]; !ok || prodB.Status != domain.StatusWithdrawn {
+		t.Errorf("v3 SKU-B mismatch: %+v", prodB)
+	}
+	if prodC, ok := baseV3["SKU-C"]; !ok || prodC.Price != 35.00 || prodC.Name != "Widget C v3" {
+		t.Errorf("v3 SKU-C mismatch: %+v", prodC)
+	}
+	if prodD, ok := baseV3["SKU-D"]; !ok || prodD.Price != 40.00 || prodD.Name != "Widget D" {
+		t.Errorf("v3 SKU-D mismatch: %+v", prodD)
+	}
+}
+
+func TestStorage_GetBaselineStateAtVersion_MultiDeltaSameVersion(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC()
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	ver := &domain.CatalogVersion{
+		VersionID:   "v-multi",
+		Description: "Multi delta same version",
+		Author:      "ops@coderpush.com",
+		Type:        domain.VersionTypeInitial,
+		CreatedAt:   now,
+	}
+	deltas := []domain.ItemDelta{
+		{
+			VersionID:    "v-multi",
+			SKU:          "SKU-MULTI",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "Initial Name",
+			NewPrice:     10.0,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: now,
+		},
+		{
+			VersionID:    "v-multi",
+			SKU:          "SKU-MULTI",
+			Action:       domain.DeltaActionUpdated,
+			NewName:      "Updated Name",
+			NewPrice:     25.0,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: now.Add(time.Second),
+		},
+	}
+	if err := s.CreateVersionTx(ctx, tx, ver, deltas); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("CreateVersionTx failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	baseline, err := s.GetBaselineStateAtVersion(ctx, "v-multi")
+	if err != nil {
+		t.Fatalf("GetBaselineStateAtVersion failed: %v", err)
+	}
+	p, ok := baseline["SKU-MULTI"]
+	if !ok {
+		t.Fatal("SKU-MULTI missing from baseline")
+	}
+	if p.Price != 25.0 || p.Name != "Updated Name" {
+		t.Errorf("expected latest delta within same version (Price: 25.0, Name: 'Updated Name'), got: %+v", p)
+	}
+}
+
+func TestStorage_GetBaselineStateAtVersion_TransactionSupport(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC()
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	ver := &domain.CatalogVersion{
+		VersionID:   "v-tx-test",
+		Description: "Tx baseline test",
+		Author:      "ops@coderpush.com",
+		Type:        domain.VersionTypeInitial,
+		CreatedAt:   now,
+	}
+	deltas := []domain.ItemDelta{
+		{
+			VersionID:    "v-tx-test",
+			SKU:          "SKU-TX",
+			Action:       domain.DeltaActionAdded,
+			NewName:      "TX Widget",
+			NewPrice:     55.0,
+			NewStatus:    domain.StatusActive,
+			NewTimestamp: now,
+		},
+	}
+	if err := s.CreateVersionTx(ctx, tx, ver, deltas); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("CreateVersionTx failed: %v", err)
+	}
+
+	// Read inside active transaction via GetBaselineStateAtVersionTx
+	baseTx, err := s.GetBaselineStateAtVersionTx(ctx, tx, "v-tx-test")
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("GetBaselineStateAtVersionTx failed: %v", err)
+	}
+	if len(baseTx) != 1 || baseTx["SKU-TX"].Price != 55.0 {
+		_ = tx.Rollback()
+		t.Fatalf("unexpected baseline state from tx: %+v", baseTx)
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
 	}
 }

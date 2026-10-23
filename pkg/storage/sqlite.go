@@ -8,8 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"sort"
+
 	"coderpush/pkg/domain"
 
+	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 )
 
@@ -43,6 +46,21 @@ type Storage interface {
 	ListProducts(ctx context.Context, status string, search string, limit, offset int) ([]domain.Product, int, error)
 	GetBatchCheckpoints(ctx context.Context, jobID string) ([]domain.BatchCheckpoint, error)
 	GetMetrics(ctx context.Context, filter domain.MetricsFilter) (*domain.AggregatedMetrics, []domain.SyncJob, error)
+
+	// Catalog Versioning & Rollback
+	CreateVersionTx(ctx context.Context, tx *sql.Tx, ver *domain.CatalogVersion, deltas []domain.ItemDelta) error
+	GetVersion(ctx context.Context, versionID string) (*domain.CatalogVersion, error)
+	GetLatestVersion(ctx context.Context) (*domain.CatalogVersion, error)
+	ListVersions(ctx context.Context, limit, offset int) ([]domain.CatalogVersion, int, error)
+	GetVersionDeltas(ctx context.Context, versionID string) ([]domain.ItemDelta, error)
+	GetBaselineStateAtVersion(ctx context.Context, versionID string) (map[string]domain.Product, error)
+	RollbackVersion(ctx context.Context, targetVersionID string, author string, description string) (*domain.CatalogVersion, []domain.ItemDelta, error)
+
+	// Migrations
+	MigrateUp(ctx context.Context) error
+	MigrateDown(ctx context.Context) error
+	MigrateToVersion(ctx context.Context, version uint) error
+	MigrationVersion(ctx context.Context) (version uint, dirty bool, err error)
 
 	// Maintenance
 	Reset(ctx context.Context) error
@@ -112,64 +130,20 @@ func (s *SQLiteStorage) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	return s.db.BeginTx(ctx, nil)
 }
 
-// initSchema applies the DDL schema for products, sync_jobs, batch_checkpoints, and dead_letter_issues.
+// initSchema configures SQLite pragmas and applies all pending migrations using golang-migrate.
 func (s *SQLiteStorage) initSchema(ctx context.Context) error {
-	ddl := `
+	pragmas := `
 	PRAGMA busy_timeout = 5000;
 	PRAGMA foreign_keys = ON;
-
-	CREATE TABLE IF NOT EXISTS products (
-		sku TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		price REAL NOT NULL,
-		status TEXT NOT NULL CHECK(status IN ('ACTIVE', 'WITHDRAWN')),
-		supplier_timestamp TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	);
-	CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
-
-	CREATE TABLE IF NOT EXISTS sync_jobs (
-		job_id TEXT PRIMARY KEY,
-		status TEXT NOT NULL CHECK(status IN ('PENDING', 'RUNNING', 'INTERRUPTED', 'COMPLETED', 'FAILED')),
-		total_batches INTEGER NOT NULL DEFAULT 0,
-		committed_batch_index INTEGER NOT NULL DEFAULT -1,
-		items_added INTEGER NOT NULL DEFAULT 0,
-		items_updated INTEGER NOT NULL DEFAULT 0,
-		items_withdrawn INTEGER NOT NULL DEFAULT 0,
-		items_skipped INTEGER NOT NULL DEFAULT 0,
-		items_dead_letter INTEGER NOT NULL DEFAULT 0,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL,
-		completed_at TEXT
-	);
-
-	CREATE TABLE IF NOT EXISTS batch_checkpoints (
-		job_id TEXT NOT NULL,
-		batch_index INTEGER NOT NULL,
-		items_count INTEGER NOT NULL,
-		added_count INTEGER NOT NULL,
-		updated_count INTEGER NOT NULL,
-		withdrawn_count INTEGER NOT NULL,
-		skipped_count INTEGER NOT NULL,
-		dead_letter_count INTEGER NOT NULL,
-		committed_at TEXT NOT NULL,
-		PRIMARY KEY (job_id, batch_index),
-		FOREIGN KEY (job_id) REFERENCES sync_jobs(job_id) ON DELETE CASCADE
-	);
-
-	CREATE TABLE IF NOT EXISTS dead_letter_issues (
-		issue_id TEXT PRIMARY KEY,
-		job_id TEXT NOT NULL,
-		batch_index INTEGER NOT NULL,
-		sku TEXT,
-		raw_payload TEXT NOT NULL,
-		reason TEXT NOT NULL,
-		created_at TEXT NOT NULL
-	);
-	CREATE INDEX IF NOT EXISTS idx_issues_job_id ON dead_letter_issues(job_id, batch_index);
 	`
-	_, err := s.db.ExecContext(ctx, ddl)
-	return err
+	if _, err := s.db.ExecContext(ctx, pragmas); err != nil {
+		return fmt.Errorf("failed configuring sqlite pragmas: %w", err)
+	}
+
+	if err := s.MigrateUp(ctx); err != nil {
+		return fmt.Errorf("failed executing migrations: %w", err)
+	}
+	return nil
 }
 
 // rowQuerier abstracts *sql.DB and *sql.Tx for row queries.
@@ -897,7 +871,8 @@ func (s *SQLiteStorage) GetMetrics(ctx context.Context, filter domain.MetricsFil
 	return &agg, jobs, nil
 }
 
-// Reset atomically deletes all records from products, sync_jobs, batch_checkpoints, and dead_letter_issues.
+// Reset atomically deletes all records from products, sync_jobs, batch_checkpoints,
+// dead_letter_issues, catalog_version_deltas, and catalog_versions.
 func (s *SQLiteStorage) Reset(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -906,6 +881,8 @@ func (s *SQLiteStorage) Reset(ctx context.Context) error {
 	defer tx.Rollback()
 
 	queries := []string{
+		"DELETE FROM catalog_version_deltas;",
+		"DELETE FROM catalog_versions;",
 		"DELETE FROM batch_checkpoints;",
 		"DELETE FROM dead_letter_issues;",
 		"DELETE FROM sync_jobs;",
@@ -918,6 +895,341 @@ func (s *SQLiteStorage) Reset(ctx context.Context) error {
 	}
 
 	return tx.Commit()
+}
+
+// CreateVersionTx persists a catalog version milestone and its pre-image deltas inside a transaction.
+func (s *SQLiteStorage) CreateVersionTx(ctx context.Context, tx *sql.Tx, ver *domain.CatalogVersion, deltas []domain.ItemDelta) error {
+	if tx == nil {
+		return errors.New("transaction cannot be nil")
+	}
+	if ver == nil {
+		return errors.New("catalog version cannot be nil")
+	}
+	if strings.TrimSpace(ver.VersionID) == "" {
+		return errors.New("version_id cannot be empty")
+	}
+
+	// Auto-compute sequential version number if not provided
+	if ver.VersionNumber <= 0 {
+		var maxNum sql.NullInt64
+		err := tx.QueryRowContext(ctx, "SELECT MAX(version_number) FROM catalog_versions;").Scan(&maxNum)
+		if err != nil {
+			return fmt.Errorf("failed to determine next version number: %w", err)
+		}
+		if maxNum.Valid {
+			ver.VersionNumber = int(maxNum.Int64) + 1
+		} else {
+			ver.VersionNumber = 1
+		}
+	}
+
+	if ver.CreatedAt.IsZero() {
+		ver.CreatedAt = time.Now().UTC()
+	}
+
+	if ver.TotalItemsAffected == 0 && len(deltas) > 0 {
+		ver.TotalItemsAffected = len(deltas)
+	}
+
+	versionQuery := `
+	INSERT INTO catalog_versions (
+		version_id, version_number, description, author, type,
+		revert_of_version_id,
+		items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
+		total_items_affected, metadata, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+	`
+
+	var revertOf any
+	if ver.RevertOfVersionID != nil && strings.TrimSpace(*ver.RevertOfVersionID) != "" {
+		revertOf = strings.TrimSpace(*ver.RevertOfVersionID)
+	}
+
+	_, err := tx.ExecContext(ctx, versionQuery,
+		ver.VersionID,
+		ver.VersionNumber,
+		ver.Description,
+		ver.Author,
+		string(ver.Type),
+		revertOf,
+		ver.Summary.Added,
+		ver.Summary.Updated,
+		ver.Summary.Withdrawn,
+		ver.Summary.Skipped,
+		ver.Summary.DeadLetter,
+		ver.TotalItemsAffected,
+		ver.Metadata,
+		ver.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert catalog version %s: %w", ver.VersionID, err)
+	}
+
+	if len(deltas) == 0 {
+		return nil
+	}
+
+	deltaQuery := `
+	INSERT INTO catalog_version_deltas (
+		version_id, sku, action,
+		old_name, new_name,
+		old_price, new_price,
+		old_status, new_status,
+		old_timestamp, new_timestamp
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+	`
+	stmt, err := tx.PrepareContext(ctx, deltaQuery)
+	if err != nil {
+		return fmt.Errorf("failed preparing delta insert statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for i := range deltas {
+		d := &deltas[i]
+		d.VersionID = ver.VersionID
+
+		var oldName any
+		if d.OldName != nil {
+			oldName = *d.OldName
+		}
+		var oldPrice any
+		if d.OldPrice != nil {
+			oldPrice = *d.OldPrice
+		}
+		var oldStatus any
+		if d.OldStatus != nil {
+			oldStatus = string(*d.OldStatus)
+		}
+		var oldTimestamp any
+		if d.OldTimestamp != nil && !d.OldTimestamp.IsZero() {
+			oldTimestamp = d.OldTimestamp.UTC().Format(time.RFC3339Nano)
+		}
+
+		res, err := stmt.ExecContext(ctx,
+			ver.VersionID,
+			d.SKU,
+			string(d.Action),
+			oldName,
+			d.NewName,
+			oldPrice,
+			d.NewPrice,
+			oldStatus,
+			string(d.NewStatus),
+			oldTimestamp,
+			d.NewTimestamp.UTC().Format(time.RFC3339Nano),
+		)
+		if err != nil {
+			return fmt.Errorf("failed inserting delta for sku %s: %w", d.SKU, err)
+		}
+
+		if id, err := res.LastInsertId(); err == nil {
+			d.DeltaID = id
+		}
+	}
+
+	return nil
+}
+
+func scanVersionRow(scanner interface{ Scan(dest ...any) error }) (*domain.CatalogVersion, error) {
+	var ver domain.CatalogVersion
+	var typeStr, createdStr string
+	var revertOfStr sql.NullString
+
+	err := scanner.Scan(
+		&ver.VersionID,
+		&ver.VersionNumber,
+		&ver.Description,
+		&ver.Author,
+		&typeStr,
+		&revertOfStr,
+		&ver.Summary.Added,
+		&ver.Summary.Updated,
+		&ver.Summary.Withdrawn,
+		&ver.Summary.Skipped,
+		&ver.Summary.DeadLetter,
+		&ver.TotalItemsAffected,
+		&ver.Metadata,
+		&createdStr,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	ver.Type = domain.VersionType(typeStr)
+	if revertOfStr.Valid && revertOfStr.String != "" {
+		s := revertOfStr.String
+		ver.RevertOfVersionID = &s
+	}
+	ver.CreatedAt, _ = ParseTime(createdStr)
+
+	return &ver, nil
+}
+
+// GetVersion retrieves a single catalog version by its ID.
+func (s *SQLiteStorage) GetVersion(ctx context.Context, versionID string) (*domain.CatalogVersion, error) {
+	query := `
+	SELECT version_id, version_number, description, author, type,
+	       revert_of_version_id,
+	       items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
+	       total_items_affected, metadata, created_at
+	FROM catalog_versions
+	WHERE version_id = ?;
+	`
+	row := s.db.QueryRowContext(ctx, query, versionID)
+	ver, err := scanVersionRow(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get version %s: %w", versionID, err)
+	}
+	return ver, nil
+}
+
+// GetLatestVersion retrieves the most recent catalog version milestone, ordered by version_number DESC.
+func (s *SQLiteStorage) GetLatestVersion(ctx context.Context) (*domain.CatalogVersion, error) {
+	query := `
+	SELECT version_id, version_number, description, author, type,
+	       revert_of_version_id,
+	       items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
+	       total_items_affected, metadata, created_at
+	FROM catalog_versions
+	ORDER BY version_number DESC
+	LIMIT 1;
+	`
+	row := s.db.QueryRowContext(ctx, query)
+	ver, err := scanVersionRow(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get latest version: %w", err)
+	}
+	return ver, nil
+}
+
+// ListVersions retrieves a paginated list of catalog versions, ordered newest first (version_number DESC).
+func (s *SQLiteStorage) ListVersions(ctx context.Context, limit, offset int) ([]domain.CatalogVersion, int, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var total int
+	countQuery := `SELECT count(*) FROM catalog_versions;`
+	if err := s.db.QueryRowContext(ctx, countQuery).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count catalog versions: %w", err)
+	}
+
+	query := `
+	SELECT version_id, version_number, description, author, type,
+	       revert_of_version_id,
+	       items_added, items_updated, items_withdrawn, items_skipped, items_dead_letter,
+	       total_items_affected, metadata, created_at
+	FROM catalog_versions
+	ORDER BY version_number DESC
+	LIMIT ? OFFSET ?;
+	`
+	rows, err := s.db.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query catalog versions: %w", err)
+	}
+	defer rows.Close()
+
+	versions := make([]domain.CatalogVersion, 0)
+	for rows.Next() {
+		ver, err := scanVersionRow(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed scanning version row: %w", err)
+		}
+		versions = append(versions, *ver)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating version rows: %w", err)
+	}
+
+	return versions, total, nil
+}
+
+// GetVersionDeltas retrieves all pre-image deltas for a specific catalog version ordered by delta_id ASC.
+func (s *SQLiteStorage) GetVersionDeltas(ctx context.Context, versionID string) ([]domain.ItemDelta, error) {
+	query := `
+	SELECT delta_id, version_id, sku, action,
+	       old_name, new_name,
+	       old_price, new_price,
+	       old_status, new_status,
+	       old_timestamp, new_timestamp
+	FROM catalog_version_deltas
+	WHERE version_id = ?
+	ORDER BY delta_id ASC;
+	`
+	rows, err := s.db.QueryContext(ctx, query, versionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed querying deltas for version %s: %w", versionID, err)
+	}
+	defer rows.Close()
+
+	deltas := make([]domain.ItemDelta, 0)
+	for rows.Next() {
+		var d domain.ItemDelta
+		var actionStr, newStatusStr, newTimeStr string
+		var oldNameStr sql.NullString
+		var oldPriceNum sql.NullFloat64
+		var oldStatusStr sql.NullString
+		var oldTimeStr sql.NullString
+
+		if err := rows.Scan(
+			&d.DeltaID,
+			&d.VersionID,
+			&d.SKU,
+			&actionStr,
+			&oldNameStr,
+			&d.NewName,
+			&oldPriceNum,
+			&d.NewPrice,
+			&oldStatusStr,
+			&newStatusStr,
+			&oldTimeStr,
+			&newTimeStr,
+		); err != nil {
+			return nil, fmt.Errorf("failed scanning delta row: %w", err)
+		}
+
+		d.Action = domain.DeltaAction(actionStr)
+		d.NewStatus = domain.ProductStatus(newStatusStr)
+		d.NewTimestamp, _ = ParseTime(newTimeStr)
+
+		if oldNameStr.Valid {
+			s := oldNameStr.String
+			d.OldName = &s
+		}
+		if oldPriceNum.Valid {
+			p := oldPriceNum.Float64
+			d.OldPrice = &p
+		}
+		if oldStatusStr.Valid {
+			st := domain.ProductStatus(oldStatusStr.String)
+			d.OldStatus = &st
+		}
+		if oldTimeStr.Valid && oldTimeStr.String != "" {
+			t, err := ParseTime(oldTimeStr.String)
+			if err == nil {
+				d.OldTimestamp = &t
+			}
+		}
+
+		deltas = append(deltas, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating delta rows: %w", err)
+	}
+
+	return deltas, nil
 }
 
 // ParseTime parses RFC3339Nano or RFC3339 formatted UTC timestamps.
@@ -933,4 +1245,299 @@ func ParseTime(s string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return t.UTC(), nil
+}
+
+// querier abstracts *sql.DB and *sql.Tx for executing both single-row and multi-row queries.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// GetBaselineStateAtVersion reconstructs the complete catalog state at the specified target version
+// by replaying the pre-image deltas up to that version using a SQL window function.
+func (s *SQLiteStorage) GetBaselineStateAtVersion(ctx context.Context, versionID string) (map[string]domain.Product, error) {
+	if strings.TrimSpace(versionID) == "" {
+		return nil, domain.ErrNotFound
+	}
+	return s.getBaselineStateAtVersion(ctx, s.db, versionID)
+}
+
+// GetBaselineStateAtVersionTx reconstructs the baseline catalog state within an existing transaction boundary.
+func (s *SQLiteStorage) GetBaselineStateAtVersionTx(ctx context.Context, tx *sql.Tx, versionID string) (map[string]domain.Product, error) {
+	if strings.TrimSpace(versionID) == "" {
+		return nil, domain.ErrNotFound
+	}
+	return s.getBaselineStateAtVersion(ctx, tx, versionID)
+}
+
+func (s *SQLiteStorage) getBaselineStateAtVersion(ctx context.Context, q querier, versionID string) (map[string]domain.Product, error) {
+	var targetVersionNumber int
+	err := q.QueryRowContext(ctx, "SELECT version_number FROM catalog_versions WHERE version_id = ?;", versionID).Scan(&targetVersionNumber)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("failed querying version %s: %w", versionID, err)
+	}
+
+	query := `
+	WITH ranked_deltas AS (
+		SELECT 
+			d.sku,
+			d.new_name,
+			d.new_price,
+			d.new_status,
+			d.new_timestamp,
+			ROW_NUMBER() OVER (
+				PARTITION BY d.sku 
+				ORDER BY v.version_number DESC, d.delta_id DESC
+			) AS rn
+		FROM catalog_version_deltas d
+		JOIN catalog_versions v ON d.version_id = v.version_id
+		WHERE v.version_number <= ?
+	)
+	SELECT sku, new_name, new_price, new_status, new_timestamp
+	FROM ranked_deltas
+	WHERE rn = 1;
+	`
+	rows, err := q.QueryContext(ctx, query, targetVersionNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reconstruct baseline catalog at version %s: %w", versionID, err)
+	}
+	defer rows.Close()
+
+	baseline := make(map[string]domain.Product)
+	for rows.Next() {
+		var p domain.Product
+		var statusStr, timeStr string
+		if err := rows.Scan(&p.SKU, &p.Name, &p.Price, &statusStr, &timeStr); err != nil {
+			return nil, fmt.Errorf("failed scanning baseline product row: %w", err)
+		}
+		p.Status = domain.ProductStatus(statusStr)
+		ts, err := ParseTime(timeStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed parsing baseline timestamp for sku %s: %w", p.SKU, err)
+		}
+		p.SupplierTimestamp = ts
+		p.UpdatedAt = ts
+		baseline[p.SKU] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating baseline product rows: %w", err)
+	}
+
+	return baseline, nil
+}
+
+// RollbackVersion performs a non-destructive Git-revert rollback to targetVersionID in a single atomic transaction.
+// It reconstructs the baseline catalog state, computes inverse deltas, strictly preserves tombstones (Invariant A),
+// updates the live products table for sub-millisecond O(1) lookups, and creates a new forward-moving ROLLBACK version.
+func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID string, author string, description string) (*domain.CatalogVersion, []domain.ItemDelta, error) {
+	if strings.TrimSpace(targetVersionID) == "" {
+		return nil, nil, domain.ErrNotFound
+	}
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to begin rollback transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Verify target version exists in catalog_versions
+	var targetVersionNumber int
+	err = tx.QueryRowContext(ctx, "SELECT version_number FROM catalog_versions WHERE version_id = ?;", targetVersionID).Scan(&targetVersionNumber)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, domain.ErrNotFound
+		}
+		return nil, nil, fmt.Errorf("failed querying target version %s: %w", targetVersionID, err)
+	}
+
+	// 2. Retrieve baseline products at targetVersionID
+	baselineProducts, err := s.getBaselineStateAtVersion(ctx, tx, targetVersionID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed reconstructing baseline at version %s: %w", targetVersionID, err)
+	}
+
+	// 3. Load all live products from products table
+	liveRows, err := tx.QueryContext(ctx, "SELECT sku, name, price, status, supplier_timestamp, updated_at FROM products;")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed reading live products: %w", err)
+	}
+	defer liveRows.Close()
+
+	liveProducts := make(map[string]domain.Product)
+	for liveRows.Next() {
+		var p domain.Product
+		var statusStr, supTimeStr, upTimeStr string
+		if err := liveRows.Scan(&p.SKU, &p.Name, &p.Price, &statusStr, &supTimeStr, &upTimeStr); err != nil {
+			return nil, nil, fmt.Errorf("failed scanning live product: %w", err)
+		}
+		p.Status = domain.ProductStatus(statusStr)
+		p.SupplierTimestamp, _ = ParseTime(supTimeStr)
+		p.UpdatedAt, _ = ParseTime(upTimeStr)
+		liveProducts[p.SKU] = p
+	}
+	if err := liveRows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("error iterating live products: %w", err)
+	}
+
+	now := time.Now().UTC()
+	var deltas []domain.ItemDelta
+	var summary domain.ChangeSummary
+
+	// Sort baseline SKUs for deterministic execution order
+	baselineSKUs := make([]string, 0, len(baselineProducts))
+	for sku := range baselineProducts {
+		baselineSKUs = append(baselineSKUs, sku)
+	}
+	sort.Strings(baselineSKUs)
+
+	// A. For each product in baseline:
+	for _, sku := range baselineSKUs {
+		baseline := baselineProducts[sku]
+		live, exists := liveProducts[sku]
+
+		if exists {
+			targetStatus := baseline.Status
+			// CRITICAL INVARIANT A ENFORCEMENT:
+			// If product in live catalog currently has status == domain.StatusWithdrawn,
+			// and baseline has status == domain.StatusActive:
+			// The item MUST NOT be resurrected! Status remains domain.StatusWithdrawn,
+			// but price and name revert to baseline values.
+			if live.Status == domain.StatusWithdrawn && baseline.Status == domain.StatusActive {
+				targetStatus = domain.StatusWithdrawn
+			}
+
+			// If price, name, or valid status differs: generate inverse delta (action = UPDATED), update live product
+			if live.Price != baseline.Price || live.Name != baseline.Name || live.Status != targetStatus {
+				oldName := live.Name
+				oldPrice := live.Price
+				oldStatus := live.Status
+				oldTime := live.SupplierTimestamp
+
+				delta := domain.ItemDelta{
+					SKU:          sku,
+					Action:       domain.DeltaActionUpdated,
+					OldName:      &oldName,
+					NewName:      baseline.Name,
+					OldPrice:     &oldPrice,
+					NewPrice:     baseline.Price,
+					OldStatus:    &oldStatus,
+					NewStatus:    targetStatus,
+					OldTimestamp: &oldTime,
+					NewTimestamp: now,
+				}
+				deltas = append(deltas, delta)
+				summary.Updated++
+
+				updatedProd := delta.PostImageProduct()
+				if err := s.UpsertProductTx(ctx, tx, &updatedProd); err != nil {
+					return nil, nil, fmt.Errorf("failed updating product %s during rollback: %w", sku, err)
+				}
+			}
+		} else {
+			// Product was in baseline but missing in products table: insert into products
+			delta := domain.ItemDelta{
+				SKU:          sku,
+				Action:       domain.DeltaActionAdded,
+				NewName:      baseline.Name,
+				NewPrice:     baseline.Price,
+				NewStatus:    baseline.Status,
+				NewTimestamp: now,
+			}
+			deltas = append(deltas, delta)
+			summary.Added++
+
+			newProd := delta.PostImageProduct()
+			if err := s.UpsertProductTx(ctx, tx, &newProd); err != nil {
+				return nil, nil, fmt.Errorf("failed inserting missing baseline product %s during rollback: %w", sku, err)
+			}
+		}
+	}
+
+	// B. For items in live catalog that were ADDED AFTER baseline (do not exist in baseline):
+	// Sort live SKUs for deterministic execution order
+	liveSKUs := make([]string, 0, len(liveProducts))
+	for sku := range liveProducts {
+		liveSKUs = append(liveSKUs, sku)
+	}
+	sort.Strings(liveSKUs)
+
+	for _, sku := range liveSKUs {
+		live := liveProducts[sku]
+		if _, inBaseline := baselineProducts[sku]; !inBaseline {
+			// Item added after baseline: transition status to WITHDRAWN so they no longer appear active
+			if live.Status == domain.StatusActive {
+				oldName := live.Name
+				oldPrice := live.Price
+				oldStatus := live.Status
+				oldTime := live.SupplierTimestamp
+
+				delta := domain.ItemDelta{
+					SKU:          sku,
+					Action:       domain.DeltaActionWithdrawn,
+					OldName:      &oldName,
+					NewName:      live.Name,
+					OldPrice:     &oldPrice,
+					NewPrice:     live.Price,
+					OldStatus:    &oldStatus,
+					NewStatus:    domain.StatusWithdrawn,
+					OldTimestamp: &oldTime,
+					NewTimestamp: now,
+				}
+				deltas = append(deltas, delta)
+				summary.Withdrawn++
+
+				withdrawnProd := delta.PostImageProduct()
+				if err := s.UpsertProductTx(ctx, tx, &withdrawnProd); err != nil {
+					return nil, nil, fmt.Errorf("failed withdrawing product %s during rollback: %w", sku, err)
+				}
+			}
+		}
+	}
+
+	// 4. Create new forward version in catalog_versions
+	var maxNum sql.NullInt64
+	if err := tx.QueryRowContext(ctx, "SELECT MAX(version_number) FROM catalog_versions;").Scan(&maxNum); err != nil {
+		return nil, nil, fmt.Errorf("failed to query latest version number: %w", err)
+	}
+	nextNum := 1
+	if maxNum.Valid {
+		nextNum = int(maxNum.Int64) + 1
+	}
+
+	if strings.TrimSpace(author) == "" {
+		author = "system"
+	}
+	if strings.TrimSpace(description) == "" {
+		description = fmt.Sprintf("Rollback to version %s", targetVersionID)
+	}
+
+	rollbackVersionID := fmt.Sprintf("ver-rollback-%d-%s", now.UnixNano(), uuid.New().String()[:8])
+	targetIDRef := targetVersionID
+
+	rollbackVer := &domain.CatalogVersion{
+		VersionID:          rollbackVersionID,
+		VersionNumber:      nextNum,
+		Description:        description,
+		Author:             author,
+		Type:               domain.VersionTypeRollback,
+		RevertOfVersionID:  &targetIDRef,
+		Summary:            summary,
+		TotalItemsAffected: len(deltas),
+		CreatedAt:          now,
+	}
+
+	// 5. Record all inverse deltas and new version via CreateVersionTx
+	if err := s.CreateVersionTx(ctx, tx, rollbackVer, deltas); err != nil {
+		return nil, nil, fmt.Errorf("failed to persist rollback version: %w", err)
+	}
+
+	// 6. Commit atomic transaction
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("failed committing rollback transaction: %w", err)
+	}
+
+	return rollbackVer, deltas, nil
 }

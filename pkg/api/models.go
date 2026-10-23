@@ -14,6 +14,7 @@ const (
 	ErrCodeNotFound       ErrorCode = "NOT_FOUND"
 	ErrCodeJobConflict    ErrorCode = "JOB_CONFLICT"
 	ErrCodeInternalError  ErrorCode = "INTERNAL_ERROR"
+	ErrCodeCommitBlocked  ErrorCode = "COMMIT_BLOCKED"
 )
 
 // ErrorResponse represents standardized API error payload.
@@ -135,4 +136,30 @@ type ResolveDeadLetterResponse struct {
 	Status  string         `json:"status" example:"success"`
 	Message string         `json:"message" example:"product resolved and imported to catalog"`
 	Product domain.Product `json:"product"`
+}
+
+// PatchPublishResponse represents the response when a patch is committed and published.
+type PatchPublishResponse struct {
+	Version domain.CatalogVersion `json:"version"`
+	Deltas  []domain.ItemDelta    `json:"deltas"`
+}
+
+// VersionListResponse represents paginated catalog versions.
+type VersionListResponse struct {
+	Versions []domain.CatalogVersion `json:"versions"`
+	Total    int                     `json:"total"`
+	Limit    int                     `json:"limit"`
+	Offset   int                     `json:"offset"`
+}
+
+// RollbackRequest defines the payload for reverting the catalog to a previous baseline version.
+type RollbackRequest struct {
+	Author      string `json:"author,omitempty" example:"ops-team"`
+	Description string `json:"description,omitempty" example:"Rollback due to supplier pricing error"`
+}
+
+// RollbackResponse represents the response when a catalog rollback is executed.
+type RollbackResponse struct {
+	Version domain.CatalogVersion `json:"version"`
+	Deltas  []domain.ItemDelta    `json:"deltas"`
 }
