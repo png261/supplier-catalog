@@ -40,6 +40,12 @@ func NewServer(store storage.Storage, eng catalogSync.Engine, broker *Broker, st
 	rootMux.Handle("/swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
+	rootMux.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/swagger/index.html", http.StatusFound)
+	})
+	rootMux.HandleFunc("/docs/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/swagger/index.html", http.StatusFound)
+	})
 	rootMux.Handle("/", web.AssetHandler(staticDir))
 
 	return Recoverer(Logging(CORS(rootMux)))

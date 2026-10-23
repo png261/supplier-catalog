@@ -16,12 +16,20 @@ data/
 *.db-shm
 
 # Local build artifacts and test outputs
+bin/
 server
 generator
 coverage.out
 coverage.html
 *.log
 tmp/
+demo_artifacts/
+*.mp4
+*.wav
+*.webm
 node_modules/
 **/node_modules/
-frontend/node_modules/
+frontend/
+worker/
+tests/
+.wrangler/

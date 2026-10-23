@@ -9,10 +9,21 @@ const OUT_DIR = path.resolve(process.cwd(), 'demo_artifacts/ui_captures');
 const DB_PATH = '/tmp/demo_showcase_en.db';
 
 function cleanDb() {
-  for (const ext of ['', '-wal', '-shm']) {
-    try {
-      if (fs.existsSync(DB_PATH + ext)) fs.unlinkSync(DB_PATH + ext);
-    } catch {}
+  const bases = [
+    DB_PATH,
+    '/tmp/shops/store-flagship.db',
+    '/tmp/shops/store-boutique-2.db',
+    path.resolve(process.cwd(), 'shops/store-flagship.db'),
+    path.resolve(process.cwd(), 'shops/store-boutique-2.db'),
+    path.resolve(process.cwd(), 'data/shops/store-flagship.db'),
+    path.resolve(process.cwd(), 'data/shops/store-boutique-2.db'),
+  ];
+  for (const base of bases) {
+    for (const ext of ['', '-wal', '-shm']) {
+      try {
+        if (fs.existsSync(base + ext)) fs.unlinkSync(base + ext);
+      } catch {}
+    }
   }
 }
 
@@ -68,40 +79,40 @@ async function main() {
     // --- SCENE 2: Clean Initial Dashboard ---
     await snap('s2_dashboard_clean');
 
-    // --- SCENE 3: Trigger v1.0.0 Baseline Catalog Feed & Real-Time SSE ---
+    // --- SCENE 3: Pre-Sync Diff Preview & Baseline Catalog Feed Sync ---
     await page.getByTitle('Sync Baseline Catalog Feed').click();
-    await sleep(250);
+    const diffDialog = page.getByRole('dialog');
+    await diffDialog.getByRole('button', { name: /Confirm & Sync/i }).waitFor({ timeout: 15000 });
+    await sleep(600);
+    await snap('s3_sync_baseline_diff_preview');
+
+    await diffDialog.getByRole('button', { name: /Confirm & Sync/i }).click();
+    await sleep(220);
     await snap('s3_sync_v100_running');
 
     await page.getByText('Synced').first().waitFor({ timeout: 25000 });
     await sleep(600);
     await snap('s3_sync_v100_completed');
 
-    // Also open the "Start Update" modal to show custom workload options
-    const startUpdateBtn = page.getByRole('button', { name: /Start Update/i }).first();
-    if (await startUpdateBtn.isVisible().catch(() => false)) {
-      await startUpdateBtn.click();
-      await sleep(400);
-      await snap('s3_start_update_modal');
-      await page.keyboard.press('Escape');
-      const closeModalBtn = page.getByRole('dialog').getByRole('button', { name: /Cancel|Close/i }).first();
-      if (await closeModalBtn.isVisible().catch(() => false)) {
-        await closeModalBtn.click();
-      }
-      await sleep(300);
-    }
-
-    // --- SCENE 4: v1.1.0 Price & Inventory Adjustment + Metric Drilldown + Analytics ---
+    // --- SCENE 4: Price & Inventory Adjustment (Pre-Sync Diff Preview -> Live Sync) + Anomaly Feed ---
     await page.getByTitle('Sync Price & Inventory Adjustment').click();
-    await sleep(250);
+    await diffDialog.getByRole('button', { name: /Confirm & Sync/i }).waitFor({ timeout: 15000 });
+    await sleep(600);
+    await snap('s4_sync_v110_diff_preview');
+
+    await diffDialog.getByRole('button', { name: /Confirm & Sync/i }).click();
+    await sleep(220);
     await snap('s4_sync_v110_running');
 
     await page.getByText('Synced').nth(1).waitFor({ timeout: 25000 });
     await sleep(600);
     await snap('s4_dashboard_after_v110');
 
-    // Trigger v1.2.0 — Supplier Anomaly Feed (DLQ) so time_series has 3 jobs (>2 points) enabling chart zoom
+    // Trigger Supplier Anomaly Feed (DLQ)
     await page.getByTitle('Sync Supplier Anomaly Feed (DLQ)').click();
+    await diffDialog.getByRole('button', { name: /Confirm & Sync/i }).waitFor({ timeout: 15000 });
+    await sleep(400);
+    await diffDialog.getByRole('button', { name: /Confirm & Sync/i }).click();
     await page.getByText('Synced').nth(2).waitFor({ timeout: 25000 });
     await sleep(600);
     await snap('s4_dashboard_after_v120');
@@ -145,9 +156,14 @@ async function main() {
       await sleep(250);
     }
 
-    // --- SCENE 5: v1.4.0 Mid-Feed Crash & Atomic Checkpoint Resume ---
+    // --- SCENE 5: Mid-Feed Crash & Atomic Checkpoint Resume ---
     await page.getByTitle('Sync Mid-Feed Crash & Checkpoint Recovery').click();
-    await page.getByText('Checkpoint Paused').waitFor({ timeout: 25000 });
+    await diffDialog.getByRole('button', { name: /Confirm & Sync/i }).waitFor({ timeout: 15000 });
+    await sleep(500);
+    await snap('s5_crash_diff_preview');
+
+    await diffDialog.getByRole('button', { name: /Confirm & Sync/i }).click();
+    await page.getByText(/Checkpoint Paused/i).waitFor({ timeout: 25000 });
     await sleep(600);
     await snap('s5_dashboard_checkpoint_paused');
 
@@ -166,9 +182,9 @@ async function main() {
     await sleep(600);
     await snap('s5_history_resumed_completed');
 
-    // --- SCENE 6: Live Product Catalog Explorer ---
+    // --- SCENE 6: Live Product Catalog Explorer & Per-Product Modification History ---
     await page.getByRole('button', { name: /^Catalog/i }).first().click();
-    await page.getByRole('heading', { name: 'Live Product Catalog' }).waitFor();
+    await page.getByRole('heading', { name: 'Catalog', exact: true }).waitFor();
     await sleep(600);
     await snap('s6_catalog_all_active');
 
@@ -186,6 +202,15 @@ async function main() {
     await searchInput.fill(firstSku.trim());
     await sleep(500);
     await snap('s6_catalog_sku_search');
+
+    // Open Per-Product Modification History Modal on the first row
+    await page.locator('tbody tr').first().getByRole('button', { name: /History/i }).click();
+    await page.getByRole('dialog').getByText('Product Modification History', { exact: true }).waitFor({ timeout: 10000 });
+    await sleep(600);
+    await snap('s6_catalog_product_history_modal');
+    await page.getByRole('dialog').getByRole('button', { name: 'Close' }).first().click();
+    await sleep(300);
+
     await page.getByRole('button', { name: 'Clear', exact: true }).click();
     await sleep(300);
 
@@ -217,34 +242,41 @@ async function main() {
     await sleep(600);
     await snap('s7_quarantine_after_import');
 
-    // --- SCENE 8: Unified History & Versions, Diff Modal & Git-Revert Rollback ---
+    // --- SCENE 8: Unified History & Versions, Diff Modal & Independent Update Revert ---
     await page.getByRole('button', { name: /History & Versions/i }).first().click();
     await page.getByRole('heading', { name: 'Sync History & Version Control' }).waitFor();
     await sleep(600);
     await snap('s8_history_versions_timeline');
 
-    // Click Diff on the top row
-    await page.locator('tbody tr').first().getByRole('button', { name: /Diff/i }).click();
-    const diffModal = page.getByRole('dialog');
-    await sleep(500);
+    // Click Diff on a completed sync row
+    await page.locator('tbody tr').nth(1).getByRole('button', { name: /Diff/i }).click();
+    await sleep(600);
     await snap('s8_version_diff_modal');
-    await diffModal.getByRole('button', { name: 'Close' }).first().click();
+    await page.getByRole('dialog').getByRole('button', { name: /Cancel|Close/i }).first().click();
     await sleep(300);
 
-    // Click Revert Before Sync on the top LIVE row
-    const revertBtn = page.locator('tbody tr').first().getByRole('button', { name: /Revert Before Sync/i });
-    await revertBtn.click();
-    const confirmModal = page.getByRole('dialog');
-    await confirmModal.getByText('Confirm Catalog Reversion').waitFor();
-    await confirmModal.getByPlaceholder('staff-username').fill('senior-catalog-ops');
-    await sleep(400);
-    await snap('s8_confirm_revert_modal');
+    // Navigate back to Dashboard to demonstrate Independent Single-Update Revert with Pre-Revert Diff Preview
+    await page.getByRole('button', { name: /^Dashboard/i }).first().click();
+    await page.getByRole('heading', { name: 'Dashboard & Sync Control' }).waitFor();
+    await sleep(500);
 
-    await confirmModal.getByRole('button', { name: /Confirm Revert/i }).click();
+    // Click Revert on Price & Inventory Adjustment -> opens Pre-Revert Diff Preview Modal first!
+    await page.getByTitle('Revert Price & Inventory Adjustment').click();
+    await diffDialog.getByRole('button', { name: /Confirm & Revert/i }).waitFor({ timeout: 15000 });
+    await sleep(600);
+    await snap('s8_revert_update_diff_preview');
+
+    // Click Confirm & Revert inside Diff Preview Modal -> starts live revert progress and completes!
+    await diffDialog.getByRole('button', { name: /Confirm & Revert/i }).click();
+    await sleep(180);
+    await snap('s8_revert_running');
+
+    // Wait for independent revert to finish (Price & Inventory Adjustment returns to Sync button!)
+    await page.getByTitle('Sync Price & Inventory Adjustment').waitFor({ timeout: 25000 });
     await sleep(700);
-    await snap('s8_history_after_rollback');
+    await snap('s8_overview_after_independent_revert');
 
-    // --- SCENE 9: Multi-Tenant Store Switcher & Reset DB Modal ---
+    // --- SCENE 9: Multi-Tenant Store Switcher ---
     await page.locator('aside').getByRole('button', { name: /Switch/i }).click();
     const switchDialog = page.getByRole('dialog');
     await switchDialog.getByText('Switch Tenant').waitFor();

@@ -2,7 +2,7 @@
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Cloudflare%20Pages%20%2B%20Workers-orange?style=flat&logo=cloudflare)](https://supplier-catalog-frontend.pages.dev)
 [![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![CI/CD Pipeline](https://github.com/coderpush/catalog-engine/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/coderpush/catalog-engine/actions/workflows/ci-cd.yml)
+[![CI/CD Pipeline](https://github.com/png261/supplier-catalog/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/png261/supplier-catalog/actions/workflows/ci-cd.yml)
 [![Statement Coverage](https://img.shields.io/badge/Coverage-93.5%25-brightgreen?style=flat&logo=codecov)](scripts/check-coverage.sh)
 [![Docker Image Size](https://img.shields.io/badge/Docker%20Size-21.3MB-blue?style=flat&logo=docker)](Dockerfile)
 [![Security Gates](https://img.shields.io/badge/Gitleaks-Passed%20(0%20leaks)-success?style=flat&logo=shield)](.gitleaks.toml)
@@ -10,20 +10,35 @@
 
 A resilient, minimalist catalog synchronization engine built in pure Go (`CGO_ENABLED=0`) utilizing embedded SQLite in Write-Ahead Logging (WAL) mode. Designed to ingest high-volume supplier catalog streams with mathematical idempotency, deterministic out-of-order resolution, permanent tombstone preservation, crash resumability, dead-letter quarantine, and zero external runtime dependencies.
 
-Includes an embedded, zero-node real-time staff web dashboard via `//go:embed` with live Server-Sent Events (SSE).
+Includes an embedded, zero-node real-time staff web dashboard via `//go:embed` with live Server-Sent Events (SSE), row-by-row diff previews, per-product modification history, dead-letter remediation, and independent update rollbacks.
+
+---
+
+## Live Deployment, API & Documentation Links
+
+| Resource | Live Cloud URL (Cloudflare Edge) | Local / Docker Container URL |
+|---|---|---|
+| **Frontend Web Dashboard** | **[https://supplier-catalog-frontend.pages.dev](https://supplier-catalog-frontend.pages.dev)** | **[http://localhost:8080](http://localhost:8080)** |
+| **Multi-Tenant Direct Link** | **[https://supplier-catalog-frontend.pages.dev/?shop=store-flagship](https://supplier-catalog-frontend.pages.dev/?shop=store-flagship)** | **[http://localhost:8080/?shop=store-flagship](http://localhost:8080/?shop=store-flagship)** |
+| **Backend REST API** | **[https://catalog-sync-worker.ezcert.workers.dev](https://catalog-sync-worker.ezcert.workers.dev)** | **[http://localhost:8080/api/jobs](http://localhost:8080/api/jobs)** |
+| **API Docs (Swagger UI)** | **[https://catalog-sync-worker.ezcert.workers.dev/swagger/index.html](https://catalog-sync-worker.ezcert.workers.dev/swagger/index.html)** | **[http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)** |
+| **OpenAPI 2.0 Spec (JSON)** | **[https://catalog-sync-worker.ezcert.workers.dev/swagger/doc.json](https://catalog-sync-worker.ezcert.workers.dev/swagger/doc.json)** | **[http://localhost:8080/swagger/doc.json](http://localhost:8080/swagger/doc.json)** |
+| **Full HD Video Demo (1080p)** | **[https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** | **[`./demo_walkthrough.mp4`](./demo_walkthrough.mp4)** *(1920x1080 Full HD, clear natural-speed voiceover)* |
+| **GitHub Repository** | **[https://github.com/png261/supplier-catalog](https://github.com/png261/supplier-catalog)** | `git clone https://github.com/png261/supplier-catalog.git` |
 
 ---
 
 ## Table of Contents
 
-1. [Executive Overview & Design Philosophy](#executive-overview--design-philosophy)
-2. [Architecture & The 5 Core Invariants](#architecture--the-5-core-invariants)
-3. [1-Click Quickstart & Execution Guide](#1-click-quickstart--execution-guide)
-4. [Out-of-the-Box Demo with Sample Fixtures](#out-of-the-box-demo-with-sample-fixtures)
-5. [Embedded Staff Web Dashboard & Real-Time SSE](#embedded-staff-web-dashboard--real-time-sse)
-6. [Developer Tooling & Verification Guide](#developer-tooling--verification-guide)
-7. [REST API & SSE Event Reference](#rest-api--sse-event-reference)
-8. [Assessment 1: Mandatory Requirements](#assessment-1-mandatory-requirements)
+1. [Live Deployment, API & Documentation Links](#live-deployment-api--documentation-links)
+2. [Executive Overview & Design Philosophy](#executive-overview--design-philosophy)
+3. [Architecture & The 5 Core Invariants](#architecture--the-5-core-invariants)
+4. [1-Click Quickstart & Execution Guide (Native Go, Docker Container & Cloud)](#1-click-quickstart--execution-guide)
+5. [Out-of-the-Box Demo with Sample Fixtures](#out-of-the-box-demo-with-sample-fixtures)
+6. [Embedded Staff Web Dashboard & Real-Time SSE](#embedded-staff-web-dashboard--real-time-sse)
+7. [Developer Tooling & Verification Guide](#developer-tooling--verification-guide)
+8. [REST API & SSE Event Reference](#rest-api--sse-event-reference)
+9. [Assessment 1: Mandatory Requirements](#assessment-1-mandatory-requirements)
    - [Assumptions & Architectural Trade-offs](#assumptions--architectural-trade-offs)
    - [Unfinished Work & Production Roadmap](#unfinished-work--production-roadmap)
    - [Transparent AI Tool Disclosure](#transparent-ai-tool-disclosure)
@@ -144,8 +159,8 @@ Instead of requiring heavy external infrastructure (such as Kafka, Redis, or ded
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/coderpush/catalog-engine.git
-   cd catalog-engine
+   git clone https://github.com/png261/supplier-catalog.git
+   cd supplier-catalog
    ```
 
 2. **Start the server with Makefile**:
@@ -157,18 +172,23 @@ Instead of requiring heavy external infrastructure (such as Kafka, Redis, or ded
    go run ./cmd/server -port 8080 -db ./catalog.db
    ```
 
-3. **Access the Staff Web Dashboard**:
-   Open [http://localhost:8080](http://localhost:8080) in your web browser.
+3. **Access the Staff Web Dashboard & API Docs**:
+   - **Frontend Dashboard**: [http://localhost:8080](http://localhost:8080)
+   - **REST API**: [http://localhost:8080/api/jobs](http://localhost:8080/api/jobs)
+   - **Swagger API Docs**: [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html) (or [http://localhost:8080/docs](http://localhost:8080/docs))
 
 ---
 
-### Option 2: Docker Compose (Recommended Turnkey Execution)
+### Option 2: Docker Compose (Recommended Turnkey Container Execution)
 
 Docker Compose builds the static Alpine image ($\le 25\text{MB}$) and mounts a persistent host volume (`./data:/app/data`) ensuring catalog and audit logs persist across container restarts.
 
-1. **Start the service in detached mode**:
+1. **Build and start the container in detached mode**:
    ```bash
-   docker compose up -d
+   make docker-up
+   # Or directly via Docker Compose:
+   mkdir -p data && chmod 777 data
+   docker compose up -d --build
    ```
 
 2. **Inspect container health and logs**:
@@ -177,14 +197,20 @@ Docker Compose builds the static Alpine image ($\le 25\text{MB}$) and mounts a p
    docker compose logs -f
    ```
 
-3. **Verify volume persistence across restarts**:
+3. **Access the containerized application**:
+   - **Frontend UI**: [http://localhost:8080](http://localhost:8080)
+   - **Backend API**: [http://localhost:8080/api/jobs](http://localhost:8080/api/jobs)
+   - **Swagger Docs**: [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)
+
+4. **Verify volume persistence across restarts**:
    ```bash
    docker compose restart
    ```
 
-4. **Stop the service**:
+5. **Stop the service**:
    ```bash
-   docker compose down
+   make docker-down
+   # Or: docker compose down
    ```
 
 ---
@@ -195,12 +221,13 @@ Run the pre-built, hardened production image directly from GitHub Container Regi
 
 ```bash
 # Pull and run the latest image with persistent volume
+mkdir -p data && chmod 777 data
 docker run -d \
   --name catalog-engine \
   -p 8080:8080 \
   -v $(pwd)/data:/app/data \
   --restart unless-stopped \
-  ghcr.io/coderpush/catalog-engine:latest
+  ghcr.io/png261/supplier-catalog:latest
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
@@ -332,27 +359,29 @@ curl -s "http://localhost:8080/api/dead-letter?limit=10" | jq .
 
 ## Embedded Staff Web Dashboard & Real-Time SSE
 
-The engine features a single-page dashboard compiled directly into the Go executable via `//go:embed static/*` in `web/embed.go`.
+The engine features a modern React 19 + Tailwind CSS + shadcn/ui single-page dashboard compiled directly into the Go executable via `//go:embed static/*` in `web/embed.go`.
 
 ### Key Dashboard Capabilities
-1. **Live Synchronization Control**:
-   - **Preset Modes**: 1-click execution for *Default (10x100)*, *Clean (0% Anomaly)*, *Chaos DLQ Stress*, and *Large Scale (50x200)*.
-   - **Configurable Generator Sliders**: PRNG Seed, Total Batches, Batch Size, and interactive anomaly ratio sliders with real-time percentage sum validation.
-   - **Resume Interrupted Jobs**: 1-click resumption of any interrupted sync run directly from its last committed batch checkpoint.
-2. **Real-Time Visual Metric Cards (Server-Sent Events)**:
-   - Dynamic progress bar with live percentage and batch indicators.
-   - Live counters: **+Added**, **~Updated**, **-Withdrawn**, **↷Skipped**, and **⚠Dead-Lettered**.
-   - Sub-second SSE event stream (`/api/events`) with automatic heartbeat reconnection.
-3. **Dead-Letter Queue Inspector**:
-   - Searchable, paginated audit table displaying quarantined payloads.
-   - Filter by error reason (`negative price`, `empty SKU`, `invalid status`).
-   - Modal inspection of verbatim raw supplier JSON payloads.
-4. **Catalog State Explorer**:
-   - Instant full-text search across product SKUs and names.
-   - Status filters (`ALL`, `ACTIVE`, `WITHDRAWN`).
-5. **Modern Minimalist UI**:
-   - Responsive dark/light theme toggle.
-   - Zero external CDN dependencies; all CSS, SVGs, and fonts are self-contained.
+1. **Independent Catalog Updates & Pre-Sync / Pre-Revert Diff Preview**:
+   - **5 Independent Supplier Update Scenarios**: *Baseline Catalog Feed*, *Price & Inventory Adjustment*, *Supplier Anomaly Feed (DLQ)*, *High-Volume Restock Stream*, and *Mid-Feed Crash & Checkpoint Recovery*.
+   - **Pre-Sync Dry-Run Diff Preview**: Clicking **Sync** on any update first opens a row-by-row **Preview Catalog Update Diff Modal** (`POST /api/jobs/preview`) showing exact `+ ADDED`, `~ UPDATED` (`Before -> After` unit prices), `- WITHDRAWN`, and `QUARANTINED` records before committing.
+   - **Independent Single-Update Revert with Diff Preview & Live Progress**: Clicking **Revert** on any synced update first opens a **Preview Revert Modal** showing the exact rollback diff, then executes a live batch revert (`Reverting...` progress bar) that restores pre-update state while preserving `WITHDRAWN` tombstones and leaving other independent updates intact.
+   - **Resume Interrupted Jobs**: 1-click resumption of any interrupted sync run directly from its last committed SQLite WAL batch checkpoint (`Batch 6/10 -> 10/10`).
+2. **Real-Time Visual Metric Cards & Drilldown Modals (Server-Sent Events)**:
+   - Dynamic progress bar with live percentage, batch index, items/sec throughput, and ETA.
+   - Interactive KPI cards (**Products Added**, **Price / Name Updated**, **Withdrawn Products**, **Duplicates Skipped**, and **Quarantined (DLQ)**) — clicking any card opens a SKU-level audit drilldown modal.
+   - Analytics time-range filters (`Today`, `Yesterday`, `Last 7 Days`, `All Time`, `Custom`) and interactive chart zoom controls.
+3. **Quarantine (Dead-Letter Queue) Inspector & Staff Remediation**:
+   - Searchable, paginated audit table displaying quarantined supplier payloads needing attention.
+   - Filter by defect reason (`NEGATIVE_OR_ZERO_PRICE`, `EMPTY_SKU`, `INVALID_STATUS`).
+   - **Review & Fix Remediation Modal**: Inspect verbatim raw defective supplier JSON, correct product attributes/price, and atomically import the remediated SKU into the live catalog (`POST /api/dead-letter/{id}/resolve`).
+4. **Live Product Catalog Explorer & Per-Product Modification History**:
+   - Instant full-text search across product SKUs and names with status filters (`All Statuses`, `ACTIVE only`, `WITHDRAWN only`).
+   - **Product Modification History Modal**: Clicking **History** (or any product row) opens a chronological audit log (`GET /api/products/{sku}/history`) showing every creation, price/name change (`Before -> After`), and sync version that modified that SKU.
+5. **Unified Sync History & Catalog Version Control**:
+   - Tracks every `SYNC`, `PATCH`, and `ROLLBACK` version milestone with row-by-row `Before -> After` **Version Diff Inspection** (`GET /api/versions/{id}/diff`).
+6. **Multi-Tenant Store Isolation**:
+   - Gatekeeper validation and live sidebar **Switch Tenant** switcher (`X-Shop-Id` / `?shop=store-flagship`), isolating each shop in its own dedicated SQLite database.
 
 ---
 
@@ -363,15 +392,18 @@ The engine features a single-page dashboard compiled directly into the Go execut
 | Target | Description | Underlying Command |
 |---|---|---|
 | `make help` | Show self-documenting help menu | `awk` target parser |
+| `make build` | Build React frontend + Go `server` & `generator` binaries | `make build-frontend build-server build-generator` |
 | `make run-server` | Build and run HTTP server on :8080 | `go run ./cmd/server -port 8080 -db ./catalog.db` |
 | `make run-generator` | Run CLI mock data generator | `go run ./cmd/generator $(ARGS)` |
 | `make ingest-demo` | Ingest all 4 narrative demo fixture batches into running server | `bash scripts/ingest-fixtures.sh` |
 | `make test` | Execute unit & integration tests with race detector | `go test -race ./...` |
 | `make test-race` | Execute 5-iteration race condition test | `go test -race -count=5 ./...` |
+| `make test-playwright` | Execute full Playwright API & UI E2E test suite | `npx playwright test` |
+| `make cf-test` | Execute Cloudflare Worker & D1 unit/integration test suite | `npm --prefix worker test` |
 | `make coverage` | Verify statement coverage $\ge 90.0\%$ & generate HTML | `./scripts/check-coverage.sh coverage.out 90.0` |
 | `make lint` | Run code formatting, go vet, and golangci-lint | `gofmt`, `go vet`, `golangci-lint run ./...` |
-| `make docker-build` | Build static multi-stage Docker container | `docker build -t coderpush-catalog-engine .` |
-| `make docker-up` | Start local Docker Compose environment | `docker compose up -d` |
+| `make docker-build` | Build static multi-stage Docker container ($\le 25\text{MB}$) | `docker build -t coderpush-catalog-engine .` |
+| `make docker-up` | Build & start local Docker Compose environment | `docker compose up -d --build` |
 | `make docker-down` | Stop local Docker Compose environment | `docker compose down` |
 | `make clean` | Remove temporary binaries, DBs, and coverage reports | `rm -rf bin/ *.db* coverage.*` |
 
@@ -412,6 +444,12 @@ The repository includes a GitHub Actions pipeline executed on every push and pul
                   │  - Multi-stage static build         │
                   │  - Assert image size <= 25MB        │
                   │  - Publish container image to GHCR  │
+                  └──────────────────┬──────────────────┘
+                                     ▼
+                  ┌─────────────────────────────────────┐
+                  │  Job 4: Cloudflare Edge Deployment  │
+                  │  - D1 SQLite schema migrations      │
+                  │  - Deploy Worker API & Pages SPA    │
                   └─────────────────────────────────────┘
 ```
 
@@ -419,17 +457,31 @@ The repository includes a GitHub Actions pipeline executed on every push and pul
 
 ## REST API & SSE Event Reference
 
+Interactive Swagger 2.0 / OpenAPI documentation is served directly by both the Go server and Cloudflare Worker:
+- **Cloud Swagger UI**: [https://catalog-sync-worker.ezcert.workers.dev/swagger/index.html](https://catalog-sync-worker.ezcert.workers.dev/swagger/index.html) (or `/docs`)
+- **Local / Docker Swagger UI**: [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html) (or `/docs`)
+
 ### Core Endpoints
 
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/jobs` | Start a new sync job (supports `generator` or `batches` mode) |
-| `POST` | `/api/jobs/{id}/resume` | Resume an interrupted sync job from its last checkpoint |
+| `POST` | `/api/jobs/preview` | Dry-run preview of a sync job returning row-by-row `Before -> After` diffs without mutating DB |
+| `POST` | `/api/jobs/{id}/resume` | Resume an interrupted sync job from its last committed batch checkpoint |
+| `POST` | `/api/jobs/{id}/cancel` | Gracefully halt an active sync job at the current batch boundary |
 | `GET` | `/api/jobs` | List recent sync jobs with status and change summaries |
 | `GET` | `/api/jobs/{id}` | Retrieve details and checkpoint progress for a specific job |
-| `GET` | `/api/dead-letter` | Query quarantined invalid records (filterable by `reason`) |
 | `GET` | `/api/products` | Query local catalog products (with search and status filters) |
-| `GET` | `/api/events` | Server-Sent Events (SSE) live progress stream |
+| `GET` | `/api/products/{sku}/history` | Retrieve chronological modification history (`Before -> After` audit log) for a SKU |
+| `GET` | `/api/dead-letter` | Query quarantined invalid records (filterable by `reason` and `job_id`) |
+| `POST` | `/api/dead-letter/{id}/resolve` | Remediate a quarantined record and import the corrected product into the active catalog |
+| `GET` | `/api/versions` | List immutable catalog version milestones (`SYNC`, `PATCH`, `ROLLBACK`) |
+| `GET` | `/api/versions/{id}/diff` | Retrieve row-by-row `Before -> After` SKU diffs for a specific version |
+| `POST` | `/api/versions/{id}/rollback` | Revert a specific catalog update (`revert_update_id`) or rollback to a version while preserving tombstones |
+| `GET` | `/api/metrics` | Query aggregated catalog KPIs, status distribution, and time-series sync activity |
+| `POST` | `/api/database/reset` | Reset the active shop tenant's catalog database to a clean state |
+| `GET` | `/api/events` | Server-Sent Events (SSE) live progress and version event stream |
+| `GET` | `/swagger/index.html` | Interactive Swagger UI API documentation (`/docs` redirects here) |
 
 ---
 
@@ -443,36 +495,35 @@ The repository includes a GitHub Actions pipeline executed on every push and pul
    - *Trade-off*: Write throughput is bound to single-node disk I/O (typically 3,000–5,000 records/sec). This is more than sufficient for retail store catalog synchronization, avoiding the operational overhead of a standalone database server.
 
 2. **Embedded Static Web UI via `//go:embed`**:
-   - *Decision*: Frontend assets (`index.html`, `app.js`, `style.css`) are compiled directly into the binary without requiring Node.js at runtime.
-   - *Rationale*: Eliminates external runtime dependencies, reduces Docker image size to $\sim 21.3\text{MB}$, and guarantees the UI is always in lockstep with the API version.
-   - *Trade-off*: Changes to UI templates require recompilation of the Go executable (though a `--static-dir` flag is provided for rapid local frontend iteration).
+   - *Decision*: Frontend assets (`web/static/*`) are compiled directly into the Go binary without requiring Node.js at runtime.
+   - *Rationale*: Eliminates external runtime dependencies, keeps the compressed multi-stage Docker image under $25\text{MB}$, and guarantees the UI is always in lockstep with the API version.
+   - *Trade-off*: Changes to UI templates require recompilation of the Go executable (though a `-static-dir` flag is provided for rapid local frontend iteration).
 
-3. **Batch-Level Transaction Boundaries**:
-   - *Decision*: Invariant E defines atomic transactions at the batch level ($T_{B_i}$), not the individual record level.
-   - *Rationale*: Committing each record individually causes massive disk sync overhead. Committing an entire job (e.g. 100,000 records) in a single transaction risks memory exhaustion and prevents resumability. Batch-level boundaries provide the optimal balance between ACID durability and throughput.
+3. **Batch-Level Transaction Boundaries & Independent Update Tracking**:
+   - *Decision*: Invariant E defines atomic transactions at the batch level ($T_{B_i}$), not the individual record level, and records per-SKU `Before -> After` deltas in `catalog_version_changes`.
+   - *Rationale*: Committing each record individually causes massive disk sync overhead. Committing an entire job in a single transaction risks memory exhaustion and prevents resumability. Batch-level boundaries provide optimal ACID durability, instant checkpoint resumption, and allow independent single-update revert operations without losing unrelated updates or resurrecting `WITHDRAWN` tombstones.
    - *Trade-off*: An interrupted batch rolls back completely; upon resumption, the engine restarts at the uncommitted batch index.
 
-4. **In-Memory PRNG Reservoir for Anomaly Injection**:
-   - *Decision*: The mock generator maintains an internal bounded ring buffer of previously emitted SKUs to dynamically generate duplicate, out-of-order, and tombstone records.
-   - *Rationale*: Allows generating infinite streams ($O(1)$ memory) while maintaining deterministic edge-case ratios calibrated via random seeds.
+4. **Deterministic PRNG Reservoir for Fictional Supplier Workloads**:
+   - *Decision*: The mock generator uses deterministic PRNG seeds with disjoint SKU namespaces per update scenario (`seed=42, 101, 999, 777, 555`) and a bounded ring buffer to emit duplicate, out-of-order, withdrawn, and corrupt records.
+   - *Rationale*: Enables reproducible dry-run diff previews (`POST /api/jobs/preview`), independent update syncing/reverting, and $O(1)$ memory streaming without requiring a live external supplier account.
 
 ---
 
 ### Unfinished Work & Production Roadmap
 
-The current implementation satisfies 100% of the single-store resilient synchronization specifications. For multi-region enterprise retail deployment, the following enhancements are planned:
+The current implementation satisfies 100% of the resilient catalog synchronization, quarantine remediation, diff inspection, and checkpoint recovery requirements. For multi-region enterprise retail deployment, the following enhancements are planned:
 
 1. **Distributed Active-Passive High Availability (Leader Election)**:
-   - Implement Raft consensus (e.g. `hashicorp/raft`) or etcd leader lease locks to support multi-node failover. While one node performs catalog synchronization, replica nodes serve read-only queries and assume ingestion leadership if the primary fails.
-2. **Object Storage Cold Archival (S3 / Blob Storage)**:
-   - Implement an archival worker to stream raw supplier JSON batch payloads to cold object storage (Amazon S3, Google Cloud Storage, or Azure Blob) with 90-day retention for compliance and audit re-runs.
-3. **Control Plane Authentication & RBAC**:
-   - Integrate OAuth2/OIDC and JWT middleware protecting the trigger (`POST /api/jobs`) and resume (`POST /api/jobs/{id}/resume`) endpoints, with role-based access for store managers vs. automated sync services.
-4. **Cloud-Native Observability & Telemetry**:
-   - Expose a standard `/metrics` endpoint for Prometheus scraping (tracking batch duration histograms, skip ratios, and dead-letter counters).
-   - Integrate OpenTelemetry (OTel) context propagation across batch streams for distributed trace inspection.
-5. **Dead-Letter Replay & Remediation UI**:
-   - Provide an interactive staff modal in the dashboard allowing operators to correct malformed payloads (e.g., fix a negative price or add a missing SKU) and re-queue the corrected record into the active catalog.
+   - Implement Raft consensus (e.g. `hashicorp/raft`) or Litestream/Turso continuous WAL replication to support multi-node failover. While the primary node performs catalog ingestion, replica nodes serve read-only queries and assume leadership if the primary fails.
+2. **Object Storage Cold Archival (S3 / R2 Blob Storage)**:
+   - Stream raw supplier JSON batch payloads to cold object storage (Cloudflare R2 or Amazon S3) with 90-day retention for compliance and historical replay.
+3. **Control Plane Authentication & Role-Based Access Control (RBAC)**:
+   - Integrate OAuth2/OIDC and JWT middleware protecting write endpoints (`POST /api/jobs`, `POST /api/dead-letter/{id}/resolve`, `POST /api/versions/{id}/rollback`), separating read-only staff viewers from catalog operators.
+4. **Cloud-Native Observability & OpenTelemetry**:
+   - Expose a Prometheus `/metrics` scrape endpoint (tracking batch commit latency histograms, skip ratios, and dead-letter counters) and OpenTelemetry trace spans across batch streams.
+5. **Webhook & Downstream POS Notifications**:
+   - Emit signed outbound webhooks when sync jobs complete or when dead-letter thresholds are exceeded so downstream point-of-sale (POS) terminals and staff Slack channels are notified immediately.
 
 ---
 
@@ -480,13 +531,11 @@ The current implementation satisfies 100% of the single-store resilient synchron
 
 In compliance with Assessment 1 transparency guidelines, the design, development, and testing of this application were assisted by AI tooling:
 
-1. **Multi-Agent Architecture & Code Generation**:
-   - Code scaffolding, domain interfaces, and algorithmic invariant enforcement were designed and refined using AI-assisted pair programming (Gemini 2.5 Pro / Claude 3.5 Sonnet).
-   - Architectural patterns—specifically the dual-layer SQLite transaction boundary and the thread-safe SSE broker—were developed through iterative collaborative reasoning.
+1. **Architecture & Code Implementation**:
+   - Domain interfaces, SQLite WAL transaction boundaries, SSE event streaming, and React dashboard components (`VersionDiffModal`, `ProductHistoryModal`, `UpdatesList`, `RemediationModal`) were developed and refined using AI-assisted pair programming (Google Antigravity / Gemini / Claude).
 2. **Adversarial Testing & Verification Harness**:
-   - AI tools were utilized to generate aggressive edge-case test suites, including concurrent race condition tests, multi-iteration stress tests, and adversarial inputs (zero-byte SKUs, Unicode whitespace, floating-point timestamp drift).
-   - Formal invariants were modeled and verified against state transition edge cases.
-3. **Documentation & Spec Synthesis**:
-   - Architectural diagrams, markdown documentation, mathematical formulations of invariants, and GitHub Actions workflow definitions were generated and structured with AI assistance.
-4. **Human & Automated Oversight**:
-   - Every line of generated Go code was compiled with `CGO_ENABLED=0`, checked with `gofmt` and `go vet`, verified by `scripts/check-coverage.sh` ($\ge 90.0\%$), and validated by 5-iteration race detection (`go test -race -count=5`).
+   - AI tools assisted in generating comprehensive unit, integration, and Playwright E2E test suites, including concurrent race condition tests (`go test -race -count=5`), multi-tenant isolation tests, and edge-case inputs (empty/whitespace SKUs, negative prices, out-of-order timestamps, and tombstone reactivation attempts).
+3. **Documentation & Demo Automation**:
+   - Architectural diagrams, OpenAPI/Swagger annotations, and Playwright UI capture scripts for the walkthrough demo were structured with AI assistance.
+4. **Human Verification & Quality Gates**:
+   - All code was compiled with `CGO_ENABLED=0`, formatted and linted via `gofmt` and `go vet`, verified against the $\ge 90.0\%$ statement coverage gate (`scripts/check-coverage.sh`), and validated across both the native Go SQLite engine and the Cloudflare Worker + D1 edge runtime.

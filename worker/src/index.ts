@@ -5,6 +5,7 @@ import { D1Storage } from './storage';
 import { SyncEngine } from './engine';
 import { BatchGenerator } from './generator';
 import { broker } from './sse';
+import swaggerDoc from '../../docs/swagger.json';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -41,10 +42,51 @@ app.get('/health', (c) => {
 });
 
 app.get('/', (c) => {
+  const reqUrl = new URL(c.req.url);
   return c.json({
     message: 'Resilient Catalog Synchronization Engine API (Cloudflare Worker & D1)',
     version: '1.0.0',
-    docs: 'https://github.com/coderpush/catalog-engine',
+    docs: `${reqUrl.origin}/swagger/index.html`,
+  });
+});
+
+// Interactive Swagger UI & OpenAPI 2.0 Specification
+const swaggerHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CatalogSync API Documentation — Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style>body { margin: 0; background: #fafafa; }</style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.onload = function() {
+      SwaggerUIBundle({
+        url: '/swagger/doc.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [SwaggerUIBundle.presets.apis]
+      });
+    };
+  </script>
+</body>
+</html>`;
+
+app.get('/docs', (c) => c.redirect('/swagger/index.html', 302));
+app.get('/docs/', (c) => c.redirect('/swagger/index.html', 302));
+app.get('/swagger', (c) => c.redirect('/swagger/index.html', 302));
+app.get('/swagger/', (c) => c.html(swaggerHtml));
+app.get('/swagger/index.html', (c) => c.html(swaggerHtml));
+app.get('/swagger/doc.json', (c) => {
+  const reqUrl = new URL(c.req.url);
+  return c.json({
+    ...swaggerDoc,
+    host: reqUrl.host,
+    schemes: [reqUrl.protocol.replace(':', '')],
   });
 });
 
