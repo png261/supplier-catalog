@@ -41,6 +41,21 @@ interface ReservoirItem {
   timestamp: string;
 }
 
+function getSeedSkuOffset(seed: number): number {
+  switch (seed) {
+    case 101:
+      return 10000;
+    case 999:
+      return 20000;
+    case 777:
+      return 30000;
+    case 555:
+      return 40000;
+    default:
+      return 0;
+  }
+}
+
 export class BatchGenerator {
   private cfg: GeneratorConfig;
   private rng: DeterministicRNG;
@@ -63,6 +78,7 @@ export class BatchGenerator {
       base_time: cfg.base_time ?? '2026-01-01T00:00:00.000Z',
     };
     this.rng = new DeterministicRNG(this.cfg.seed);
+    this.skuCounter = getSeedSkuOffset(this.cfg.seed);
     this.currentTimeMs = new Date(this.cfg.base_time!).getTime();
   }
 

@@ -3916,10 +3916,10 @@ func TestStorage_SyncModeRollbackAndMetrics(t *testing.T) {
 	// Delete SKU-S2 from live products before rollback to also test missing baseline product re-insertion
 	_, _ = s.GetProduct(ctx, "SKU-S2")
 
-	// 3. Rollback to job-sync-1: should delete SKU-S3 from products, restore SKU-S1 to 10.0 & t1, restore SKU-S2 timestamp to t1, and exclude job-sync-2 from metrics
-	rbVer1, _, err := s.RollbackVersion(ctx, "job-sync-1", "staff", "Revert v1.1.0")
+	// 3. Single-update revert of job-sync-2 ("Revert update: ..."): should delete SKU-S3, restore SKU-S1 to 10.0 & t1, keep job-sync-1 active, and exclude job-sync-2 from metrics
+	rbVer1, _, err := s.RollbackVersion(ctx, "job-sync-2", "staff", "Revert update: Price & Inventory Adjustment (job-sync-2)")
 	if err != nil {
-		t.Fatalf("RollbackVersion to job-sync-1 failed: %v", err)
+		t.Fatalf("RollbackVersion single-update job-sync-2 failed: %v", err)
 	}
 	if rbVer1.Summary.Withdrawn != 1 || rbVer1.Summary.Updated != 1 {
 		t.Fatalf("unexpected rollback summary: %+v", rbVer1.Summary)
@@ -3927,18 +3927,22 @@ func TestStorage_SyncModeRollbackAndMetrics(t *testing.T) {
 
 	_, totalProds, err := s.ListProducts(ctx, "", "", 100, 0)
 	if err != nil || totalProds != 2 {
-		t.Fatalf("expected 2 products after rollback to v1, got %d (err=%v)", totalProds, err)
+		t.Fatalf("expected 2 products after single-update revert of v2, got %d (err=%v)", totalProds, err)
 	}
 
 	agg1, jobs1, err := s.GetMetrics(ctx, domain.MetricsFilter{})
 	if err != nil {
-		t.Fatalf("GetMetrics after rollback to v1 failed: %v", err)
+		t.Fatalf("GetMetrics after single-update revert failed: %v", err)
 	}
 	if len(jobs1) != 1 || agg1.Summary.Added != 2 {
 		t.Fatalf("expected only job-sync-1 in metrics (added=2), got jobs=%d, added=%d", len(jobs1), agg1.Summary.Added)
 	}
 
-	// 4. Rollback to v0: should delete all products and exclude job-sync-1 from metrics
+	// 4. Rollback to job-sync-1 (point-in-time) and then to v0
+	_, _, err = s.RollbackVersion(ctx, "job-sync-1", "staff", "Revert to v1")
+	if err != nil {
+		t.Fatalf("RollbackVersion to job-sync-1 failed: %v", err)
+	}
 	_, _, err = s.RollbackVersion(ctx, "v0", "staff", "Revert to empty baseline")
 	if err != nil {
 		t.Fatalf("RollbackVersion to v0 failed: %v", err)

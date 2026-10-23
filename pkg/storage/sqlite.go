@@ -1459,9 +1459,9 @@ func (s *SQLiteStorage) computeVersionHistoryState(ctx context.Context, q querie
 	var rows *sql.Rows
 	var err error
 	if upToVersionNumber >= 0 {
-		rows, err = q.QueryContext(ctx, "SELECT version_id, version_number, type, COALESCE(revert_of_version_id, '') FROM catalog_versions WHERE version_number <= ? ORDER BY version_number ASC;", upToVersionNumber)
+		rows, err = q.QueryContext(ctx, "SELECT version_id, version_number, type, COALESCE(revert_of_version_id, ''), COALESCE(description, ''), COALESCE(metadata, '') FROM catalog_versions WHERE version_number <= ? ORDER BY version_number ASC;", upToVersionNumber)
 	} else {
-		rows, err = q.QueryContext(ctx, "SELECT version_id, version_number, type, COALESCE(revert_of_version_id, '') FROM catalog_versions ORDER BY version_number ASC;")
+		rows, err = q.QueryContext(ctx, "SELECT version_id, version_number, type, COALESCE(revert_of_version_id, ''), COALESCE(description, ''), COALESCE(metadata, '') FROM catalog_versions ORDER BY version_number ASC;")
 	}
 	if err != nil {
 		return nil, nil
@@ -1469,16 +1469,18 @@ func (s *SQLiteStorage) computeVersionHistoryState(ctx context.Context, q querie
 	defer rows.Close()
 
 	type verEntry struct {
-		id  string
-		num int
-		typ string
-		rev string
+		id   string
+		num  int
+		typ  string
+		rev  string
+		desc string
+		meta string
 	}
 	var all []verEntry
 	versionNumByID := map[string]int{"v0": 0}
 	for rows.Next() {
 		var e verEntry
-		if err := rows.Scan(&e.id, &e.num, &e.typ, &e.rev); err == nil {
+		if err := rows.Scan(&e.id, &e.num, &e.typ, &e.rev, &e.desc, &e.meta); err == nil {
 			all = append(all, e)
 			versionNumByID[e.id] = e.num
 		}
@@ -1489,7 +1491,16 @@ func (s *SQLiteStorage) computeVersionHistoryState(ctx context.Context, q querie
 	for _, r := range all {
 		if r.typ == string(domain.VersionTypeRollback) {
 			targetID := strings.TrimSpace(r.rev)
-			if targetID == "" || targetID == "v0" {
+			isSingle := strings.HasPrefix(r.desc, "Revert update:") || strings.Contains(r.meta, `"revert_mode":"single"`)
+			if isSingle {
+				filtered := activeStack[:0]
+				for _, v := range activeStack {
+					if v.id != targetID {
+						filtered = append(filtered, v)
+					}
+				}
+				activeStack = filtered
+			} else if targetID == "" || targetID == "v0" {
 				activeStack = nil
 			} else if targetNum, ok := versionNumByID[targetID]; ok {
 				filtered := activeStack[:0]
@@ -1523,6 +1534,61 @@ func (s *SQLiteStorage) computeVersionHistoryState(ctx context.Context, q querie
 	return activeNums, revertedSyncIDs
 }
 
+func (s *SQLiteStorage) getBaselineStateForVersionNumbers(ctx context.Context, q querier, activeNums []int) (map[string]domain.Product, error) {
+	if len(activeNums) == 0 {
+		return make(map[string]domain.Product), nil
+	}
+	placeholders := make([]string, len(activeNums))
+	qArgs := make([]any, len(activeNums))
+	for i, n := range activeNums {
+		placeholders[i] = "?"
+		qArgs[i] = n
+	}
+	query := fmt.Sprintf(`
+	WITH ranked_deltas AS (
+		SELECT 
+			d.sku,
+			d.new_name,
+			d.new_price,
+			d.new_status,
+			d.new_timestamp,
+			ROW_NUMBER() OVER (
+				PARTITION BY d.sku 
+				ORDER BY v.version_number DESC, d.delta_id DESC
+			) AS rn
+		FROM catalog_version_deltas d
+		JOIN catalog_versions v ON d.version_id = v.version_id
+		WHERE v.version_number IN (%s)
+	)
+	SELECT sku, new_name, new_price, new_status, new_timestamp
+	FROM ranked_deltas
+	WHERE rn = 1;
+	`, strings.Join(placeholders, ", "))
+	rows, err := q.QueryContext(ctx, query, qArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	baseline := make(map[string]domain.Product)
+	for rows.Next() {
+		var p domain.Product
+		var statusStr, timeStr string
+		if err := rows.Scan(&p.SKU, &p.Name, &p.Price, &statusStr, &timeStr); err != nil {
+			return nil, fmt.Errorf("failed scanning baseline product row: %w", err)
+		}
+		p.Status = domain.ProductStatus(statusStr)
+		ts, err := ParseTime(timeStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed parsing baseline timestamp for sku %s: %w", p.SKU, err)
+		}
+		p.SupplierTimestamp = ts
+		p.UpdatedAt = ts
+		baseline[p.SKU] = p
+	}
+	return baseline, rows.Err()
+}
+
 func (s *SQLiteStorage) getBaselineStateAtVersion(ctx context.Context, q querier, versionID string) (map[string]domain.Product, error) {
 	if strings.TrimSpace(versionID) == "v0" {
 		return make(map[string]domain.Product), nil
@@ -1539,62 +1605,31 @@ func (s *SQLiteStorage) getBaselineStateAtVersion(ctx context.Context, q querier
 	var patchCount int
 	_ = q.QueryRowContext(ctx, "SELECT COUNT(*) FROM catalog_versions WHERE version_number > 0 AND type IN ('INITIAL', 'PATCH');").Scan(&patchCount)
 
-	var rows *sql.Rows
 	if patchCount == 0 {
 		activeNums, _ := s.computeVersionHistoryState(ctx, q, targetVersionNumber)
-		if len(activeNums) == 0 {
-			return make(map[string]domain.Product), nil
-		}
-		placeholders := make([]string, len(activeNums))
-		qArgs := make([]any, len(activeNums))
-		for i, n := range activeNums {
-			placeholders[i] = "?"
-			qArgs[i] = n
-		}
-		query := fmt.Sprintf(`
-		WITH ranked_deltas AS (
-			SELECT 
-				d.sku,
-				d.new_name,
-				d.new_price,
-				d.new_status,
-				d.new_timestamp,
-				ROW_NUMBER() OVER (
-					PARTITION BY d.sku 
-					ORDER BY v.version_number DESC, d.delta_id DESC
-				) AS rn
-			FROM catalog_version_deltas d
-			JOIN catalog_versions v ON d.version_id = v.version_id
-			WHERE v.version_number IN (%s)
-		)
-		SELECT sku, new_name, new_price, new_status, new_timestamp
-		FROM ranked_deltas
-		WHERE rn = 1;
-		`, strings.Join(placeholders, ", "))
-		rows, err = q.QueryContext(ctx, query, qArgs...)
-	} else {
-		query := `
-		WITH ranked_deltas AS (
-			SELECT 
-				d.sku,
-				d.new_name,
-				d.new_price,
-				d.new_status,
-				d.new_timestamp,
-				ROW_NUMBER() OVER (
-					PARTITION BY d.sku 
-					ORDER BY v.version_number DESC, d.delta_id DESC
-				) AS rn
-			FROM catalog_version_deltas d
-			JOIN catalog_versions v ON d.version_id = v.version_id
-			WHERE v.version_number <= ?
-		)
-		SELECT sku, new_name, new_price, new_status, new_timestamp
-		FROM ranked_deltas
-		WHERE rn = 1;
-		`
-		rows, err = q.QueryContext(ctx, query, targetVersionNumber)
+		return s.getBaselineStateForVersionNumbers(ctx, q, activeNums)
 	}
+	query := `
+	WITH ranked_deltas AS (
+		SELECT 
+			d.sku,
+			d.new_name,
+			d.new_price,
+			d.new_status,
+			d.new_timestamp,
+			ROW_NUMBER() OVER (
+				PARTITION BY d.sku 
+				ORDER BY v.version_number DESC, d.delta_id DESC
+			) AS rn
+		FROM catalog_version_deltas d
+		JOIN catalog_versions v ON d.version_id = v.version_id
+		WHERE v.version_number <= ?
+	)
+	SELECT sku, new_name, new_price, new_status, new_timestamp
+	FROM ranked_deltas
+	WHERE rn = 1;
+	`
+	rows, err := q.QueryContext(ctx, query, targetVersionNumber)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reconstruct baseline catalog at version %s: %w", versionID, err)
 	}
@@ -1660,9 +1695,26 @@ func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID str
 	var patchCount int
 	_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM catalog_versions WHERE version_number > 0 AND type IN ('INITIAL', 'PATCH');").Scan(&patchCount)
 	isSyncRevertMode := targetVersionID == "v0" || patchCount == 0
+	isSingleRevert := strings.HasPrefix(description, "Revert update:")
 
-	// 2. Retrieve baseline products at targetVersionID
-	baselineProducts, err := s.getBaselineStateAtVersion(ctx, tx, targetVersionID)
+	// 2. Retrieve baseline products at targetVersionID (or remaining active versions if single-update revert)
+	var baselineProducts map[string]domain.Product
+	if isSingleRevert {
+		currentNums, _ := s.computeVersionHistoryState(ctx, tx, -1)
+		var remaining []int
+		for _, n := range currentNums {
+			if n != targetVersionNumber {
+				remaining = append(remaining, n)
+			}
+		}
+		baselineProducts, err = s.getBaselineStateForVersionNumbers(ctx, tx, remaining)
+		_, _ = tx.ExecContext(ctx, "DELETE FROM dead_letter_issues WHERE job_id = ?;", targetVersionID)
+	} else {
+		baselineProducts, err = s.getBaselineStateAtVersion(ctx, tx, targetVersionID)
+		if targetVersionID == "v0" {
+			_, _ = tx.ExecContext(ctx, "DELETE FROM dead_letter_issues;")
+		}
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed reconstructing baseline at version %s: %w", targetVersionID, err)
 	}
