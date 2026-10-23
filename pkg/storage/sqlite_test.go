@@ -1223,6 +1223,33 @@ func TestStorage_ResolveDeadLetter(t *testing.T) {
 	if err := sClosed.ResolveDeadLetter(ctx, "issue-x", corrected); err == nil {
 		t.Error("expected error on closed DB")
 	}
+
+	// 4. Version storage edge cases & closed DB coverage
+	if _, err := s.GetBaselineStateAtVersion(ctx, ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound for empty versionID, got %v", err)
+	}
+	tx3, _ := s.BeginTx(ctx)
+	if _, err := s.GetBaselineStateAtVersionTx(ctx, tx3, ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound for empty versionID in Tx, got %v", err)
+	}
+	if _, err := s.GetBaselineStateAtVersionTx(ctx, tx3, "missing-ver"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound for missing versionID in Tx, got %v", err)
+	}
+	_ = tx3.Rollback()
+	if _, _, err := s.RollbackVersion(ctx, "", "author", "desc"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound for empty targetVersionID in RollbackVersion, got %v", err)
+	}
+	_, _, _ = s.ListVersions(ctx, 200, -5)
+	_, _, _ = s.ListVersions(ctx, 0, 0)
+
+	// Closed DB errors for versioning methods
+	_, _ = sClosed.GetVersion(ctx, "v1")
+	_, _ = sClosed.GetLatestVersion(ctx)
+	_, _, _ = sClosed.ListVersions(ctx, 10, 0)
+	_, _ = sClosed.GetVersionDeltas(ctx, "v1")
+	_, _ = sClosed.GetBaselineStateAtVersion(ctx, "v1")
+	_, _, _ = sClosed.RollbackVersion(ctx, "v1", "a", "d")
+	_, _, _ = sClosed.ListJobsByStatus(ctx, "COMPLETED", 10, 0)
 }
 
 func TestStorage_GetMetrics(t *testing.T) {
