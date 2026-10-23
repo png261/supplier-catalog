@@ -7,6 +7,7 @@ import {
   Check,
   Loader2,
   RotateCw,
+  RotateCcw,
   AlertTriangle,
   CheckCircle2,
   Activity,
@@ -22,6 +23,8 @@ interface UpdatesListProps {
   interruptedJob?: SyncJob | null;
   isAnySyncing: boolean;
   onSync: (update: CatalogUpdate) => void;
+  onRevert?: (update: CatalogUpdate) => void;
+  isRollingBack?: boolean;
   // Live progress telemetry for active syncing item
   currentBatch: number;
   totalBatches: number;
@@ -43,6 +46,8 @@ export const UpdatesList: React.FC<UpdatesListProps> = ({
   interruptedJob,
   isAnySyncing,
   onSync,
+  onRevert,
+  isRollingBack = false,
   currentBatch,
   totalBatches,
   throughput,
@@ -191,10 +196,26 @@ export const UpdatesList: React.FC<UpdatesListProps> = ({
                 {/* Right Action */}
                 <div className="shrink-0 flex items-center gap-2">
                   {isSynced ? (
-                    <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-semibold bg-emerald-50 border border-emerald-200/60 px-2.5 py-1 rounded-md">
-                      <Check className="h-3.5 w-3.5" />
-                      Synced
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-semibold bg-emerald-50 border border-emerald-200/60 px-2.5 py-1 rounded-md">
+                        <Check className="h-3.5 w-3.5" />
+                        Synced
+                      </span>
+                      {onRevert && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onRevert(update)}
+                          disabled={isAnySyncing || isRollingBack}
+                          className="h-7 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 hover:text-amber-800 font-medium shadow-none"
+                          title={`Revert to version before ${update.title}`}
+                        >
+                          <RotateCcw className="h-3 w-3 mr-1" />
+                          Revert
+                        </Button>
+                      )}
+                    </div>
                   ) : isThisSyncing ? (
                     onCancelSync && (
                       <Button

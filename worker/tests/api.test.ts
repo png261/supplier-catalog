@@ -197,6 +197,15 @@ describe('Cloudflare Worker REST API', () => {
     const prodData = await prodRes.json();
     expect(prodData.products[0].price).toBe(100.0);
     expect(prodData.products[0].name).toBe('Widget v1');
+
+    // 6. Rollback to v0 (pre-sync initial baseline before v1)
+    const rollV0Res = await makeRequest('/api/versions/v0/rollback', {
+      method: 'POST',
+      body: JSON.stringify({ operator: 'test-staff', description: 'Revert before first sync' }),
+    });
+    expect(rollV0Res.status).toBe(200);
+    const activeAfterV0 = await (await makeRequest('/api/products?status=ACTIVE')).json();
+    expect(activeAfterV0.total).toBe(0);
   });
 
   it('GET / returns API metadata and GET /api/events returns SSE stream', async () => {

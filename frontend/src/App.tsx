@@ -861,11 +861,47 @@ export const AppContent: React.FC = () => {
     }
   };
 
-  const handleRollback = async (versionId: string, operator = 'staff-admin') => {
+  const handleRollback = async (versionId: string, operator = 'staff-admin', revertedUpdateId?: string) => {
     setIsRollingBack(true);
     try {
+      const targetVerNum =
+        versionId === 'v0'
+          ? 0
+          : versions.find((v) => v.version_id === versionId)?.version_number ?? 0;
+
       const res = await rollbackVersion(versionId, operator);
       toast.success(`Catalog successfully reverted to version v${res.version?.version_number || ''}`);
+
+      // Unmark any synced updates that occurred after targetVerNum so they can be re-synced
+      const currentShop = shopIdRef.current;
+      setSyncedUpdateIds((prev) => {
+        const idsToRemove = new Set<string>();
+        if (revertedUpdateId) idsToRemove.add(revertedUpdateId);
+        if (versionId === 'v0') {
+          return [];
+        }
+        for (const u of catalogUpdates) {
+          const matchingVer = versions.find(
+            (v) =>
+              (v.type === 'SYNC' || v.trigger_type === 'SYNC') &&
+              (v.description?.includes(u.version) || v.description?.includes(u.title))
+          );
+          if (matchingVer && (matchingVer.version_number || 0) > targetVerNum) {
+            idsToRemove.add(u.id);
+          }
+        }
+        const next = prev.filter((id) => !idsToRemove.has(id));
+        try {
+          localStorage.setItem(`catalog_synced_updates_${currentShop}`, JSON.stringify(next));
+        } catch (_) {}
+        return next;
+      });
+      if (versionId === 'v0') {
+        try {
+          localStorage.setItem(`catalog_synced_updates_${currentShop}`, JSON.stringify([]));
+        } catch (_) {}
+      }
+
       await Promise.all([
         loadVersions(1),
         loadHistory(),
@@ -878,6 +914,28 @@ export const AppContent: React.FC = () => {
     } finally {
       setIsRollingBack(false);
     }
+  };
+
+  const handleRevertUpdate = async (update: CatalogUpdate) => {
+    // Find the SYNC version corresponding to this update
+    const syncVer =
+      versions.find(
+        (v) =>
+          (v.type === 'SYNC' || v.trigger_type === 'SYNC') &&
+          (v.description?.includes(update.version) || v.description?.includes(update.title))
+      ) || versions.find((v) => v.type === 'SYNC' || v.trigger_type === 'SYNC');
+
+    let targetVersionId = 'v0';
+    if (syncVer && (syncVer.version_number || 0) > 1) {
+      const earlier = versions.filter((v) => (v.version_number || 0) < (syncVer.version_number || 0));
+      if (earlier.length > 0) {
+        const bestPrev = earlier.reduce((best, cur) =>
+          (cur.version_number || 0) > (best.version_number || 0) ? cur : best
+        , earlier[0]);
+        targetVersionId = bestPrev.version_id;
+      }
+    }
+    await handleRollback(targetVersionId, 'staff-admin', update.id);
   };
 
   const handleFetchDiff = async (versionId: string): Promise<VersionDiffItem[]> => {
@@ -1551,6 +1609,8 @@ export const AppContent: React.FC = () => {
                 syncedUpdateIds={syncedUpdateIds}
                 activeSyncingUpdateId={activeSyncingUpdateId}
                 onSyncUpdate={handleSyncUpdate}
+                onRevertUpdate={handleRevertUpdate}
+                isRollingBack={isRollingBack}
                 analyticsRange={analyticsRange}
                 analyticsFrom={analyticsFrom}
                 analyticsTo={analyticsTo}

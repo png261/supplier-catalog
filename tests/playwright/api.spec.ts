@@ -497,6 +497,19 @@ test.describe('Strict Backend REST API & Domain Invariant Suite', () => {
     expect(map['SKU-VER-1'].name).toBe('Mechanical Switch Pack v1');
     expect(map['SKU-VER-2'].status).toBe('WITHDRAWN'); // Tombstone preserved!
     expect(map['SKU-VER-3'].status).toBe('WITHDRAWN'); // Post-v1 addition withdrawn!
+
+    // 7. Rollback all the way to pre-sync baseline v0 (state before v1)
+    const rollV0Res = await request.post('/api/versions/v0/rollback', {
+      headers: { 'X-Shop-Id': shop },
+      data: { operator: 'sre-oncall', description: 'Revert before first sync v1 (to v0)' },
+    });
+    expect(rollV0Res.status()).toBe(200);
+    const rollV0Data = await rollV0Res.json();
+    expect(rollV0Data.version.type).toBe('ROLLBACK');
+    expect(rollV0Data.version.revert_of_version_id).toBe('v0');
+
+    const activeAfterV0 = await (await request.get('/api/products?status=ACTIVE', { headers: { 'X-Shop-Id': shop } })).json();
+    expect(activeAfterV0.total).toBe(0);
   });
 
   test('7. Metrics Filtering (today, yesterday, 7d, all, custom from/to, job_id) and Error Validation', async ({ request }) => {

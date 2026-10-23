@@ -646,7 +646,28 @@ export class D1Storage {
       FROM catalog_versions
       WHERE shop_id = ? AND version_id = ?;
     `;
-    return (await this.db.prepare(query).bind(shopId, versionId).first<CatalogVersion>()) || null;
+    const found = await this.db.prepare(query).bind(shopId, versionId).first<CatalogVersion>();
+    if (found) return found;
+    if (versionId.trim() === 'v0') {
+      return {
+        shop_id: shopId,
+        version_id: 'v0',
+        version_number: 0,
+        description: 'Initial Pre-Sync Baseline (Empty Catalog)',
+        author: 'system',
+        type: 'INITIAL',
+        revert_of_version_id: null,
+        items_added: 0,
+        items_updated: 0,
+        items_withdrawn: 0,
+        items_skipped: 0,
+        items_dead_letter: 0,
+        total_items_affected: 0,
+        metadata: '{}',
+        created_at: '1970-01-01T00:00:00.000Z',
+      };
+    }
+    return null;
   }
 
   async getVersionDeltas(shopId: string, versionId: string): Promise<ItemDelta[]> {
@@ -668,10 +689,20 @@ export class D1Storage {
     author = 'staff',
     description = ''
   ): Promise<{ version: CatalogVersion; deltas: ItemDelta[] }> {
-    // 1. Verify target version exists
+    // 1. Verify target version exists (or materialize v0 initial baseline)
     const targetVer = await this.getVersion(shopId, targetVersionId);
     if (!targetVer) {
       throw new Error(`target version ${targetVersionId} not found`);
+    }
+    if (targetVersionId.trim() === 'v0') {
+      await this.db
+        .prepare(`
+          INSERT OR IGNORE INTO catalog_versions (
+            shop_id, version_id, version_number, description, author, type, created_at
+          ) VALUES (?, 'v0', 0, 'Initial Pre-Sync Baseline (Empty Catalog)', 'system', 'INITIAL', '1970-01-01T00:00:00.000Z');
+        `)
+        .bind(shopId)
+        .run();
     }
 
     // 2. Get latest version number

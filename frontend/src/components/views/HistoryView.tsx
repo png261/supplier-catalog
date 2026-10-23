@@ -112,6 +112,24 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     , versions[0]);
   }, [versions]);
 
+  // Resolve the version immediately preceding a given version (or v0 initial pre-sync baseline)
+  const getPreviousVersion = (ver: CatalogVersion): CatalogVersion => {
+    const candidates = versions.filter((v) => (v.version_number || 0) < (ver.version_number || 0));
+    if (candidates.length > 0) {
+      return candidates.reduce((best, cur) =>
+        (cur.version_number || 0) > (best.version_number || 0) ? cur : best
+      , candidates[0]);
+    }
+    return {
+      version_id: 'v0',
+      version_number: 0,
+      type: 'INITIAL',
+      description: 'Initial Pre-Sync Baseline (Empty Catalog)',
+      author: 'system',
+      created_at: ver.created_at || new Date(0).toISOString(),
+    };
+  };
+
   // Merge SyncJobs and CatalogVersions into a unified timeline
   const unifiedEntries = useMemo<UnifiedHistoryEntry[]>(() => {
     const versionById = new Map<string, CatalogVersion>();
@@ -569,9 +587,24 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                                 Revert to v{ver.version_number}
                               </Button>
                             ) : (
-                              <span className="inline-flex items-center text-[11px] font-medium text-emerald-700 px-1.5 py-0.5">
-                                <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Live
-                              </span>
+                              <>
+                                {ver.version_number >= 1 && revertTarget !== 'v0' && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handlePromptRollback(getPreviousVersion(ver))}
+                                    disabled={isRollingBack || isSyncing}
+                                    className="h-7 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 hover:text-amber-800 font-medium"
+                                    title={`Undo v${ver.version_number} and revert catalog to v${getPreviousVersion(ver).version_number} (state before this sync)`}
+                                  >
+                                    <RotateCcw className="h-3 w-3 mr-1" />
+                                    Revert Before Sync (v{getPreviousVersion(ver).version_number})
+                                  </Button>
+                                )}
+                                <span className="inline-flex items-center text-[11px] font-medium text-emerald-700 px-1.5 py-0.5">
+                                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Live
+                                </span>
+                              </>
                             )
                           )}
                         </div>
@@ -623,9 +656,10 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         isOpen={isDiffModalOpen}
         onOpenChange={setIsDiffModalOpen}
         version={selectedVersion}
+        previousVersion={selectedVersion ? getPreviousVersion(selectedVersion) : null}
         changes={diffItems}
         isLoading={isLoadingDiff}
-        onRollbackClick={onRollback ? handlePromptRollback : undefined}
+        onRollbackClick={onRollback ? (ver) => handlePromptRollback(ver) : undefined}
         isCurrentVersion={selectedVersion?.version_id === latestVersion?.version_id}
       />
 

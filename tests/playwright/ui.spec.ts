@@ -428,8 +428,11 @@ test.describe('Strict End-to-End UI Suite (100% Feature Coverage)', () => {
     await expect(page.getByText('job-ui-v1-baseline', { exact: true })).toBeVisible();
     await expect(page.getByText('LIVE', { exact: true }).first()).toBeVisible();
 
-    // 2. Click "Diff" on v2 to inspect SKU-level changes in VersionDiffModal
+    // Verify the LIVE v2 row itself has "Revert Before Sync (v1)" button to undo the latest sync update directly
     const v2Row = page.locator('tbody tr', { hasText: 'job-ui-v2-update' });
+    await expect(v2Row.getByRole('button', { name: /Revert Before Sync \(v1\)/i })).toBeVisible();
+
+    // 2. Click "Diff" on v2 to inspect SKU-level changes in VersionDiffModal and verify "Revert Before v2 (to v1)" button inside modal
     await v2Row.getByRole('button', { name: /Diff/i }).click();
 
     const diffModal = page.getByRole('dialog');
@@ -437,12 +440,12 @@ test.describe('Strict End-to-End UI Suite (100% Feature Coverage)', () => {
     await expect(diffModal.getByText('SKU-ROLL-100')).toBeVisible();
     await expect(diffModal.getByText('Studio Microphone v2 Surge')).toBeVisible();
     await expect(diffModal.getByText('SKU-ROLL-200')).toBeVisible();
+    await expect(diffModal.getByRole('button', { name: /Revert Before v2 \(to v1\)/i })).toBeVisible();
     await diffModal.getByRole('button', { name: 'Close' }).first().click();
     await expect(diffModal).toBeHidden();
 
-    // 3. Click "Revert to v1" on job-ui-v1-baseline row
-    const v1Row = page.locator('tbody tr', { hasText: 'job-ui-v1-baseline' });
-    await v1Row.getByRole('button', { name: /Revert to v1/i }).click();
+    // 3. Click "Revert Before Sync (v1)" directly on the LIVE v2 row to revert back to before v2 was synced
+    await v2Row.getByRole('button', { name: /Revert Before Sync \(v1\)/i }).click();
 
     const confirmModal = page.getByRole('dialog');
     await expect(confirmModal.getByText('Confirm Catalog Reversion')).toBeVisible();
@@ -513,5 +516,38 @@ test.describe('Strict End-to-End UI Suite (100% Feature Coverage)', () => {
     await page.getByRole('button', { name: /^All/i }).click();
     await expect(page.locator('tbody tr').first()).toContainText('COMPLETED', { timeout: 25000 });
     await expect(page.locator('tbody tr').first()).toContainText('10/10');
+  });
+
+  test('8. Revert First Sync Update to Pre-Sync Baseline (v0) & Dashboard Direct Revert Button', async ({
+    page,
+    request,
+  }) => {
+    const shop = 'pw-ui-revert-before-sync';
+    await request.post('/api/database/reset', { headers: { 'X-Shop-Id': shop } });
+    await enterShopWorkspace(page, shop);
+
+    // 1. Sync v1.0.0 — Baseline Catalog Feed from Dashboard
+    await page.getByTitle('Sync Baseline Catalog Feed').click();
+    await expect(page.getByText('Synced').first()).toBeVisible({ timeout: 25000 });
+
+    // Verify "Revert" button appears right next to "Synced" on the Dashboard workload row
+    const revertBtnOnDashboard = page.getByTitle('Revert to version before Baseline Catalog Feed');
+    await expect(revertBtnOnDashboard).toBeVisible();
+
+    // 2. Navigate to merged History & Versions tab and verify "Revert Before Sync (v0)" is visible on v1
+    await page.getByRole('button', { name: /History & Versions/i }).first().click();
+    await expect(page.getByText('v1.0.0 — Baseline Catalog Feed').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /Revert Before Sync \(v0\)/i })).toBeVisible();
+
+    // 3. Go back to Dashboard and click the direct "Revert" button next to v1.0.0
+    await page.getByRole('button', { name: /^Dashboard/i }).first().click();
+    await revertBtnOnDashboard.click();
+
+    // Verify v1.0.0 is unmarked from "Synced" back to "Sync" so it can be re-synced, and active products are 0
+    await expect(page.getByTitle('Sync Baseline Catalog Feed')).toBeVisible({ timeout: 15000 });
+
+    // Verify in History & Versions that ROLLBACK to v0 was recorded
+    await page.getByRole('button', { name: /History & Versions/i }).first().click();
+    await expect(page.getByText('ROLLBACK', { exact: true }).first()).toBeVisible();
   });
 });
