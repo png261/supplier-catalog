@@ -80,7 +80,7 @@ var _ Storage = (*SQLiteStorage)(nil)
 func Open(dsn string) (*SQLiteStorage, error) {
 	formattedDSN := dsn
 	if dsn == ":memory:" {
-		formattedDSN = "file::memory:?cache=shared&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_txlock=immediate"
+		formattedDSN = fmt.Sprintf("file:memdb-%s?mode=memory&cache=shared&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_txlock=immediate", uuid.New().String())
 	} else if !strings.Contains(dsn, "?") {
 		formattedDSN = fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)&_txlock=immediate", dsn)
 	}

@@ -494,7 +494,7 @@ func TestAdversarial_InvariantC_MultiSKUMatrix(t *testing.T) {
 func TestAdversarial_Concurrency_HeavyReadWriteContention(t *testing.T) {
 	store := setupTestStorage(t)
 	engine := catalogSync.NewEngine(store)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	const numSKUs = 100

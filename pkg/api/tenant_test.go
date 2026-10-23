@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"coderpush/pkg/domain"
 	"coderpush/pkg/storage"
 	catalogSync "coderpush/pkg/sync"
 )
@@ -110,7 +111,8 @@ func TestMultiTenantDataIsolation(t *testing.T) {
 	}
 
 	// Wait for background jobs to commit
-	time.Sleep(200 * time.Millisecond)
+	waitForTenantJobStatus(t, server, "shop-nike", "job-nike-1", domain.JobStatusCompleted)
+	waitForTenantJobStatus(t, server, "shop-adidas", "job-adidas-1", domain.JobStatusCompleted)
 
 	// 3. Query products from Shop A
 	reqListA := httptest.NewRequest("GET", "/api/products", nil)
@@ -189,7 +191,8 @@ func TestMultiTenantResetIsolation(t *testing.T) {
 		server.ServeHTTP(rec, req)
 	}
 
-	time.Sleep(200 * time.Millisecond)
+	waitForTenantJobStatus(t, server, "shop-a", "job-shop-a", domain.JobStatusCompleted)
+	waitForTenantJobStatus(t, server, "shop-b", "job-shop-b", domain.JobStatusCompleted)
 
 	// Reset Shop A only
 	reqReset := httptest.NewRequest("POST", "/api/database/reset", nil)
@@ -293,7 +296,8 @@ func TestMultiTenantConcurrentJobs(t *testing.T) {
 	}
 
 	// Wait for jobs to finish
-	time.Sleep(300 * time.Millisecond)
+	waitForTenantJobStatus(t, server, "shop-concurrent-a", "concurrent-job-a", domain.JobStatusCompleted)
+	waitForTenantJobStatus(t, server, "shop-concurrent-b", "concurrent-job-b", domain.JobStatusCompleted)
 
 	// Verify both completed
 	reqListA := httptest.NewRequest("GET", "/api/jobs", nil)
@@ -401,4 +405,24 @@ func TestMultiTenantConcurrentGetOrCreateRace(t *testing.T) {
 
 	close(startBarrier)
 	wg.Wait()
+}
+
+func waitForTenantJobStatus(t *testing.T, server http.Handler, shopID, jobID string, want domain.JobStatus) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		req := httptest.NewRequest("GET", "/api/jobs/"+jobID, nil)
+		req.Header.Set("X-Shop-Id", shopID)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK {
+			var detail JobDetailResponse
+			_ = json.Unmarshal(rec.Body.Bytes(), &detail)
+			if detail.Job != nil && detail.Job.Status == want {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for job %s (shop %s) to reach %s", jobID, shopID, want)
 }

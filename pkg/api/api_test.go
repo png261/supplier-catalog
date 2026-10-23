@@ -146,8 +146,13 @@ func TestHandler_PostJob_DirectBatches(t *testing.T) {
 		t.Fatalf("expected 202 Accepted, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Wait briefly for background execution to commit
-	time.Sleep(150 * time.Millisecond)
+	// Wait for background execution to commit
+	for i := 0; i < 100; i++ {
+		if p, err := store.GetProduct(context.Background(), "SKU-DIRECT-1"); err == nil && p != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	prod, err := store.GetProduct(context.Background(), "SKU-DIRECT-1")
 	if err != nil {
@@ -1406,7 +1411,12 @@ func TestHandler_ResumeJob_AfterServerRestart_PersistedConfig(t *testing.T) {
 	}
 
 	// Wait for batch 1 to commit
-	time.Sleep(150 * time.Millisecond)
+	for i := 0; i < 100; i++ {
+		if j, err := store.GetJob(ctx, "job-restart-batches"); err == nil && j != nil && j.Status == domain.JobStatusCompleted {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	p1, err := store.GetProduct(ctx, "SKU-R1")
 	if err != nil {

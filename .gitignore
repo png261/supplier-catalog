@@ -35,6 +35,7 @@ data/
 
 # Video generation temporary artifacts & media files
 demo_artifacts/
+frontend/public/demo_walkthrough.mp4
 *.aiff
 *.raw
 concat*.txt
