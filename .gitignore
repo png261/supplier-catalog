@@ -35,7 +35,6 @@ data/
 
 # Video generation temporary artifacts & media files
 demo_artifacts/
-demo_artifacts_vi/
 *.aiff
 *.raw
 concat*.txt
