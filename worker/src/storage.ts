@@ -890,7 +890,11 @@ export class D1Storage {
     for (const [sku, base] of baselineMap.entries()) {
       const live = liveMap.get(sku);
       if (live) {
-        const effectiveStatus = base.status;
+        let effectiveStatus = base.status;
+        if (live.status === 'WITHDRAWN' && base.status === 'ACTIVE') {
+          // Invariant C (Permanent Tombstone): Withdrawn products cannot be resurrected
+          effectiveStatus = 'WITHDRAWN';
+        }
         const effectiveTimestamp = base.supplier_timestamp || nowIso;
 
         const nameChanged = live.name !== base.name;

@@ -367,8 +367,8 @@ func TestE2E_SyncJobVersioningDiffAndRollback(t *testing.T) {
 	if bySKU["SKU-V1"].Price != 50.0 || bySKU["SKU-V1"].Name != "Desk Lamp V1" {
 		t.Errorf("expected SKU-V1 reverted to 50.0 / Desk Lamp V1, got %+v", bySKU["SKU-V1"])
 	}
-	if bySKU["SKU-V2"].Status != domain.StatusActive {
-		t.Errorf("expected SKU-V2 restored to v1 baseline status ACTIVE, got %s", bySKU["SKU-V2"].Status)
+	if bySKU["SKU-V2"].Status != domain.StatusWithdrawn {
+		t.Errorf("expected SKU-V2 tombstone preserved as WITHDRAWN, got %s", bySKU["SKU-V2"].Status)
 	}
 	if _, exists := bySKU["SKU-V3"]; exists {
 		t.Errorf("expected post-baseline SKU-V3 to be removed from live catalog after rollback, got %+v", bySKU["SKU-V3"])
