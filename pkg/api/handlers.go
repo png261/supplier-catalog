@@ -1533,7 +1533,7 @@ func (h *Handler) handleGetVersionDiff(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrVersionNotFound) {
 			if job, jobErr := tenant.GetStorage().GetJob(r.Context(), versionID); jobErr == nil && job != nil {
-				deltas := h.reconstructJobDeltas(r.Context(), tenant.GetStorage(), job)
+				deltas := coalesceVersionDeltas(h.reconstructJobDeltas(r.Context(), tenant.GetStorage(), job))
 				h.writeJSON(w, http.StatusOK, deltas)
 				return
 			}
@@ -1554,11 +1554,65 @@ func (h *Handler) handleGetVersionDiff(w http.ResponseWriter, r *http.Request) {
 			deltas = h.reconstructJobDeltas(r.Context(), tenant.GetStorage(), job)
 		}
 	}
-	if deltas == nil {
-		deltas = []domain.ItemDelta{}
-	}
+	deltas = coalesceVersionDeltas(deltas)
 
 	h.writeJSON(w, http.StatusOK, deltas)
+}
+
+// coalesceVersionDeltas squashes multiple intra-batch deltas for the same SKU within a single version
+// so that a SKU created in Batch 0 and updated in Batch 2 of the same version is reported as ADDED
+// relative to the pre-version catalog state.
+func coalesceVersionDeltas(deltas []domain.ItemDelta) []domain.ItemDelta {
+	if len(deltas) == 0 {
+		return []domain.ItemDelta{}
+	}
+	order := make([]string, 0, len(deltas))
+	firstBySKU := make(map[string]domain.ItemDelta, len(deltas))
+	lastBySKU := make(map[string]domain.ItemDelta, len(deltas))
+	for _, d := range deltas {
+		if _, ok := firstBySKU[d.SKU]; !ok {
+			order = append(order, d.SKU)
+			firstBySKU[d.SKU] = d
+		}
+		lastBySKU[d.SKU] = d
+	}
+	result := make([]domain.ItemDelta, 0, len(order))
+	for _, sku := range order {
+		first := firstBySKU[sku]
+		last := lastBySKU[sku]
+		if first.Action == domain.DeltaActionAdded {
+			result = append(result, domain.ItemDelta{
+				DeltaID:      first.DeltaID,
+				VersionID:    first.VersionID,
+				SKU:          sku,
+				Action:       domain.DeltaActionAdded,
+				OldName:      nil,
+				NewName:      last.NewName,
+				OldPrice:     nil,
+				NewPrice:     last.NewPrice,
+				OldStatus:    nil,
+				NewStatus:    first.NewStatus,
+				OldTimestamp: nil,
+				NewTimestamp: last.NewTimestamp,
+			})
+		} else {
+			result = append(result, domain.ItemDelta{
+				DeltaID:      last.DeltaID,
+				VersionID:    last.VersionID,
+				SKU:          sku,
+				Action:       last.Action,
+				OldName:      first.OldName,
+				NewName:      last.NewName,
+				OldPrice:     first.OldPrice,
+				NewPrice:     last.NewPrice,
+				OldStatus:    first.OldStatus,
+				NewStatus:    last.NewStatus,
+				OldTimestamp: first.OldTimestamp,
+				NewTimestamp: last.NewTimestamp,
+			})
+		}
+	}
+	return result
 }
 
 // @Summary Rollback catalog to target version (Git-revert)
@@ -1816,10 +1870,12 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Load current live products for dry-run comparison
+	// Load current live products for dry-run comparison against pre-update baseline
 	liveList, _, _ := tenant.GetStorage().ListProducts(ctx, "", "", 100000, 0)
+	baselineState := make(map[string]domain.Product, len(liveList))
 	simState := make(map[string]domain.Product, len(liveList))
 	for _, p := range liveList {
+		baselineState[p.SKU] = p
 		simState[p.SKU] = p
 	}
 
@@ -1830,7 +1886,9 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var summary domain.ChangeSummary
-	changes := make([]UpdatePreviewItem, 0, cfg.TotalBatches*cfg.BatchSize)
+	dlqChanges := make([]UpdatePreviewItem, 0, 64)
+	touchedOrder := make([]string, 0, cfg.TotalBatches*cfg.BatchSize)
+	touchedSet := make(map[string]bool, cfg.TotalBatches*cfg.BatchSize)
 	stream := gen.StreamBatches(ctx, "preview")
 
 	for batch := range stream {
@@ -1838,7 +1896,7 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 			sku := strings.TrimSpace(rec.SKU)
 			if sku == "" {
 				summary.DeadLetter++
-				changes = append(changes, UpdatePreviewItem{
+				dlqChanges = append(dlqChanges, UpdatePreviewItem{
 					SKU:          "(EMPTY SKU)",
 					Action:       "DEAD_LETTER",
 					NewName:      rec.Name,
@@ -1851,7 +1909,7 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 			}
 			if rec.Price < 0 || math.IsNaN(rec.Price) || math.IsInf(rec.Price, 0) {
 				summary.DeadLetter++
-				changes = append(changes, UpdatePreviewItem{
+				dlqChanges = append(dlqChanges, UpdatePreviewItem{
 					SKU:          sku,
 					Action:       "DEAD_LETTER",
 					NewName:      rec.Name,
@@ -1864,7 +1922,7 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 			}
 			if rec.Status != domain.StatusActive && rec.Status != domain.StatusWithdrawn {
 				summary.DeadLetter++
-				changes = append(changes, UpdatePreviewItem{
+				dlqChanges = append(dlqChanges, UpdatePreviewItem{
 					SKU:          sku,
 					Action:       "DEAD_LETTER",
 					NewName:      rec.Name,
@@ -1877,7 +1935,7 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 			}
 			if rec.Timestamp.IsZero() {
 				summary.DeadLetter++
-				changes = append(changes, UpdatePreviewItem{
+				dlqChanges = append(dlqChanges, UpdatePreviewItem{
 					SKU:       sku,
 					Action:    "DEAD_LETTER",
 					NewName:   rec.Name,
@@ -1890,7 +1948,6 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 
 			existing, exists := simState[sku]
 			if !exists {
-				summary.Added++
 				newProd := domain.Product{
 					SKU:               sku,
 					Name:              rec.Name,
@@ -1900,14 +1957,10 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 					UpdatedAt:         rec.Timestamp,
 				}
 				simState[sku] = newProd
-				changes = append(changes, UpdatePreviewItem{
-					SKU:          sku,
-					Action:       string(domain.DeltaActionAdded),
-					NewName:      newProd.Name,
-					NewPrice:     newProd.Price,
-					NewStatus:    newProd.Status,
-					NewTimestamp: newProd.SupplierTimestamp,
-				})
+				if !touchedSet[sku] {
+					touchedSet[sku] = true
+					touchedOrder = append(touchedOrder, sku)
+				}
 				continue
 			}
 
@@ -1925,19 +1978,6 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			oldName := existing.Name
-			oldPrice := existing.Price
-			oldStatus := existing.Status
-			oldTS := existing.SupplierTimestamp
-
-			action := domain.DeltaActionUpdated
-			if existing.Status != domain.StatusWithdrawn && rec.Status == domain.StatusWithdrawn {
-				summary.Withdrawn++
-				action = domain.DeltaActionWithdrawn
-			} else {
-				summary.Updated++
-			}
-
 			updatedProd := domain.Product{
 				SKU:               sku,
 				Name:              rec.Name,
@@ -1947,20 +1987,63 @@ func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
 				UpdatedAt:         rec.Timestamp,
 			}
 			simState[sku] = updatedProd
-			changes = append(changes, UpdatePreviewItem{
-				SKU:          sku,
-				Action:       string(action),
-				OldName:      &oldName,
-				NewName:      updatedProd.Name,
-				OldPrice:     &oldPrice,
-				NewPrice:     updatedProd.Price,
-				OldStatus:    &oldStatus,
-				NewStatus:    updatedProd.Status,
-				OldTimestamp: &oldTS,
-				NewTimestamp: updatedProd.SupplierTimestamp,
-			})
+			if !touchedSet[sku] {
+				touchedSet[sku] = true
+				touchedOrder = append(touchedOrder, sku)
+			}
 		}
 	}
+
+	changes := make([]UpdatePreviewItem, 0, len(touchedOrder)+len(dlqChanges))
+	for _, sku := range touchedOrder {
+		finalProd := simState[sku]
+		baseProd, existedInCatalog := baselineState[sku]
+		if !existedInCatalog {
+			summary.Added++
+			changes = append(changes, UpdatePreviewItem{
+				SKU:          sku,
+				Action:       string(domain.DeltaActionAdded),
+				NewName:      finalProd.Name,
+				NewPrice:     finalProd.Price,
+				NewStatus:    domain.StatusActive,
+				NewTimestamp: finalProd.SupplierTimestamp,
+			})
+			continue
+		}
+
+		nameChanged := finalProd.Name != baseProd.Name
+		priceChanged := math.Abs(finalProd.Price-baseProd.Price) > 1e-6
+		statusChanged := finalProd.Status != baseProd.Status
+		if !nameChanged && !priceChanged && !statusChanged {
+			summary.Skipped++
+			continue
+		}
+
+		oldName := baseProd.Name
+		oldPrice := baseProd.Price
+		oldStatus := baseProd.Status
+		oldTS := baseProd.SupplierTimestamp
+		action := domain.DeltaActionUpdated
+		if baseProd.Status != domain.StatusWithdrawn && finalProd.Status == domain.StatusWithdrawn {
+			summary.Withdrawn++
+			action = domain.DeltaActionWithdrawn
+		} else {
+			summary.Updated++
+		}
+		changes = append(changes, UpdatePreviewItem{
+			SKU:          sku,
+			Action:       string(action),
+			OldName:      &oldName,
+			NewName:      finalProd.Name,
+			OldPrice:     &oldPrice,
+			NewPrice:     finalProd.Price,
+			OldStatus:    &oldStatus,
+			NewStatus:    finalProd.Status,
+			OldTimestamp: &oldTS,
+			NewTimestamp: finalProd.SupplierTimestamp,
+		})
+	}
+	changes = append(changes, dlqChanges...)
 
 	h.writeJSON(w, http.StatusOK, map[string]any{
 		"version": domain.CatalogVersion{

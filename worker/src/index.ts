@@ -575,12 +575,16 @@ app.post('/api/jobs/preview', async (c) => {
   });
 
   const liveRes = await storage.listProducts(shopId, '', '', 10000, 0);
+  const baselineMap = new Map<string, Product>();
   const simMap = new Map<string, Product>();
   for (const p of liveRes.products) {
+    baselineMap.set(p.sku, { ...p });
     simMap.set(p.sku, { ...p });
   }
 
-  const changes: any[] = [];
+  const dlqChanges: any[] = [];
+  const touchedOrder: string[] = [];
+  const touchedSet = new Set<string>();
   const summary: ChangeSummary = { added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 };
 
   for (let b = 0; b < totalBatches; b++) {
@@ -597,7 +601,7 @@ app.post('/api/jobs/preview', async (c) => {
         isNaN(tsMs)
       ) {
         summary.dead_letter++;
-        changes.push({
+        dlqChanges.push({
           sku: sku || '(EMPTY_SKU)',
           action: 'DEAD_LETTER',
           operation: 'DEAD_LETTER',
@@ -619,26 +623,9 @@ app.post('/api/jobs/preview', async (c) => {
           supplier_timestamp: rec.timestamp,
           updated_at: rec.timestamp,
         });
-        if (rec.status === 'WITHDRAWN') {
-          summary.withdrawn++;
-          changes.push({
-            sku,
-            action: 'WITHDRAWN',
-            operation: 'WITHDRAWN',
-            new_name: rec.name,
-            new_price: rec.price,
-            new_status: 'WITHDRAWN',
-          });
-        } else {
-          summary.added++;
-          changes.push({
-            sku,
-            action: 'ADDED',
-            operation: 'ADDED',
-            new_name: rec.name,
-            new_price: rec.price,
-            new_status: 'ACTIVE',
-          });
+        if (!touchedSet.has(sku)) {
+          touchedSet.add(sku);
+          touchedOrder.push(sku);
         }
         continue;
       }
@@ -662,44 +649,74 @@ app.post('/api/jobs/preview', async (c) => {
         continue;
       }
 
-      const oldName = existing.name;
-      const oldPrice = existing.price;
-      const oldStatus = existing.status;
-
       existing.name = rec.name;
       existing.price = rec.price;
       existing.status = rec.status;
       existing.supplier_timestamp = rec.timestamp;
-
-      if (rec.status === 'WITHDRAWN' && oldStatus !== 'WITHDRAWN') {
-        summary.withdrawn++;
-        changes.push({
-          sku,
-          action: 'WITHDRAWN',
-          operation: 'WITHDRAWN',
-          old_name: oldName,
-          new_name: rec.name,
-          old_price: oldPrice,
-          new_price: rec.price,
-          old_status: oldStatus,
-          new_status: 'WITHDRAWN',
-        });
-      } else {
-        summary.updated++;
-        changes.push({
-          sku,
-          action: 'UPDATED',
-          operation: 'UPDATED',
-          old_name: oldName,
-          new_name: rec.name,
-          old_price: oldPrice,
-          new_price: rec.price,
-          old_status: oldStatus,
-          new_status: rec.status,
-        });
+      if (!touchedSet.has(sku)) {
+        touchedSet.add(sku);
+        touchedOrder.push(sku);
       }
     }
   }
+
+  const changes: any[] = [];
+  for (const sku of touchedOrder) {
+    const finalProd = simMap.get(sku)!;
+    const baseProd = baselineMap.get(sku);
+    if (!baseProd) {
+      summary.added++;
+      changes.push({
+        sku,
+        action: 'ADDED',
+        operation: 'ADDED',
+        old_name: null,
+        new_name: finalProd.name,
+        old_price: null,
+        new_price: finalProd.price,
+        old_status: null,
+        new_status: 'ACTIVE',
+      });
+      continue;
+    }
+
+    const nameChanged = finalProd.name !== baseProd.name;
+    const priceChanged = Math.abs(finalProd.price - baseProd.price) > 0.0001;
+    const statusChanged = finalProd.status !== baseProd.status;
+    if (!nameChanged && !priceChanged && !statusChanged) {
+      summary.skipped++;
+      continue;
+    }
+
+    if (finalProd.status === 'WITHDRAWN' && baseProd.status !== 'WITHDRAWN') {
+      summary.withdrawn++;
+      changes.push({
+        sku,
+        action: 'WITHDRAWN',
+        operation: 'WITHDRAWN',
+        old_name: baseProd.name,
+        new_name: finalProd.name,
+        old_price: baseProd.price,
+        new_price: finalProd.price,
+        old_status: baseProd.status,
+        new_status: 'WITHDRAWN',
+      });
+    } else {
+      summary.updated++;
+      changes.push({
+        sku,
+        action: 'UPDATED',
+        operation: 'UPDATED',
+        old_name: baseProd.name,
+        new_name: finalProd.name,
+        old_price: baseProd.price,
+        new_price: finalProd.price,
+        old_status: baseProd.status,
+        new_status: finalProd.status,
+      });
+    }
+  }
+  changes.push(...dlqChanges);
 
   return c.json({
     version: {
@@ -867,19 +884,60 @@ app.get('/api/versions/:id/diff', async (c) => {
   }
 
   const deltas = await storage.getVersionDeltas(shopId, versionId);
-  const changes = deltas.map((d) => ({
-    sku: d.sku,
-    action: d.action,
-    old_name: d.old_name,
-    new_name: d.new_name,
-    old_price: d.old_price,
-    new_price: d.new_price,
-    old_status: d.old_status,
-    new_status: d.new_status,
-  }));
+  const order: string[] = [];
+  const firstBySku = new Map<string, any>();
+  const lastBySku = new Map<string, any>();
+  for (const d of deltas) {
+    if (!firstBySku.has(d.sku)) {
+      order.push(d.sku);
+      firstBySku.set(d.sku, d);
+    }
+    lastBySku.set(d.sku, d);
+  }
+
+  let itemsAdded = 0;
+  let itemsUpdated = 0;
+  let itemsWithdrawn = 0;
+  const changes = order.map((sku) => {
+    const first = firstBySku.get(sku)!;
+    const last = lastBySku.get(sku)!;
+    if (first.action === 'ADDED') {
+      itemsAdded++;
+      return {
+        sku,
+        action: 'ADDED',
+        old_name: null,
+        new_name: last.new_name,
+        old_price: null,
+        new_price: last.new_price,
+        old_status: null,
+        new_status: first.new_status || 'ACTIVE',
+      };
+    }
+    if (last.action === 'WITHDRAWN') {
+      itemsWithdrawn++;
+    } else {
+      itemsUpdated++;
+    }
+    return {
+      sku,
+      action: last.action,
+      old_name: first.old_name,
+      new_name: last.new_name,
+      old_price: first.old_price,
+      new_price: last.new_price,
+      old_status: first.old_status,
+      new_status: last.new_status,
+    };
+  });
 
   return c.json({
-    version,
+    version: {
+      ...version,
+      items_added: changes.length > 0 ? itemsAdded : version.items_added,
+      items_updated: changes.length > 0 ? itemsUpdated : version.items_updated,
+      items_withdrawn: changes.length > 0 ? itemsWithdrawn : version.items_withdrawn,
+    },
     changes,
   });
 });
