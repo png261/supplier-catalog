@@ -67,6 +67,33 @@ export interface VersionDiffResponse {
   changes: VersionDiffItem[];
 }
 
+export interface ProductHistoryEntry {
+  delta_id?: number;
+  version_id: string;
+  version_number: number;
+  version_type: string;
+  description: string;
+  author: string;
+  sku: string;
+  action: 'ADDED' | 'UPDATED' | 'WITHDRAWN';
+  old_name?: string | null;
+  new_name: string;
+  old_price?: number | null;
+  new_price: number;
+  old_status?: 'ACTIVE' | 'WITHDRAWN' | null;
+  new_status: 'ACTIVE' | 'WITHDRAWN';
+  old_timestamp?: string | null;
+  new_timestamp: string;
+  created_at: string;
+}
+
+export interface ProductHistoryResponse {
+  sku: string;
+  product: CatalogProduct | null;
+  history: ProductHistoryEntry[];
+  total: number;
+}
+
 export interface DeadLetterIssue {
   issue_id: string;
   job_id: string;

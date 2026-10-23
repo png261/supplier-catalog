@@ -519,6 +519,212 @@ app.get('/api/products', async (c) => {
   });
 });
 
+app.get('/api/products/:sku/history', async (c) => {
+  const shopId = getTenantShopId(c);
+  const sku = (c.req.param('sku') || '').trim();
+  if (!sku) {
+    return c.json({ error: 'sku is required', code: 'INVALID_REQUEST' }, 400);
+  }
+  const storage = new D1Storage(c.env.DB);
+  const product = await storage.getProduct(shopId, sku);
+  const history = await storage.getProductHistory(shopId, sku);
+  return c.json({
+    sku,
+    product,
+    history,
+    total: history.length,
+  });
+});
+
+app.post('/api/jobs/preview', async (c) => {
+  const shopId = getTenantShopId(c);
+  const storage = new D1Storage(c.env.DB);
+
+  let body: any = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    body = {};
+  }
+
+  const totalBatches = body.total_batches && body.total_batches > 0 ? body.total_batches : 10;
+  const batchSize = body.batch_size && body.batch_size > 0 ? body.batch_size : 100;
+  let baseTime = body.base_time;
+  const maxTs = await storage.getMaxSupplierTimestamp(shopId);
+  if (maxTs) {
+    const maxDate = new Date(maxTs).getTime();
+    const reqDate = baseTime ? new Date(baseTime).getTime() : 0;
+    if (!baseTime || isNaN(reqDate) || reqDate <= maxDate) {
+      baseTime = new Date(maxDate + 86400000).toISOString();
+    }
+  } else if (!baseTime) {
+    baseTime = '2026-01-01T00:00:00.000Z';
+  }
+
+  const generator = new BatchGenerator({
+    seed: body.seed ?? 42,
+    total_batches: totalBatches,
+    batch_size: batchSize,
+    update_ratio: body.update_ratio ?? 0.20,
+    duplicate_ratio: body.duplicate_ratio ?? 0.05,
+    out_of_order_ratio: body.out_of_order_ratio ?? 0.10,
+    withdrawn_ratio: body.withdrawn_ratio ?? 0.05,
+    invalid_ratio: body.invalid_ratio ?? 0.05,
+    reservoir_capacity: 1000,
+    base_time: baseTime,
+  });
+
+  const liveRes = await storage.listProducts(shopId, '', '', 10000, 0);
+  const simMap = new Map<string, Product>();
+  for (const p of liveRes.products) {
+    simMap.set(p.sku, { ...p });
+  }
+
+  const changes: any[] = [];
+  const summary: ChangeSummary = { added: 0, updated: 0, withdrawn: 0, skipped: 0, dead_letter: 0 };
+
+  for (let b = 0; b < totalBatches; b++) {
+    const batch = generator.generateBatch('preview', b);
+    for (const rec of batch.records) {
+      const sku = (rec.sku || '').trim();
+      const tsMs = rec.timestamp ? new Date(rec.timestamp).getTime() : NaN;
+      if (
+        !sku ||
+        isNaN(rec.price) ||
+        rec.price < 0 ||
+        !isFinite(rec.price) ||
+        (rec.status !== 'ACTIVE' && rec.status !== 'WITHDRAWN') ||
+        isNaN(tsMs)
+      ) {
+        summary.dead_letter++;
+        changes.push({
+          sku: sku || '(EMPTY_SKU)',
+          action: 'DEAD_LETTER',
+          operation: 'DEAD_LETTER',
+          new_name: rec.name || 'Quarantined Payload',
+          new_price: isNaN(rec.price) ? 0 : rec.price,
+          new_status: rec.status || 'WITHDRAWN',
+          reason: !sku ? 'EMPTY_SKU' : rec.price < 0 ? 'NEGATIVE_PRICE' : 'INVALID_SCHEMA',
+        });
+        continue;
+      }
+
+      const existing = simMap.get(sku);
+      if (!existing) {
+        simMap.set(sku, {
+          sku,
+          name: rec.name,
+          price: rec.price,
+          status: rec.status,
+          supplier_timestamp: rec.timestamp,
+          updated_at: rec.timestamp,
+        });
+        if (rec.status === 'WITHDRAWN') {
+          summary.withdrawn++;
+          changes.push({
+            sku,
+            action: 'WITHDRAWN',
+            operation: 'WITHDRAWN',
+            new_name: rec.name,
+            new_price: rec.price,
+            new_status: 'WITHDRAWN',
+          });
+        } else {
+          summary.added++;
+          changes.push({
+            sku,
+            action: 'ADDED',
+            operation: 'ADDED',
+            new_name: rec.name,
+            new_price: rec.price,
+            new_status: 'ACTIVE',
+          });
+        }
+        continue;
+      }
+
+      const existMs = new Date(existing.supplier_timestamp).getTime();
+      if (tsMs <= existMs) {
+        summary.skipped++;
+        continue;
+      }
+      if (existing.status === 'WITHDRAWN' && rec.status === 'ACTIVE') {
+        summary.skipped++;
+        continue;
+      }
+
+      const nameChanged = existing.name !== rec.name;
+      const priceChanged = Math.abs(existing.price - rec.price) > 0.0001;
+      const statusChanged = existing.status !== rec.status;
+      if (!nameChanged && !priceChanged && !statusChanged) {
+        existing.supplier_timestamp = rec.timestamp;
+        summary.skipped++;
+        continue;
+      }
+
+      const oldName = existing.name;
+      const oldPrice = existing.price;
+      const oldStatus = existing.status;
+
+      existing.name = rec.name;
+      existing.price = rec.price;
+      existing.status = rec.status;
+      existing.supplier_timestamp = rec.timestamp;
+
+      if (rec.status === 'WITHDRAWN' && oldStatus !== 'WITHDRAWN') {
+        summary.withdrawn++;
+        changes.push({
+          sku,
+          action: 'WITHDRAWN',
+          operation: 'WITHDRAWN',
+          old_name: oldName,
+          new_name: rec.name,
+          old_price: oldPrice,
+          new_price: rec.price,
+          old_status: oldStatus,
+          new_status: 'WITHDRAWN',
+        });
+      } else {
+        summary.updated++;
+        changes.push({
+          sku,
+          action: 'UPDATED',
+          operation: 'UPDATED',
+          old_name: oldName,
+          new_name: rec.name,
+          old_price: oldPrice,
+          new_price: rec.price,
+          old_status: oldStatus,
+          new_status: rec.status,
+        });
+      }
+    }
+  }
+
+  return c.json({
+    version: {
+      shop_id: shopId,
+      version_id: 'preview',
+      version_number: 0,
+      description: body.description || 'Simulated Workload Diff Preview',
+      author: 'preview-engine',
+      type: 'SYNC',
+      items_added: summary.added,
+      items_updated: summary.updated,
+      items_withdrawn: summary.withdrawn,
+      items_skipped: summary.skipped,
+      items_dead_letter: summary.dead_letter,
+      total_items_affected: summary.added + summary.updated + summary.withdrawn,
+      metadata: '{}',
+      created_at: new Date().toISOString(),
+    },
+    summary,
+    changes,
+    deltas: changes,
+    total_changes: changes.length,
+  });
+});
+
 // --- Dead Letter Endpoints ---
 
 app.get('/api/dead-letter', async (c) => {

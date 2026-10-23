@@ -1732,3 +1732,167 @@ func (s *SQLiteStorage) RollbackVersion(ctx context.Context, targetVersionID str
 
 	return rollbackVer, deltas, nil
 }
+
+// ProductHistoryEntry represents a single chronological modification event for a SKU.
+type ProductHistoryEntry struct {
+	DeltaID            int64                 `json:"delta_id"`
+	VersionID          string                `json:"version_id"`
+	VersionNumber      int                   `json:"version_number"`
+	VersionType        string                `json:"version_type"`
+	VersionDescription string                `json:"version_description"`
+	Author             string                `json:"author"`
+	CreatedAt          time.Time             `json:"created_at"`
+	SKU                string                `json:"sku"`
+	Action             domain.DeltaAction    `json:"action"`
+	OldName            *string               `json:"old_name"`
+	NewName            string                `json:"new_name"`
+	OldPrice           *float64              `json:"old_price"`
+	NewPrice           float64               `json:"new_price"`
+	OldStatus          *domain.ProductStatus `json:"old_status"`
+	NewStatus          domain.ProductStatus  `json:"new_status"`
+	OldTimestamp       *time.Time            `json:"old_timestamp,omitempty"`
+	NewTimestamp       time.Time             `json:"new_timestamp"`
+}
+
+// GetProductHistory returns the full chronological modification audit log for a specific SKU.
+func (s *SQLiteStorage) GetProductHistory(ctx context.Context, sku string) ([]ProductHistoryEntry, error) {
+	sku = strings.TrimSpace(sku)
+	if sku == "" {
+		return nil, nil
+	}
+
+	query := `
+	SELECT
+		d.delta_id,
+		d.version_id,
+		COALESCE(v.version_number, 1),
+		COALESCE(v.type, 'SYNC'),
+		COALESCE(v.description, ''),
+		COALESCE(v.author, 'supplier-sync'),
+		COALESCE(v.created_at, d.new_timestamp),
+		d.sku,
+		d.action,
+		d.old_name,
+		d.new_name,
+		d.old_price,
+		d.new_price,
+		d.old_status,
+		d.new_status,
+		d.old_timestamp,
+		d.new_timestamp
+	FROM catalog_version_deltas d
+	LEFT JOIN catalog_versions v ON d.version_id = v.version_id
+	WHERE d.sku = ?
+	ORDER BY COALESCE(v.version_number, 1) DESC, d.delta_id DESC;
+	`
+	rows, err := s.db.QueryContext(ctx, query, sku)
+	if err != nil {
+		return nil, fmt.Errorf("failed querying product history for %s: %w", sku, err)
+	}
+	defer rows.Close()
+
+	entries := make([]ProductHistoryEntry, 0)
+	hasAdded := false
+	for rows.Next() {
+		var e ProductHistoryEntry
+		var createdStr, actionStr, newStatusStr, newTimeStr string
+		var oldNameStr, oldStatusStr, oldTimeStr sql.NullString
+		var oldPriceNum sql.NullFloat64
+
+		if err := rows.Scan(
+			&e.DeltaID,
+			&e.VersionID,
+			&e.VersionNumber,
+			&e.VersionType,
+			&e.VersionDescription,
+			&e.Author,
+			&createdStr,
+			&e.SKU,
+			&actionStr,
+			&oldNameStr,
+			&e.NewName,
+			&oldPriceNum,
+			&e.NewPrice,
+			&oldStatusStr,
+			&newStatusStr,
+			&oldTimeStr,
+			&newTimeStr,
+		); err != nil {
+			return nil, fmt.Errorf("failed scanning product history row: %w", err)
+		}
+
+		e.CreatedAt, _ = ParseTime(createdStr)
+		e.Action = domain.DeltaAction(actionStr)
+		if e.Action == domain.DeltaActionAdded {
+			hasAdded = true
+		}
+		e.NewStatus = domain.ProductStatus(newStatusStr)
+		e.NewTimestamp, _ = ParseTime(newTimeStr)
+
+		if oldNameStr.Valid {
+			val := oldNameStr.String
+			e.OldName = &val
+		}
+		if oldPriceNum.Valid {
+			val := oldPriceNum.Float64
+			e.OldPrice = &val
+		}
+		if oldStatusStr.Valid {
+			val := domain.ProductStatus(oldStatusStr.String)
+			e.OldStatus = &val
+		}
+		if oldTimeStr.Valid && oldTimeStr.String != "" {
+			if t, err := ParseTime(oldTimeStr.String); err == nil {
+				e.OldTimestamp = &t
+			}
+		}
+
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating product history rows: %w", err)
+	}
+
+	// If product exists in products table but has no ADDED delta recorded (e.g., created before delta tracking),
+	// append a synthetic initial import entry so the full history is always visible.
+	if !hasAdded {
+		prod, err := s.GetProduct(ctx, sku)
+		if err == nil && prod != nil {
+			initName := prod.Name
+			initPrice := prod.Price
+			initTime := prod.SupplierTimestamp
+			if len(entries) > 0 {
+				oldest := entries[len(entries)-1]
+				if oldest.OldName != nil {
+					initName = *oldest.OldName
+				}
+				if oldest.OldPrice != nil {
+					initPrice = *oldest.OldPrice
+				}
+				if oldest.OldTimestamp != nil {
+					initTime = *oldest.OldTimestamp
+				}
+			}
+			entries = append(entries, ProductHistoryEntry{
+				DeltaID:            0,
+				VersionID:          "baseline-init",
+				VersionNumber:      1,
+				VersionType:        "SYNC",
+				VersionDescription: "Initial Baseline Catalog Import",
+				Author:             "supplier-sync",
+				CreatedAt:          initTime,
+				SKU:                sku,
+				Action:             domain.DeltaActionAdded,
+				OldName:            nil,
+				NewName:            initName,
+				OldPrice:           nil,
+				NewPrice:           initPrice,
+				OldStatus:          nil,
+				NewStatus:          domain.StatusActive,
+				NewTimestamp:       initTime,
+			})
+		}
+	}
+
+	return entries, nil
+}

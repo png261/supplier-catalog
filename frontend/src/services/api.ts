@@ -6,6 +6,7 @@ import {
   TimeSeriesPoint,
   CatalogVersion,
   VersionDiffResponse,
+  ProductHistoryResponse,
 } from '../types';
 
 const SHOP_STORAGE_KEY = 'catalog_sync_active_shop_id';
@@ -318,5 +319,29 @@ export async function rollbackVersion(versionId: string, operator = 'staff'): Pr
   return {
     status: data?.status || 'success',
     version: normalizeCatalogVersion(data?.version),
+  };
+}
+
+export async function fetchProductHistory(sku: string): Promise<ProductHistoryResponse> {
+  const res = await shopFetch(`/api/products/${encodeURIComponent(sku)}/history`);
+  const data = await handleResponse<any>(res, 'Failed to fetch product edit history');
+  return {
+    sku: data?.sku || sku,
+    product: data?.product || null,
+    history: Array.isArray(data?.history) ? data.history : [],
+    total: data?.total ?? (Array.isArray(data?.history) ? data.history.length : 0),
+  };
+}
+
+export async function previewUpdateDiff(payload: any): Promise<VersionDiffResponse> {
+  const res = await shopFetch('/api/jobs/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await handleResponse<any>(res, 'Failed to preview update diff');
+  return {
+    version: data?.version ? normalizeCatalogVersion(data.version) : (null as any),
+    changes: Array.isArray(data?.changes) ? data.changes : Array.isArray(data?.deltas) ? data.deltas : [],
   };
 }
