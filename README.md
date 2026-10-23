@@ -24,9 +24,11 @@ A fault-tolerant supplier catalog synchronization engine built in **pure Go (`CG
 
 ### Video Walkthrough (`docs/demo/demo_walkthrough.mp4`)
 
+[![Watch Full HD Demo Video (1080p with OpenMOSS/MOSS-TTS Voiceover & BGM)](./docs/demo/demo_preview.gif)](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)
+
 <video src="./docs/demo/demo_walkthrough.mp4" controls width="100%"></video>
 
-> **Direct Video Links**: **[Watch on Cloudflare Pages](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** · **[Open Local File (`docs/demo/demo_walkthrough.mp4`)](./docs/demo/demo_walkthrough.mp4)**
+> **Direct Video Links (1080p + Voiceover & BGM)**: **[Watch on Cloudflare Pages](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** · **[Open Local File (`docs/demo/demo_walkthrough.mp4`)](./docs/demo/demo_walkthrough.mp4)**
 
 ---
 
