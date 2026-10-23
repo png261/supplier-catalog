@@ -55,6 +55,11 @@ interface HistoryViewProps {
   onRollback?: (versionId: string, operator?: string) => Promise<void>;
   onFetchDiff?: (versionId: string) => Promise<VersionDiffItem[]>;
   isRollingBack?: boolean;
+  currentBatch?: number;
+  totalBatches?: number;
+  throughput?: number;
+  eta?: string;
+  elapsedTime?: string;
 }
 
 interface UnifiedHistoryEntry {
@@ -90,7 +95,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   onRollback,
   onFetchDiff,
   isRollingBack = false,
+  currentBatch = 0,
+  totalBatches = 10,
+  throughput = 0,
+  eta = '—',
+  elapsedTime = '00:00',
 }) => {
+  const revertPercent =
+    totalBatches > 0 ? Math.min(100, Math.round((currentBatch / totalBatches) * 100)) : 0;
   const [selectedVersion, setSelectedVersion] = useState<CatalogVersion | null>(null);
   const [diffItems, setDiffItems] = useState<VersionDiffItem[]>([]);
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
@@ -351,6 +363,31 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             <span className="font-semibold text-slate-800">Atomic Checkpoints & Tombstone Guarantee:</span> Mid-stream crashes resume from the exact uncommitted batch without duplicating prior work. Reverting to an earlier version restores historical prices and names via a forward-moving <span className="font-mono font-semibold">ROLLBACK</span> milestone while <span className="font-medium text-slate-900 underline underline-offset-2">never resurrecting</span> withdrawn items.
           </div>
         </div>
+
+        {/* Live Revert Progress Bar */}
+        {isRollingBack && (
+          <div className="mt-3 p-3.5 rounded-lg bg-amber-50/90 border border-amber-300 space-y-2">
+            <div className="flex items-center justify-between text-xs font-mono text-amber-950">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-700" />
+                <span className="font-semibold">
+                  Reverting Catalog Batch {currentBatch}/{totalBatches} ({revertPercent}%) — Restoring Pre-Image State
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-[11px] text-amber-800">
+                {throughput > 0 && <span className="font-semibold">{throughput} items/s</span>}
+                {eta && eta !== '—' && <span>ETA {eta}</span>}
+                <span>Elapsed {elapsedTime}</span>
+              </div>
+            </div>
+            <div className="w-full bg-amber-200/70 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-amber-600 h-full rounded-full transition-all duration-200"
+                style={{ width: `${revertPercent}%` }}
+              />
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Interrupted Sessions Alert Banner */}
@@ -409,26 +446,47 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                 </TableRow>
               ) : (
                 unifiedEntries.map((entry) => {
-                  const ver = entry.version;
+                  const ver: CatalogVersion = entry.version || {
+                    version_id: entry.id,
+                    version_number: 0,
+                    type: entry.entryType || 'SYNC',
+                    description: entry.description,
+                    author: entry.author,
+                    items_added: entry.added,
+                    items_updated: entry.updated,
+                    items_withdrawn: entry.withdrawn,
+                    items_skipped: entry.skipped,
+                    items_dead_letter: entry.deadLetter,
+                    total_items_affected: entry.added + entry.updated + entry.withdrawn,
+                    created_at: entry.createdAt,
+                  };
                   const job = entry.job;
-                  const isCurrentVersion = !!(ver && latestVersion && ver.version_id === latestVersion.version_id);
-                  const isRevertedVer = entry.entryType === 'ROLLBACK' || !!(ver?.revert_of_version_id || ver?.reverted_version_id);
+                  const isCurrentVersion = !!(
+                    entry.version &&
+                    latestVersion &&
+                    entry.version.version_id === latestVersion.version_id
+                  );
+                  const isRevertedVer =
+                    entry.entryType === 'ROLLBACK' ||
+                    !!(ver?.revert_of_version_id || ver?.reverted_version_id);
                   const revertTarget = ver?.revert_of_version_id || ver?.reverted_version_id;
                   const isInterrupted = entry.status === 'INTERRUPTED' || entry.status === 'FAILED';
 
                   return (
                     <TableRow
                       key={entry.id}
-                      className={`hover:bg-slate-50/70 border-slate-200 text-xs ${
+                      onClick={() => handleOpenDiff(ver)}
+                      className={`hover:bg-slate-50/80 border-slate-200 text-xs cursor-pointer transition-colors ${
                         isCurrentVersion ? 'bg-indigo-50/25' : ''
                       }`}
+                      title="Click to inspect row-level before & after diff"
                     >
                       {/* Version Number & Job ID */}
                       <TableCell className="py-3">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          {ver ? (
+                          {entry.version ? (
                             <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
-                              v{ver.version_number}
+                              v{entry.version.version_number}
                             </span>
                           ) : (
                             <span className="font-mono text-[11px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
@@ -535,7 +593,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       </TableCell>
 
                       {/* Unified Actions: Resume, Diff, Revert */}
-                      <TableCell className="py-3 text-right">
+                      <TableCell className="py-3 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
                           {isInterrupted && job && onResumeJob && (
                             <Button
@@ -560,45 +618,45 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                             </Badge>
                           )}
 
-                          {ver && onFetchDiff && (
+                          {onFetchDiff && (
                             <Button
                               variant="outline"
                               size="sm"
                               onClick={() => handleOpenDiff(ver)}
-                              className="h-7 px-2 text-xs text-slate-700 hover:text-slate-900 border-slate-200 hover:bg-slate-100"
+                              className="h-7 px-2.5 text-xs text-indigo-700 hover:text-indigo-900 border-indigo-200 bg-indigo-50/40 hover:bg-indigo-100/70 font-medium"
                               title="Inspect SKU pre-image & post-image changes"
                             >
                               <Eye className="h-3 w-3 mr-1" />
-                              Diff
+                              View Diff
                             </Button>
                           )}
 
-                          {ver && onRollback && entry.status !== 'RUNNING' && (
+                          {entry.version && onRollback && entry.status !== 'RUNNING' && (
                             !isCurrentVersion ? (
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handlePromptRollback(ver)}
+                                onClick={() => handlePromptRollback(entry.version!)}
                                 disabled={isRollingBack || isSyncing}
                                 className="h-7 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 hover:text-amber-800 font-medium"
-                                title={`Rollback catalog to v${ver.version_number}`}
+                                title={`Rollback catalog to v${entry.version.version_number}`}
                               >
                                 <RotateCcw className="h-3 w-3 mr-1" />
-                                Revert to v{ver.version_number}
+                                Revert to v{entry.version.version_number}
                               </Button>
                             ) : (
                               <>
-                                {ver.version_number >= 1 && revertTarget !== 'v0' && (
+                                {entry.version.version_number >= 1 && revertTarget !== 'v0' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => handlePromptRollback(getPreviousVersion(ver))}
+                                    onClick={() => handlePromptRollback(getPreviousVersion(entry.version!))}
                                     disabled={isRollingBack || isSyncing}
                                     className="h-7 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 hover:text-amber-800 font-medium"
-                                    title={`Undo v${ver.version_number} and revert catalog to v${getPreviousVersion(ver).version_number} (state before this sync)`}
+                                    title={`Undo v${entry.version.version_number} and revert catalog to v${getPreviousVersion(entry.version).version_number} (state before this sync)`}
                                   >
                                     <RotateCcw className="h-3 w-3 mr-1" />
-                                    Revert Before Sync (v{getPreviousVersion(ver).version_number})
+                                    Revert Before Sync (v{getPreviousVersion(entry.version).version_number})
                                   </Button>
                                 )}
                                 <span className="inline-flex items-center text-[11px] font-medium text-emerald-700 px-1.5 py-0.5">
@@ -713,6 +771,26 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                 className="w-full text-xs px-2.5 py-1.5 rounded-md border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
               />
             </div>
+
+            {isRollingBack && (
+              <div className="p-3 rounded-lg bg-amber-50 border border-amber-300 space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] font-mono text-amber-950">
+                  <span className="font-semibold flex items-center gap-1.5">
+                    <RefreshCw className="h-3 w-3 animate-spin text-amber-700" />
+                    Reverting Batch {currentBatch}/{totalBatches} ({revertPercent}%)
+                  </span>
+                  <span className="text-amber-800">
+                    {throughput > 0 ? `${throughput} items/s · ` : ''}Elapsed {elapsedTime}
+                  </span>
+                </div>
+                <div className="w-full bg-amber-200/70 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-amber-600 h-full rounded-full transition-all duration-200"
+                    style={{ width: `${revertPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             {actionError && (
               <div className="p-2.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 text-xs">

@@ -683,6 +683,48 @@ export class D1Storage {
     return res.results || [];
   }
 
+  async getProductHistory(shopId: string, sku: string): Promise<any[]> {
+    const query = `
+      SELECT d.delta_id, d.version_id, COALESCE(v.version_number, 0) as version_number,
+             COALESCE(v.type, 'SYNC') as version_type, COALESCE(v.description, '') as description,
+             COALESCE(v.author, 'supplier-sync') as author, d.sku, d.action,
+             d.old_name, d.new_name, d.old_price, d.new_price,
+             d.old_status, d.new_status, d.old_timestamp, d.new_timestamp,
+             COALESCE(v.created_at, d.new_timestamp) as created_at
+      FROM catalog_version_deltas d
+      LEFT JOIN catalog_versions v ON d.shop_id = v.shop_id AND d.version_id = v.version_id
+      WHERE d.shop_id = ? AND d.sku = ?
+      ORDER BY COALESCE(v.version_number, 0) DESC, d.delta_id DESC;
+    `;
+    const res = await this.db.prepare(query).bind(shopId, sku).all<any>();
+    const entries = res.results || [];
+    if (entries.length === 0) {
+      const prod = await this.getProduct(shopId, sku);
+      if (prod) {
+        entries.push({
+          delta_id: 0,
+          version_id: 'initial',
+          version_number: 1,
+          version_type: 'SYNC',
+          description: 'Initial Catalog Import',
+          author: 'supplier-sync',
+          sku: prod.sku,
+          action: 'ADDED',
+          old_name: null,
+          new_name: prod.name,
+          old_price: null,
+          new_price: prod.price,
+          old_status: null,
+          new_status: prod.status,
+          old_timestamp: null,
+          new_timestamp: prod.supplier_timestamp,
+          created_at: prod.updated_at || prod.supplier_timestamp,
+        });
+      }
+    }
+    return entries;
+  }
+
   async rollbackVersion(
     shopId: string,
     targetVersionId: string,
@@ -880,8 +922,8 @@ export class D1Storage {
       created_at: nowIso,
     };
 
-    // Prepare version row insert
-    dbStatements.push(
+    // Prepare version row insert FIRST so foreign keys in catalog_version_deltas are satisfied across chunks
+    dbStatements.unshift(
       this.db
         .prepare(`
           INSERT INTO catalog_versions (

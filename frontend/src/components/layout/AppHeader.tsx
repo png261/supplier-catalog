@@ -25,6 +25,7 @@ interface AppHeaderProps {
   onResetDatabase: () => Promise<void> | void;
   activeJobId: string | null;
   isRunning?: boolean;
+  isRollingBack?: boolean;
   isResettingDb?: boolean;
   sseConnected?: boolean;
   currentBatch?: number;
@@ -58,6 +59,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onResetDatabase,
   activeJobId,
   isRunning,
+  isRollingBack = false,
   isResettingDb = false,
   sseConnected = false,
   currentBatch = 0,
@@ -107,19 +109,29 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
 
           {/* Right: Live Telemetry Status & Controls */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Active Job Progress Pill */}
-            {activeJobId && (
+            {/* Active Job / Revert Progress Pill */}
+            {(activeJobId || isRollingBack) && (
               <button
                 type="button"
                 onClick={onNavigateToOverview}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] bg-blue-50 text-blue-700 border border-blue-200 font-mono hover:bg-blue-100/80 transition-colors cursor-pointer"
-                title="Click to view live sync progress on Dashboard"
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono transition-colors cursor-pointer ${
+                  isRollingBack
+                    ? "bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100/80"
+                    : "bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100/80"
+                }`}
+                title="Click to view live progress on Dashboard"
               >
-                <Radio className="h-3 w-3 text-blue-600 animate-pulse" />
+                <Radio
+                  className={`h-3 w-3 animate-pulse ${
+                    isRollingBack ? "text-amber-600" : "text-blue-600"
+                  }`}
+                />
                 <span className="font-semibold">
-                  Syncing {currentBatch}/{totalBatches}
+                  {isRollingBack ? "Reverting" : "Syncing"} {currentBatch}/{totalBatches}
                 </span>
-                <span className="text-blue-500">({percent}%)</span>
+                <span className={isRollingBack ? "text-amber-600" : "text-blue-500"}>
+                  ({percent}%)
+                </span>
               </button>
             )}
 

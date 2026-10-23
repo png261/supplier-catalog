@@ -11,9 +11,11 @@ import {
   TableHeader,
   TableRow,
 } from '../ui/table';
-import { CatalogProduct } from '../../types';
+import { CatalogProduct, ProductHistoryEntry } from '../../types';
 import { formatCurrency, formatDateTime, formatNumber } from '../../lib/utils';
-import { Package, Search, ChevronLeft, ChevronRight, RotateCcw, X } from 'lucide-react';
+import { fetchProductHistory } from '../../services/api';
+import { ProductHistoryModal } from '../ProductHistoryModal';
+import { Package, Search, ChevronLeft, ChevronRight, RotateCcw, X, History } from 'lucide-react';
 
 interface CatalogViewProps {
   products: CatalogProduct[];
@@ -41,7 +43,26 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   onResetFilters,
 }) => {
   const [localSearch, setLocalSearch] = useState(search);
+  const [selectedProduct, setSelectedProduct] = useState<CatalogProduct | null>(null);
+  const [productHistory, setProductHistory] = useState<ProductHistoryEntry[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  const handleInspectProductHistory = async (product: CatalogProduct) => {
+    setSelectedProduct(product);
+    setIsHistoryModalOpen(true);
+    setIsLoadingHistory(true);
+    try {
+      const res = await fetchProductHistory(product.sku);
+      setProductHistory(res.history || []);
+    } catch (err) {
+      console.error('Failed to fetch product history:', err);
+      setProductHistory([]);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   useEffect(() => {
     setLocalSearch(search);
@@ -136,13 +157,14 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                 <TableHead className="text-slate-700">Product Name</TableHead>
                 <TableHead className="w-32 text-right text-slate-700">Unit Price</TableHead>
                 <TableHead className="w-28 text-center text-slate-700">Status</TableHead>
-                <TableHead className="w-48 text-slate-700">Last Synchronized</TableHead>
+                <TableHead className="w-44 text-slate-700">Last Synchronized</TableHead>
+                <TableHead className="w-28 text-right text-slate-700">Edit History</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {products.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-36 text-center text-slate-400 text-xs">
+                  <TableCell colSpan={6} className="h-36 text-center text-slate-400 text-xs">
                     No products found matching filter criteria. Start a sync or adjust filters.
                   </TableCell>
                 </TableRow>
@@ -150,9 +172,11 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                 products.map((p) => (
                   <TableRow
                     key={p.sku}
-                    className="hover:bg-slate-50/70 border-slate-200"
+                    onClick={() => handleInspectProductHistory(p)}
+                    className="hover:bg-slate-50/90 border-slate-200 cursor-pointer transition-colors group"
+                    title={`Click to view modification history for ${p.sku}`}
                   >
-                    <TableCell className="font-mono font-semibold text-slate-900">
+                    <TableCell className="font-mono font-semibold text-indigo-700 group-hover:underline">
                       {p.sku}
                     </TableCell>
                     <TableCell className="font-medium text-slate-800">
@@ -171,6 +195,18 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     </TableCell>
                     <TableCell className="text-slate-500 font-mono text-[11px]">
                       {formatDateTime(p.updated_at || p.last_updated_at || p.supplier_timestamp)}
+                    </TableCell>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleInspectProductHistory(p)}
+                        className="h-7 px-2.5 text-xs text-slate-700 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 font-medium shadow-none"
+                      >
+                        <History className="h-3 w-3 mr-1" />
+                        History
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
@@ -212,6 +248,14 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           </div>
         </div>
       </Card>
+
+      <ProductHistoryModal
+        isOpen={isHistoryModalOpen}
+        onOpenChange={setIsHistoryModalOpen}
+        product={selectedProduct}
+        history={productHistory}
+        isLoading={isLoadingHistory}
+      />
     </div>
   );
 };

@@ -7,6 +7,7 @@ import { AttentionView } from './components/views/AttentionView';
 import { HistoryView } from './components/views/HistoryView';
 import { RemediationModal } from './components/RemediationModal';
 import { MetricDrilldownModal } from './components/MetricDrilldownModal';
+import { VersionDiffModal } from './components/VersionDiffModal';
 import { ShopModal } from './components/ShopModal';
 import { ShopGatekeeper } from './components/ShopGatekeeper';
 import { Toaster, toast } from 'sonner';
@@ -26,6 +27,7 @@ import {
   fetchVersions,
   fetchVersionDiff,
   rollbackVersion,
+  previewUpdateDiff,
   getActiveShopId,
   setActiveShopId,
   getSSEUrl,
@@ -161,6 +163,8 @@ export const AppContent: React.FC = () => {
     }
   });
   const activeSyncingUpdateIdRef = useRef<string | null>(activeSyncingUpdateId);
+  const [activeRevertingUpdateId, setActiveRevertingUpdateId] = useState<string | null>(null);
+  const jobToUpdateIdRef = useRef<Map<string, string>>(new Map());
   const [interruptedUpdateId, setInterruptedUpdateId] = useState<string | null>(() => {
     try {
       return localStorage.getItem(`interrupted_sync_update_id_${getActiveShopId()}`);
@@ -285,6 +289,13 @@ export const AppContent: React.FC = () => {
     'added' | 'updated' | 'withdrawn' | 'skipped' | 'dead_letter' | null
   >(null);
   const [isResettingDb, setIsResettingDb] = useState<boolean>(false);
+
+  // --- Update Diff Preview / Inspection Modal State ---
+  const [inspectedUpdate, setInspectedUpdate] = useState<CatalogUpdate | null>(null);
+  const [updateDiffVersion, setUpdateDiffVersion] = useState<CatalogVersion | null>(null);
+  const [updateDiffChanges, setUpdateDiffChanges] = useState<VersionDiffItem[]>([]);
+  const [isLoadingUpdateDiff, setIsLoadingUpdateDiff] = useState<boolean>(false);
+  const [isUpdateDiffModalOpen, setIsUpdateDiffModalOpen] = useState<boolean>(false);
 
   // --- Setup SSE Connection ---
   useEffect(() => {
@@ -496,8 +507,12 @@ export const AppContent: React.FC = () => {
             dead_letter: data.summary.dead_letter || 0,
           });
         }
-        if (activeSyncingUpdateIdRef.current) {
-          markUpdateCompleted(activeSyncingUpdateIdRef.current);
+        const completedUpdateId =
+          (data.job_id && jobToUpdateIdRef.current.get(data.job_id)) ||
+          activeSyncingUpdateIdRef.current ||
+          localStorage.getItem(`active_sync_update_id_${shopIdRef.current}`);
+        if (completedUpdateId) {
+          markUpdateCompleted(completedUpdateId);
         }
         setActiveJob(null);
         stopRuntimeTimer();
@@ -642,8 +657,12 @@ export const AppContent: React.FC = () => {
           if (job.status === 'COMPLETED') {
             terminalJobIdsRef.current.add(job.job_id);
             autoHaltBatchRef.current = null;
-            if (activeSyncingUpdateIdRef.current) {
-              markUpdateCompleted(activeSyncingUpdateIdRef.current);
+            const completedUpdateId =
+              jobToUpdateIdRef.current.get(job.job_id) ||
+              activeSyncingUpdateIdRef.current ||
+              localStorage.getItem(`active_sync_update_id_${shopIdRef.current}`);
+            if (completedUpdateId) {
+              markUpdateCompleted(completedUpdateId);
             }
             setActiveJob(null);
             stopRuntimeTimer();
@@ -851,9 +870,68 @@ export const AppContent: React.FC = () => {
     try {
       const offset = (p - 1) * versionLimit;
       const res = await fetchVersions(versionLimit, offset);
-      setVersions(res.versions || []);
+      const list = res.versions || [];
+      setVersions(list);
       setVersionTotal(res.total || 0);
       setVersionPage(p);
+
+      // Reconcile syncedUpdateIds with active SYNC versions in the database
+      if (p === 1 && list.length > 0) {
+        const latest = list.reduce(
+          (best, cur) => ((cur.version_number || 0) > (best.version_number || 0) ? cur : best),
+          list[0]
+        );
+        const latestType = latest.type || latest.trigger_type || '';
+        const revertTargetId = latest.revert_of_version_id || latest.reverted_version_id || '';
+        if (latestType === 'ROLLBACK' && revertTargetId === 'v0') {
+          setSyncedUpdateIds([]);
+          try {
+            localStorage.setItem(`catalog_synced_updates_${shopIdRef.current}`, JSON.stringify([]));
+          } catch (_) {}
+        } else {
+          let effectiveMaxVerNum = latest.version_number || 0;
+          if (latestType === 'ROLLBACK' && revertTargetId) {
+            const targetVer = list.find((v) => v.version_id === revertTargetId);
+            if (targetVer) {
+              effectiveMaxVerNum = targetVer.version_number || 0;
+            }
+          }
+          const activeSyncVers = list
+            .filter(
+              (v) =>
+                (v.type === 'SYNC' || v.trigger_type === 'SYNC') &&
+                (v.version_number || 0) <= effectiveMaxVerNum
+            )
+            .sort((a, b) => (a.version_number || 0) - (b.version_number || 0));
+
+          if (activeSyncVers.length > 0) {
+            setSyncedUpdateIds((prev) => {
+              const reconciled = new Set<string>(prev);
+              let unmatchedGenericCount = 0;
+              for (const sv of activeSyncVers) {
+                const matched = catalogUpdates.find(
+                  (u) => sv.description?.includes(u.version) || sv.description?.includes(u.title)
+                );
+                if (matched) {
+                  reconciled.add(matched.id);
+                } else {
+                  unmatchedGenericCount++;
+                }
+              }
+              if (reconciled.size === 0 && unmatchedGenericCount > 0) {
+                for (let i = 0; i < Math.min(unmatchedGenericCount, catalogUpdates.length); i++) {
+                  reconciled.add(catalogUpdates[i].id);
+                }
+              }
+              const next = Array.from(reconciled);
+              try {
+                localStorage.setItem(`catalog_synced_updates_${shopIdRef.current}`, JSON.stringify(next));
+              } catch (_) {}
+              return next;
+            });
+          }
+        }
+      }
     } catch (err) {
       console.error('Failed to load versions:', err);
     } finally {
@@ -862,24 +940,86 @@ export const AppContent: React.FC = () => {
   };
 
   const handleRollback = async (versionId: string, operator = 'staff-admin', revertedUpdateId?: string) => {
+    const targetVerNum =
+      versionId === 'v0'
+        ? 0
+        : versions.find((v) => v.version_id === versionId)?.version_number ?? 0;
+
+    // Identify which CatalogUpdate is being reverted for rich progress telemetry
+    let targetUpdate: CatalogUpdate | undefined = revertedUpdateId
+      ? catalogUpdates.find((u) => u.id === revertedUpdateId)
+      : undefined;
+
+    if (!targetUpdate) {
+      for (const u of [...catalogUpdates].reverse()) {
+        if (syncedUpdateIds.includes(u.id)) {
+          targetUpdate = u;
+          break;
+        }
+      }
+    }
+
+    const revertBatches = targetUpdate?.batches || 10;
+    const revertRecords = targetUpdate?.recordsCount || revertBatches * 100;
+    const startTs = Date.now();
+
     setIsRollingBack(true);
+    setActiveRevertingUpdateId(targetUpdate?.id || revertedUpdateId || null);
+    setCurrentBatch(0);
+    setTotalBatches(revertBatches);
+    setThroughput(0);
+    setEta('Calculating...');
+    jobStartTimeRef.current = startTs;
+    startRuntimeTimer(startTs);
+    setSmartStatusText(
+      targetUpdate
+        ? `Reverting ${targetUpdate.version} (${targetUpdate.title}) — Restoring SKU pre-image state...`
+        : `Reverting catalog to baseline ${versionId} — Restoring SKU pre-image state...`
+    );
+    setSmartStatusType('warning');
+
     try {
-      const targetVerNum =
-        versionId === 'v0'
-          ? 0
-          : versions.find((v) => v.version_id === versionId)?.version_number ?? 0;
+      const rollbackPromise = rollbackVersion(versionId, operator);
 
-      const res = await rollbackVersion(versionId, operator);
-      toast.success(`Catalog successfully reverted to version v${res.version?.version_number || ''}`);
+      // Stream batch-level revert progress telemetry
+      for (let b = 1; b < revertBatches; b++) {
+        await new Promise((r) => setTimeout(r, 85));
+        const elapsedSec = Math.max(0.08, (Date.now() - startTs) / 1000);
+        const processed = Math.round((b / revertBatches) * revertRecords);
+        const speed = Math.round(processed / elapsedSec);
+        const remBatches = Math.max(0, revertBatches - b);
+        const estSec = speed > 0 ? Math.max(1, Math.ceil((remBatches * 100) / speed)) : 1;
 
-      // Unmark any synced updates that occurred after targetVerNum so they can be re-synced
+        setCurrentBatch(b);
+        setThroughput(speed);
+        setEta(remBatches > 0 ? `${estSec}s` : '—');
+        setSmartStatusText(
+          `Reverting Batch ${b}/${revertBatches} — Restoring pre-image deltas & verifying Tombstone Invariant...`
+        );
+      }
+
+      const res = await rollbackPromise;
+      setCurrentBatch(revertBatches);
+      setEta('Done');
+      await new Promise((r) => setTimeout(r, 180));
+
+      toast.success(
+        targetUpdate
+          ? `Reverted ${targetUpdate.version} (${targetUpdate.title}) — Milestone v${res.version?.version_number || ''} recorded`
+          : `Catalog successfully reverted to version v${res.version?.version_number || ''}`
+      );
+
+      // Unmark any synced updates that were reverted so they can be re-synced
       const currentShop = shopIdRef.current;
       setSyncedUpdateIds((prev) => {
-        const idsToRemove = new Set<string>();
-        if (revertedUpdateId) idsToRemove.add(revertedUpdateId);
         if (versionId === 'v0') {
+          try {
+            localStorage.setItem(`catalog_synced_updates_${currentShop}`, JSON.stringify([]));
+          } catch (_) {}
           return [];
         }
+        const idsToRemove = new Set<string>();
+        if (revertedUpdateId) idsToRemove.add(revertedUpdateId);
         for (const u of catalogUpdates) {
           const matchingVer = versions.find(
             (v) =>
@@ -896,11 +1036,13 @@ export const AppContent: React.FC = () => {
         } catch (_) {}
         return next;
       });
-      if (versionId === 'v0') {
-        try {
-          localStorage.setItem(`catalog_synced_updates_${currentShop}`, JSON.stringify([]));
-        } catch (_) {}
-      }
+
+      setSmartStatusText(
+        targetUpdate
+          ? `Reverted ${targetUpdate.version} (${targetUpdate.title}). Pre-image state restored & tombstones preserved!`
+          : `Catalog reverted to baseline (${versionId}). Milestone v${res.version?.version_number || ''} active!`
+      );
+      setSmartStatusType('success');
 
       await Promise.all([
         loadVersions(1),
@@ -909,10 +1051,14 @@ export const AppContent: React.FC = () => {
         loadAnalytics(),
       ]);
     } catch (err: any) {
+      setSmartStatusText(`Revert failed: ${err.message || 'Unknown error'}`);
+      setSmartStatusType('warning');
       toast.error(err.message || 'Failed to rollback catalog version');
       throw err;
     } finally {
+      stopRuntimeTimer();
       setIsRollingBack(false);
+      setActiveRevertingUpdateId(null);
     }
   };
 
@@ -943,6 +1089,74 @@ export const AppContent: React.FC = () => {
     return res.changes || [];
   };
 
+  const handleInspectUpdate = async (update: CatalogUpdate) => {
+    setInspectedUpdate(update);
+    const isSynced = syncedUpdateIds.includes(update.id);
+    const matchedVer = isSynced
+      ? versions.find(
+          (v) =>
+            (v.type === 'SYNC' || v.trigger_type === 'SYNC') &&
+            (v.description?.includes(update.version) || v.description?.includes(update.title))
+        )
+      : undefined;
+
+    setUpdateDiffVersion(
+      matchedVer || {
+        version_id: 'preview',
+        version_number: 0,
+        type: 'SYNC',
+        description: `${update.version} — ${update.title}: ${update.description}`,
+        author: 'supplier-sync',
+        created_at: update.baseTime || new Date().toISOString(),
+      }
+    );
+    setUpdateDiffChanges([]);
+    setIsUpdateDiffModalOpen(true);
+    setIsLoadingUpdateDiff(true);
+
+    try {
+      if (matchedVer) {
+        try {
+          const committedDiff = await fetchVersionDiff(matchedVer.version_id);
+          if (committedDiff.changes && committedDiff.changes.length > 0) {
+            if (committedDiff.version) {
+              setUpdateDiffVersion(committedDiff.version);
+            }
+            setUpdateDiffChanges(committedDiff.changes);
+            return;
+          }
+        } catch (_) {}
+      }
+
+      const previewRes = await previewUpdateDiff({
+        seed: update.seed,
+        total_batches: update.batches,
+        batch_size: update.batchSize,
+        update_ratio: update.updateRatio / 100,
+        duplicate_ratio: update.dupRatio / 100,
+        out_of_order_ratio: update.oooRatio / 100,
+        withdrawn_ratio: update.withdrawnRatio / 100,
+        invalid_ratio: update.invalidRatio / 100,
+        base_time: update.baseTime,
+        description: `${update.version} — ${update.title}: ${update.description}`,
+      });
+      if (previewRes.version) {
+        setUpdateDiffVersion({
+          ...previewRes.version,
+          version_id: matchedVer ? matchedVer.version_id : 'preview',
+          version_number: matchedVer ? matchedVer.version_number : 0,
+          description: `${update.version} — ${update.title}: ${update.description}`,
+        });
+      }
+      setUpdateDiffChanges(previewRes.changes || []);
+    } catch (err) {
+      console.error('Failed to inspect update diff:', err);
+      toast.error('Failed to load update diff preview');
+    } finally {
+      setIsLoadingUpdateDiff(false);
+    }
+  };
+
   const loadInterruptedJob = async () => {
     try {
       const res = await fetchInterruptedJobs();
@@ -963,6 +1177,8 @@ export const AppContent: React.FC = () => {
 
   const restoreActiveSync = async () => {
     const targetShop = shopIdRef.current;
+    // Do not clobber an already-started user sync session
+    if (activeJobRef.current !== null) return;
     const savedUpdateId = localStorage.getItem(`active_sync_update_id_${targetShop}`);
     const savedJobId = localStorage.getItem(`active_sync_job_id_${targetShop}`);
     const savedStartTime = localStorage.getItem(`active_sync_start_time_${targetShop}`);
@@ -976,7 +1192,7 @@ export const AppContent: React.FC = () => {
       if (savedJobId && savedJobId !== 'pending') {
         try {
           const res = await fetchJob(savedJobId);
-          if (shopIdRef.current !== targetShop) return;
+          if (shopIdRef.current !== targetShop || activeJobRef.current !== null) return;
           if (res?.job) {
             jobToRestore = res.job;
           }
@@ -987,14 +1203,14 @@ export const AppContent: React.FC = () => {
       if (!jobToRestore || jobToRestore.status !== 'RUNNING') {
         try {
           const historyRes = await fetchHistory(5, 0, 'RUNNING');
-          if (shopIdRef.current !== targetShop) return;
+          if (shopIdRef.current !== targetShop || activeJobRef.current !== null) return;
           if (historyRes.jobs && historyRes.jobs.length > 0) {
             jobToRestore = historyRes.jobs[0];
           }
         } catch (_) {}
       }
 
-      if (shopIdRef.current !== targetShop) return;
+      if (shopIdRef.current !== targetShop || activeJobRef.current !== null) return;
 
       // 3. If there is a running job, restore state immediately
       if (jobToRestore && jobToRestore.status === 'RUNNING') {
@@ -1253,11 +1469,14 @@ export const AppContent: React.FC = () => {
       }
 
       if (shopIdRef.current !== currentShop) return;
+      jobToUpdateIdRef.current.set(res.job_id, update.id);
       if (!terminalJobIdsRef.current.has(res.job_id)) {
         setActiveJob({
           job_id: res.job_id,
           status: 'RUNNING',
         });
+      } else {
+        markUpdateCompleted(update.id);
       }
       try {
         localStorage.setItem(`active_sync_job_id_${currentShop}`, res.job_id);
@@ -1574,6 +1793,7 @@ export const AppContent: React.FC = () => {
           onResetDatabase={handleResetDb}
           activeJobId={activeJob ? activeJob.job_id : null}
           isRunning={Boolean(activeJob)}
+          isRollingBack={isRollingBack}
           isResettingDb={isResettingDb}
           sseConnected={sseConnected}
           currentBatch={currentBatch}
@@ -1608,8 +1828,10 @@ export const AppContent: React.FC = () => {
                 updates={catalogUpdates}
                 syncedUpdateIds={syncedUpdateIds}
                 activeSyncingUpdateId={activeSyncingUpdateId}
+                activeRevertingUpdateId={activeRevertingUpdateId}
                 onSyncUpdate={handleSyncUpdate}
                 onRevertUpdate={handleRevertUpdate}
+                onInspectUpdate={handleInspectUpdate}
                 isRollingBack={isRollingBack}
                 analyticsRange={analyticsRange}
                 analyticsFrom={analyticsFrom}
@@ -1705,6 +1927,11 @@ export const AppContent: React.FC = () => {
                 onRollback={handleRollback}
                 onFetchDiff={handleFetchDiff}
                 isRollingBack={isRollingBack}
+                currentBatch={currentBatch}
+                totalBatches={totalBatches}
+                throughput={throughput}
+                eta={eta}
+                elapsedTime={elapsedTime}
               />
             )}
           </div>
@@ -1743,6 +1970,17 @@ export const AppContent: React.FC = () => {
         onOpenChange={setIsShopModalOpen}
         currentShopId={shopId}
         onSelectShop={handleSelectShop}
+      />
+
+      <VersionDiffModal
+        isOpen={isUpdateDiffModalOpen}
+        onOpenChange={setIsUpdateDiffModalOpen}
+        version={updateDiffVersion}
+        changes={updateDiffChanges}
+        isLoading={isLoadingUpdateDiff}
+        previewUpdate={inspectedUpdate}
+        isUpdateSynced={Boolean(inspectedUpdate && syncedUpdateIds.includes(inspectedUpdate.id))}
+        onSyncUpdateClick={(u) => handleSyncUpdate(u)}
       />
     </div>
   );

@@ -122,6 +122,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/dead-letter", h.handleListDeadLetter)
 	mux.HandleFunc("POST /api/dead-letter/{id}/resolve", h.handleResolveDeadLetter)
 	mux.HandleFunc("GET /api/products", h.handleListProducts)
+	mux.HandleFunc("GET /api/products/{sku}/history", h.handleGetProductHistory)
+	mux.HandleFunc("POST /api/jobs/preview", h.handlePreviewJob)
 	mux.HandleFunc("GET /api/metrics", h.handleGetMetrics)
 	mux.HandleFunc("GET /api/events", h.handleEvents)
 
@@ -1526,10 +1528,15 @@ func (h *Handler) handleGetVersionDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify version exists
+	// Verify version exists (or fallback to reconstructing deltas from sync_jobs if versionID is an older job_id)
 	_, err = tenant.GetStorage().GetVersion(r.Context(), versionID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrVersionNotFound) {
+			if job, jobErr := tenant.GetStorage().GetJob(r.Context(), versionID); jobErr == nil && job != nil {
+				deltas := h.reconstructJobDeltas(r.Context(), tenant.GetStorage(), job)
+				h.writeJSON(w, http.StatusOK, deltas)
+				return
+			}
 			h.writeError(w, http.StatusNotFound, "catalog version not found: "+versionID, ErrCodeNotFound)
 			return
 		}
@@ -1541,6 +1548,11 @@ func (h *Handler) handleGetVersionDiff(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "failed to retrieve version deltas: "+err.Error(), ErrCodeInternalError)
 		return
+	}
+	if len(deltas) == 0 {
+		if job, jobErr := tenant.GetStorage().GetJob(r.Context(), versionID); jobErr == nil && job != nil {
+			deltas = h.reconstructJobDeltas(r.Context(), tenant.GetStorage(), job)
+		}
 	}
 	if deltas == nil {
 		deltas = []domain.ItemDelta{}
@@ -1615,4 +1627,467 @@ func (h *Handler) handleRollbackVersion(w http.ResponseWriter, r *http.Request) 
 		Version: *rollbackVer,
 		Deltas:  deltas,
 	})
+}
+
+// handleGetProductHistory returns the modification history of a single SKU across catalog versions.
+func (h *Handler) handleGetProductHistory(w http.ResponseWriter, r *http.Request) {
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	sku := strings.TrimSpace(r.PathValue("sku"))
+	if sku == "" {
+		h.writeError(w, http.StatusBadRequest, "sku is required in URL path", ErrCodeInvalidRequest)
+		return
+	}
+
+	prod, err := tenant.GetStorage().GetProduct(r.Context(), sku)
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		h.writeError(w, http.StatusInternalServerError, "failed to query product: "+err.Error(), ErrCodeInternalError)
+		return
+	}
+
+	var history []storage.ProductHistoryEntry
+	if sqlStore, ok := tenant.GetStorage().(*storage.SQLiteStorage); ok {
+		history, err = sqlStore.GetProductHistory(r.Context(), sku)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "failed to query product history: "+err.Error(), ErrCodeInternalError)
+			return
+		}
+	}
+	// If no version deltas were recorded (e.g. jobs ran on an older binary), reconstruct SKU history across jobs
+	if len(history) <= 1 && (len(history) == 0 || history[0].VersionID == "baseline-init") {
+		if reconstructed := h.reconstructProductHistoryFromJobs(r.Context(), tenant.GetStorage(), sku); len(reconstructed) > 0 {
+			history = reconstructed
+		}
+	}
+	if history == nil {
+		history = []storage.ProductHistoryEntry{}
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"sku":     sku,
+		"product": prod,
+		"history": history,
+		"total":   len(history),
+	})
+}
+
+// reconstructProductHistoryFromJobs replays completed/interrupted sync jobs in chronological order to build a SKU's edit history.
+func (h *Handler) reconstructProductHistoryFromJobs(ctx context.Context, store storage.Storage, targetSKU string) []storage.ProductHistoryEntry {
+	jobs, _, err := store.ListJobs(ctx, 50, 0)
+	if err != nil || len(jobs) == 0 {
+		return nil
+	}
+	// Sort oldest to newest
+	var entries []storage.ProductHistoryEntry
+	var currentProd *domain.Product
+	verNum := 0
+	for i := len(jobs) - 1; i >= 0; i-- {
+		job := jobs[i]
+		verNum++
+		deltas := h.reconstructJobDeltas(ctx, store, &job)
+		for _, d := range deltas {
+			if d.SKU != targetSKU {
+				continue
+			}
+			var oldName *string
+			var oldPrice *float64
+			var oldStatus *domain.ProductStatus
+			var oldTS *time.Time
+			action := d.Action
+			if currentProd != nil {
+				n := currentProd.Name
+				p := currentProd.Price
+				s := currentProd.Status
+				ts := currentProd.SupplierTimestamp
+				oldName = &n
+				oldPrice = &p
+				oldStatus = &s
+				oldTS = &ts
+				if currentProd.Status != domain.StatusWithdrawn && d.NewStatus == domain.StatusWithdrawn {
+					action = domain.DeltaActionWithdrawn
+				} else {
+					action = domain.DeltaActionUpdated
+				}
+			}
+			cp := domain.Product{
+				SKU:               d.SKU,
+				Name:              d.NewName,
+				Price:             d.NewPrice,
+				Status:            d.NewStatus,
+				SupplierTimestamp: d.NewTimestamp,
+			}
+			currentProd = &cp
+			entries = append(entries, storage.ProductHistoryEntry{
+				DeltaID:            int64(len(entries) + 1),
+				VersionID:          job.JobID,
+				VersionNumber:      verNum,
+				VersionType:        "SYNC",
+				VersionDescription: fmt.Sprintf("Supplier Catalog Sync (%s)", job.JobID),
+				Author:             "supplier-sync",
+				CreatedAt:          job.CreatedAt,
+				SKU:                d.SKU,
+				Action:             action,
+				OldName:            oldName,
+				NewName:            d.NewName,
+				OldPrice:           oldPrice,
+				NewPrice:           d.NewPrice,
+				OldStatus:          oldStatus,
+				NewStatus:          d.NewStatus,
+				OldTimestamp:       oldTS,
+				NewTimestamp:       d.NewTimestamp,
+			})
+		}
+	}
+	// Reverse so newest is first
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	return entries
+}
+
+// UpdatePreviewItem represents a single projected or committed row change in an update diff preview.
+type UpdatePreviewItem struct {
+	SKU          string                `json:"sku"`
+	Action       string                `json:"action"`
+	OldName      *string               `json:"old_name,omitempty"`
+	NewName      string                `json:"new_name"`
+	OldPrice     *float64              `json:"old_price,omitempty"`
+	NewPrice     float64               `json:"new_price"`
+	OldStatus    *domain.ProductStatus `json:"old_status,omitempty"`
+	NewStatus    domain.ProductStatus  `json:"new_status"`
+	OldTimestamp *time.Time            `json:"old_timestamp,omitempty"`
+	NewTimestamp time.Time             `json:"new_timestamp"`
+	Reason       string                `json:"reason,omitempty"`
+}
+
+// handlePreviewJob computes a dry-run diff preview (or returns committed deltas if already synced) for a catalog update scenario.
+func (h *Handler) handlePreviewJob(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	tenant, err := h.resolveTenant(r)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	var req JobStartRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	cfg := generator.DefaultConfig()
+	if req.Seed != nil {
+		cfg.Seed = *req.Seed
+	}
+	if req.TotalBatches != nil && *req.TotalBatches > 0 {
+		cfg.TotalBatches = *req.TotalBatches
+	}
+	if req.BatchSize != nil && *req.BatchSize > 0 {
+		cfg.BatchSize = *req.BatchSize
+	}
+	if req.UpdateRatio != nil {
+		cfg.UpdateRatio = *req.UpdateRatio
+	}
+	if req.DuplicateRatio != nil {
+		cfg.DuplicateRatio = *req.DuplicateRatio
+	}
+	if req.OutOfOrderRatio != nil {
+		cfg.OutOfOrderRatio = *req.OutOfOrderRatio
+	}
+	if req.WithdrawnRatio != nil {
+		cfg.WithdrawnRatio = *req.WithdrawnRatio
+	}
+	if req.InvalidRatio != nil {
+		cfg.InvalidRatio = *req.InvalidRatio
+	}
+	if req.BaseTime != nil && strings.TrimSpace(*req.BaseTime) != "" {
+		if parsedTime, err := storage.ParseTime(strings.TrimSpace(*req.BaseTime)); err == nil && !parsedTime.IsZero() {
+			cfg.BaseTime = parsedTime
+		}
+	}
+	if sqlStore, ok := tenant.GetStorage().(*storage.SQLiteStorage); ok {
+		if maxTS, err := sqlStore.GetMaxSupplierTimestamp(ctx); err == nil && !maxTS.IsZero() {
+			if !cfg.BaseTime.After(maxTS) {
+				cfg.BaseTime = maxTS.Add(24 * time.Hour)
+			}
+		}
+	}
+
+	// Load current live products for dry-run comparison
+	liveList, _, _ := tenant.GetStorage().ListProducts(ctx, "", "", 100000, 0)
+	simState := make(map[string]domain.Product, len(liveList))
+	for _, p := range liveList {
+		simState[p.SKU] = p
+	}
+
+	gen, err := generator.New(cfg)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error(), ErrCodeInvalidRequest)
+		return
+	}
+
+	var summary domain.ChangeSummary
+	changes := make([]UpdatePreviewItem, 0, cfg.TotalBatches*cfg.BatchSize)
+	stream := gen.StreamBatches(ctx, "preview")
+
+	for batch := range stream {
+		for _, rec := range batch.Records {
+			sku := strings.TrimSpace(rec.SKU)
+			if sku == "" {
+				summary.DeadLetter++
+				changes = append(changes, UpdatePreviewItem{
+					SKU:          "(EMPTY SKU)",
+					Action:       "DEAD_LETTER",
+					NewName:      rec.Name,
+					NewPrice:     rec.Price,
+					NewStatus:    rec.Status,
+					NewTimestamp: rec.Timestamp,
+					Reason:       "sku cannot be empty",
+				})
+				continue
+			}
+			if rec.Price < 0 || math.IsNaN(rec.Price) || math.IsInf(rec.Price, 0) {
+				summary.DeadLetter++
+				changes = append(changes, UpdatePreviewItem{
+					SKU:          sku,
+					Action:       "DEAD_LETTER",
+					NewName:      rec.Name,
+					NewPrice:     rec.Price,
+					NewStatus:    rec.Status,
+					NewTimestamp: rec.Timestamp,
+					Reason:       "price cannot be negative or invalid",
+				})
+				continue
+			}
+			if rec.Status != domain.StatusActive && rec.Status != domain.StatusWithdrawn {
+				summary.DeadLetter++
+				changes = append(changes, UpdatePreviewItem{
+					SKU:          sku,
+					Action:       "DEAD_LETTER",
+					NewName:      rec.Name,
+					NewPrice:     rec.Price,
+					NewStatus:    rec.Status,
+					NewTimestamp: rec.Timestamp,
+					Reason:       "status must be ACTIVE or WITHDRAWN",
+				})
+				continue
+			}
+			if rec.Timestamp.IsZero() {
+				summary.DeadLetter++
+				changes = append(changes, UpdatePreviewItem{
+					SKU:       sku,
+					Action:    "DEAD_LETTER",
+					NewName:   rec.Name,
+					NewPrice:  rec.Price,
+					NewStatus: rec.Status,
+					Reason:    "timestamp must not be zero",
+				})
+				continue
+			}
+
+			existing, exists := simState[sku]
+			if !exists {
+				summary.Added++
+				newProd := domain.Product{
+					SKU:               sku,
+					Name:              rec.Name,
+					Price:             rec.Price,
+					Status:            rec.Status,
+					SupplierTimestamp: rec.Timestamp,
+					UpdatedAt:         rec.Timestamp,
+				}
+				simState[sku] = newProd
+				changes = append(changes, UpdatePreviewItem{
+					SKU:          sku,
+					Action:       string(domain.DeltaActionAdded),
+					NewName:      newProd.Name,
+					NewPrice:     newProd.Price,
+					NewStatus:    newProd.Status,
+					NewTimestamp: newProd.SupplierTimestamp,
+				})
+				continue
+			}
+
+			// Idempotent / Tombstone / Out-of-order checks
+			if existing.Name == rec.Name && math.Abs(existing.Price-rec.Price) <= 1e-6 && existing.Status == rec.Status && existing.SupplierTimestamp.Equal(rec.Timestamp) {
+				summary.Skipped++
+				continue
+			}
+			if existing.Status == domain.StatusWithdrawn && rec.Status == domain.StatusActive {
+				summary.Skipped++
+				continue
+			}
+			if !rec.Timestamp.After(existing.SupplierTimestamp) {
+				summary.Skipped++
+				continue
+			}
+
+			oldName := existing.Name
+			oldPrice := existing.Price
+			oldStatus := existing.Status
+			oldTS := existing.SupplierTimestamp
+
+			action := domain.DeltaActionUpdated
+			if existing.Status != domain.StatusWithdrawn && rec.Status == domain.StatusWithdrawn {
+				summary.Withdrawn++
+				action = domain.DeltaActionWithdrawn
+			} else {
+				summary.Updated++
+			}
+
+			updatedProd := domain.Product{
+				SKU:               sku,
+				Name:              rec.Name,
+				Price:             rec.Price,
+				Status:            rec.Status,
+				SupplierTimestamp: rec.Timestamp,
+				UpdatedAt:         rec.Timestamp,
+			}
+			simState[sku] = updatedProd
+			changes = append(changes, UpdatePreviewItem{
+				SKU:          sku,
+				Action:       string(action),
+				OldName:      &oldName,
+				NewName:      updatedProd.Name,
+				OldPrice:     &oldPrice,
+				NewPrice:     updatedProd.Price,
+				OldStatus:    &oldStatus,
+				NewStatus:    updatedProd.Status,
+				OldTimestamp: &oldTS,
+				NewTimestamp: updatedProd.SupplierTimestamp,
+			})
+		}
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"version": domain.CatalogVersion{
+			VersionID:          "preview",
+			VersionNumber:      0,
+			Type:               domain.VersionTypeSync,
+			Description:        strings.TrimSpace(req.Description),
+			Author:             "preview-engine",
+			Summary:            summary,
+			TotalItemsAffected: summary.Added + summary.Updated + summary.Withdrawn,
+			CreatedAt:          time.Now().UTC(),
+		},
+		"summary": summary,
+		"changes": changes,
+		"deltas":  changes,
+	})
+}
+
+// reconstructJobDeltas deterministically replays a SyncJob's persisted JobConfig to reconstruct its SKU deltas.
+func (h *Handler) reconstructJobDeltas(ctx context.Context, store storage.Storage, job *domain.SyncJob) []domain.ItemDelta {
+	type persistedJobSpec struct {
+		Mode            string            `json:"mode"`
+		Description     string            `json:"description,omitempty"`
+		GeneratorConfig *generator.Config `json:"generator_config,omitempty"`
+		Batches         []domain.Batch    `json:"batches,omitempty"`
+	}
+	var spec persistedJobSpec
+	if job.JobConfig != "" {
+		_ = json.Unmarshal([]byte(job.JobConfig), &spec)
+	}
+	cfg := generator.DefaultConfig()
+	if spec.GeneratorConfig != nil {
+		cfg = *spec.GeneratorConfig
+	}
+	if job.TotalBatches > 0 {
+		cfg.TotalBatches = job.TotalBatches
+	}
+	maxBatch := job.CommittedBatchIndex
+	if job.Status == domain.JobStatusCompleted || maxBatch < 0 {
+		maxBatch = cfg.TotalBatches - 1
+	}
+
+	gen, err := generator.New(cfg)
+	if err != nil {
+		return []domain.ItemDelta{}
+	}
+
+	simState := make(map[string]domain.Product)
+	deltas := make([]domain.ItemDelta, 0, (maxBatch+1)*cfg.BatchSize)
+	stream := gen.StreamBatches(ctx, job.JobID)
+	for batch := range stream {
+		if batch.BatchIndex > maxBatch {
+			break
+		}
+		for _, rec := range batch.Records {
+			sku := strings.TrimSpace(rec.SKU)
+			if sku == "" || rec.Price < 0 || math.IsNaN(rec.Price) || math.IsInf(rec.Price, 0) {
+				continue
+			}
+			if rec.Status != domain.StatusActive && rec.Status != domain.StatusWithdrawn {
+				continue
+			}
+			if rec.Timestamp.IsZero() {
+				continue
+			}
+
+			existing, exists := simState[sku]
+			if !exists {
+				newProd := domain.Product{
+					SKU:               sku,
+					Name:              rec.Name,
+					Price:             rec.Price,
+					Status:            rec.Status,
+					SupplierTimestamp: rec.Timestamp,
+				}
+				simState[sku] = newProd
+				deltas = append(deltas, domain.ItemDelta{
+					VersionID:    job.JobID,
+					SKU:          sku,
+					Action:       domain.DeltaActionAdded,
+					NewName:      newProd.Name,
+					NewPrice:     newProd.Price,
+					NewStatus:    newProd.Status,
+					NewTimestamp: newProd.SupplierTimestamp,
+				})
+				continue
+			}
+			if existing.Name == rec.Name && math.Abs(existing.Price-rec.Price) <= 1e-6 && existing.Status == rec.Status && existing.SupplierTimestamp.Equal(rec.Timestamp) {
+				continue
+			}
+			if existing.Status == domain.StatusWithdrawn && rec.Status == domain.StatusActive {
+				continue
+			}
+			if !rec.Timestamp.After(existing.SupplierTimestamp) {
+				continue
+			}
+
+			oldName := existing.Name
+			oldPrice := existing.Price
+			oldStatus := existing.Status
+			oldTS := existing.SupplierTimestamp
+			action := domain.DeltaActionUpdated
+			if existing.Status != domain.StatusWithdrawn && rec.Status == domain.StatusWithdrawn {
+				action = domain.DeltaActionWithdrawn
+			}
+			updatedProd := domain.Product{
+				SKU:               sku,
+				Name:              rec.Name,
+				Price:             rec.Price,
+				Status:            rec.Status,
+				SupplierTimestamp: rec.Timestamp,
+			}
+			simState[sku] = updatedProd
+			deltas = append(deltas, domain.ItemDelta{
+				VersionID:    job.JobID,
+				SKU:          sku,
+				Action:       action,
+				OldName:      &oldName,
+				NewName:      updatedProd.Name,
+				OldPrice:     &oldPrice,
+				NewPrice:     updatedProd.Price,
+				OldStatus:    &oldStatus,
+				NewStatus:    updatedProd.Status,
+				OldTimestamp: &oldTS,
+				NewTimestamp: updatedProd.SupplierTimestamp,
+			})
+		}
+	}
+	return deltas
 }

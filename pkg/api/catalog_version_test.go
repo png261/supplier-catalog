@@ -875,3 +875,111 @@ func TestAPI_ConcurrencyAndRace(t *testing.T) {
 		t.Fatalf("%d requests failed during concurrency and race stress test", errors)
 	}
 }
+
+func TestAPI_ProductHistoryAndPreviewJob(t *testing.T) {
+	store, _, mux, _ := setupM4TestEnv(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// 1. Seed a product without version deltas to test baseline fallback & job reconstruction
+	seedProductHelper(t, store, "SKU-00000001", "Initial Stand", 50.0, domain.StatusActive, now.Add(-48*time.Hour))
+	seedProductHelper(t, store, "SKU-WITHDRAWN-1", "Old Item", 20.0, domain.StatusWithdrawn, now.Add(-24*time.Hour))
+
+	// 2. Query product history when only baseline exists
+	reqHist1 := httptest.NewRequest(http.MethodGet, "/api/products/SKU-00000001/history", nil)
+	recHist1 := httptest.NewRecorder()
+	mux.ServeHTTP(recHist1, reqHist1)
+	if recHist1.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for product history, got %d: %s", recHist1.Code, recHist1.Body.String())
+	}
+
+	// 3. Create a SyncJob in storage and test both reconstructJobDeltas (via /api/versions/{job_id}/diff)
+	// and reconstructProductHistoryFromJobs (via /api/products/SKU-00000001/history)
+	jobCfgJSON := `{"mode":"generator","description":"v1.0.0 — Baseline","generator_config":{"seed":42,"total_batches":2,"batch_size":10,"update_ratio":0.3,"duplicate_ratio":0.1,"out_of_order_ratio":0.1,"withdrawn_ratio":0.1,"invalid_ratio":0.1,"reservoir_capacity":100,"base_time":"2026-01-01T00:00:00Z"}}`
+	job := &domain.SyncJob{
+		JobID:               "job-legacy-01",
+		Status:              domain.JobStatusCompleted,
+		TotalBatches:        2,
+		CommittedBatchIndex: 1,
+		Summary:             domain.ChangeSummary{Added: 10, Updated: 5, Withdrawn: 1, Skipped: 2, DeadLetter: 2},
+		JobConfig:           jobCfgJSON,
+		CreatedAt:           now.Add(-12 * time.Hour),
+		UpdatedAt:           now.Add(-12 * time.Hour),
+	}
+	if err := store.CreateJob(ctx, job); err != nil {
+		t.Fatalf("failed to create legacy job: %v", err)
+	}
+
+	// Test GET /api/versions/job-legacy-01/diff (fallback to reconstructJobDeltas)
+	reqJobDiff := httptest.NewRequest(http.MethodGet, "/api/versions/job-legacy-01/diff", nil)
+	recJobDiff := httptest.NewRecorder()
+	mux.ServeHTTP(recJobDiff, reqJobDiff)
+	if recJobDiff.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for legacy job diff fallback, got %d: %s", recJobDiff.Code, recJobDiff.Body.String())
+	}
+
+	// Test GET /api/products/SKU-00000001/history (triggers reconstructProductHistoryFromJobs)
+	reqHist2 := httptest.NewRequest(http.MethodGet, "/api/products/SKU-00000001/history", nil)
+	recHist2 := httptest.NewRecorder()
+	mux.ServeHTTP(recHist2, reqHist2)
+	if recHist2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for reconstructed product history, got %d", recHist2.Code)
+	}
+
+	// 4. Create an explicit version with deltas for SKU-00000001 and verify GetProductHistory with recorded deltas
+	oldName := "Initial Stand"
+	oldPrice := 50.0
+	oldStatus := domain.StatusActive
+	oldTS := now.Add(-48 * time.Hour)
+	vExplicit := &domain.CatalogVersion{
+		VersionID:          "ver-explicit-01",
+		VersionNumber:      1,
+		Description:        "Price adjustment",
+		Author:             "staff",
+		Type:               domain.VersionTypePatch,
+		Summary:            domain.ChangeSummary{Updated: 1},
+		TotalItemsAffected: 1,
+		CreatedAt:          now,
+	}
+	deltas := []domain.ItemDelta{
+		{
+			VersionID:    "ver-explicit-01",
+			SKU:          "SKU-00000001",
+			Action:       domain.DeltaActionUpdated,
+			OldName:      &oldName,
+			NewName:      "Updated Stand Pro",
+			OldPrice:     &oldPrice,
+			NewPrice:     75.0,
+			OldStatus:    &oldStatus,
+			NewStatus:    domain.StatusActive,
+			OldTimestamp: &oldTS,
+			NewTimestamp: now,
+		},
+	}
+	createVersionHelper(t, store, vExplicit, deltas)
+
+	reqHist3 := httptest.NewRequest(http.MethodGet, "/api/products/SKU-00000001/history", nil)
+	recHist3 := httptest.NewRecorder()
+	mux.ServeHTTP(recHist3, reqHist3)
+	if recHist3.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for explicit delta product history, got %d", recHist3.Code)
+	}
+
+	// Non-existent SKU history
+	reqHistMissing := httptest.NewRequest(http.MethodGet, "/api/products/SKU-DOES-NOT-EXIST/history", nil)
+	recHistMissing := httptest.NewRecorder()
+	mux.ServeHTTP(recHistMissing, reqHistMissing)
+	if recHistMissing.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK with empty history for missing SKU, got %d", recHistMissing.Code)
+	}
+
+	// 5. Test POST /api/jobs/preview
+	previewBody := `{"seed":42,"total_batches":3,"batch_size":20,"update_ratio":0.35,"duplicate_ratio":0.1,"out_of_order_ratio":0.1,"withdrawn_ratio":0.1,"invalid_ratio":0.15,"base_time":"2026-01-02T00:00:00Z","description":"Preview Test"}`
+	reqPreview := httptest.NewRequest(http.MethodPost, "/api/jobs/preview", strings.NewReader(previewBody))
+	reqPreview.Header.Set("Content-Type", "application/json")
+	recPreview := httptest.NewRecorder()
+	mux.ServeHTTP(recPreview, reqPreview)
+	if recPreview.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from /api/jobs/preview, got %d: %s", recPreview.Code, recPreview.Body.String())
+	}
+}
