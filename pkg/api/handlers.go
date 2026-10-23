@@ -169,10 +169,6 @@ func (h *Handler) CancelActiveJob() {
 		h.activeCancel()
 		h.activeCancel = nil
 	}
-	if h.activeJobID != "" {
-		_ = h.storage.UpdateJobStatus(context.Background(), h.activeJobID, domain.JobStatusInterrupted)
-		h.activeJobID = ""
-	}
 }
 
 // @Summary Cancel active synchronization job
@@ -207,11 +203,9 @@ func (h *Handler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cancel := tenant.GetActiveCancel()
-	tenant.ResetActive()
 	tenant.Unlock()
 
 	cancel()
-	_ = tenant.GetStorage().UpdateJobStatus(context.Background(), jobID, domain.JobStatusInterrupted)
 
 	h.writeJSON(w, http.StatusOK, JobCancelResponse{
 		Status:  "cancelling",
@@ -669,6 +663,9 @@ func (h *Handler) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 					resumeBatches = persisted.Batches
 				} else if persisted.GeneratorConfig != nil {
 					cfg = *persisted.GeneratorConfig
+					if cfg.ReservoirCapacity <= 0 {
+						cfg.ReservoirCapacity = 1000
+					}
 				}
 			}
 		}

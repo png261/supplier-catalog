@@ -868,3 +868,77 @@ func TestPatch_Publish_CommitGatingOnInvalidRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestPatch_EdgeCases_Coverage(t *testing.T) {
+	ctx := context.Background()
+	store := setupTestStorage(t)
+	fixedNow := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+
+	// 1. WithPatchTimeFunc & custom PatchID publish
+	pe := catalogSync.NewPatchEngine(store, catalogSync.WithPatchTimeFunc(func() time.Time { return fixedNow }))
+	validPatch := domain.CatalogPatch{
+		PatchID:     "ver-custom-001",
+		Description: "Custom ID patch",
+		Author:      "tester",
+		Items: []domain.PatchItem{
+			{SKU: "SKU-COV-1", Name: "Item 1", Price: 12.5, Status: domain.StatusActive},
+		},
+	}
+	ver, deltas, err := pe.PublishPatch(ctx, validPatch)
+	if err != nil {
+		t.Fatalf("PublishPatch failed: %v", err)
+	}
+	if ver.VersionID != "ver-custom-001" || len(deltas) != 1 {
+		t.Errorf("unexpected version: %+v", ver)
+	}
+
+	// 2. Nil storage errors
+	nilPE := catalogSync.NewPatchEngine(nil)
+	if _, err := nilPE.PreviewPatch(ctx, validPatch); err == nil {
+		t.Error("expected error for nil storage PreviewPatch")
+	}
+	if _, _, err := nilPE.PublishPatch(ctx, validPatch); err == nil {
+		t.Error("expected error for nil storage PublishPatch")
+	}
+
+	// 3. Canceled context errors
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := pe.PreviewPatch(cancelCtx, validPatch); err == nil {
+		t.Error("expected error for canceled context PreviewPatch")
+	}
+	if _, _, err := pe.PublishPatch(cancelCtx, validPatch); err == nil {
+		t.Error("expected error for canceled context PublishPatch")
+	}
+
+	// 4. Empty items / invalid patch
+	if _, err := pe.PreviewPatch(ctx, domain.CatalogPatch{}); err == nil {
+		t.Error("expected error for empty items PreviewPatch")
+	}
+	if _, _, err := pe.PublishPatch(ctx, domain.CatalogPatch{}); err == nil {
+		t.Error("expected error for invalid patch PublishPatch")
+	}
+
+	// 5. CalculateCatalogChecksumFromDB edge cases
+	if _, err := catalogSync.CalculateCatalogChecksumFromDB(ctx, nil); err == nil {
+		t.Error("expected error on nil DB")
+	}
+	sum, err := catalogSync.CalculateCatalogChecksumFromDB(ctx, store.DB())
+	if err != nil || sum == "" {
+		t.Errorf("expected valid checksum from DB, got %q (%v)", sum, err)
+	}
+
+	// 6. Closed DB errors on PreviewPatch, PublishPatch, CalculateCatalogChecksumFromDB
+	closedStore, _ := storage.OpenInMemory()
+	_ = closedStore.Close()
+	closedPE := catalogSync.NewPatchEngine(closedStore)
+	if _, err := closedPE.PreviewPatch(ctx, validPatch); err == nil {
+		t.Error("expected error on closed DB PreviewPatch")
+	}
+	if _, _, err := closedPE.PublishPatch(ctx, validPatch); err == nil {
+		t.Error("expected error on closed DB PublishPatch")
+	}
+	if _, err := catalogSync.CalculateCatalogChecksumFromDB(ctx, closedStore.DB()); err == nil {
+		t.Error("expected error on closed DB CalculateCatalogChecksumFromDB")
+	}
+}

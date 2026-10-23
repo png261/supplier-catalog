@@ -1504,3 +1504,233 @@ func TestHandler_ResolveDeadLetter_InvariantConflict(t *testing.T) {
 		t.Fatalf("expected 409 Conflict when attempting to resurrect withdrawn product via DLQ resolve, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestHandler_VersionAndTenantEdgeCases_Coverage(t *testing.T) {
+	store, eng, broker, handler := setupTestEnv(t)
+
+	// 1. Handler & TenantContext accessor coverage
+	if handler.GetID() != "default" {
+		t.Errorf("expected default ID")
+	}
+	handler.RemoveActiveConfig("non-existent")
+
+	tc := &TenantContext{ID: "shop-cov"}
+	if tc.GetID() != "shop-cov" {
+		t.Errorf("expected shop-cov")
+	}
+	if _, ok := tc.GetActiveConfig("none"); ok {
+		t.Errorf("expected false on nil ActiveConfigs")
+	}
+	tc.SetActiveConfig("j1", handler.activeConfigs["none"])
+	if _, ok := tc.GetActiveConfig("j1"); !ok {
+		t.Errorf("expected true after SetActiveConfig")
+	}
+	tc.RemoveActiveConfig("j1")
+	_ = tc.GetActiveCancel()
+	tc.SetLastAccess(time.Time{})
+	if !tc.LastAccess().IsZero() {
+		t.Errorf("expected zero LastAccess")
+	}
+	now := time.Now()
+	tc.SetLastAccess(now)
+	if tc.LastAccess().IsZero() {
+		t.Errorf("expected non-zero LastAccess")
+	}
+	if ExtractShopID(nil) != "" {
+		t.Errorf("expected empty shop ID for nil request")
+	}
+	reqShopID := httptest.NewRequest(http.MethodGet, "/api/products?shop_id=SHOP-Q", nil)
+	if ExtractShopID(reqShopID) != "shop-q" {
+		t.Errorf("expected shop-q")
+	}
+
+	// 2. Invalid shop ID across version/patch/event endpoints
+	badShopEndpoints := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/events?shop=invalid!!shop"},
+		{http.MethodPost, "/api/patches/preview?shop=invalid!!shop"},
+		{http.MethodPost, "/api/patches/publish?shop=invalid!!shop"},
+		{http.MethodGet, "/api/versions?shop=invalid!!shop"},
+		{http.MethodGet, "/api/versions/v1/diff?shop=invalid!!shop"},
+		{http.MethodPost, "/api/versions/v1/rollback?shop=invalid!!shop"},
+	}
+	for _, ep := range badShopEndpoints {
+		req := httptest.NewRequest(ep.method, ep.path, bytes.NewBufferString(`{}`))
+		rec := httptest.NewRecorder()
+		handler.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s %s expected 400 for invalid shop, got %d", ep.method, ep.path, rec.Code)
+		}
+	}
+
+	// 3. handlePreviewPatch & handlePublishPatch validation errors (nil body, bad JSON, empty items, missing fields)
+	reqNilPrev := httptest.NewRequest(http.MethodPost, "/api/patches/preview", nil)
+	reqNilPrev.Body = nil
+	recNilPrev := httptest.NewRecorder()
+	handler.handlePreviewPatch(recNilPrev, reqNilPrev)
+	if recNilPrev.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for nil body preview, got %d", recNilPrev.Code)
+	}
+
+	reqBadPrev := httptest.NewRequest(http.MethodPost, "/api/patches/preview", bytes.NewBufferString(`{bad`))
+	recBadPrev := httptest.NewRecorder()
+	handler.handlePreviewPatch(recBadPrev, reqBadPrev)
+	if recBadPrev.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad JSON preview, got %d", recBadPrev.Code)
+	}
+
+	reqEmptyPrev := httptest.NewRequest(http.MethodPost, "/api/patches/preview", bytes.NewBufferString(`{"items":[]}`))
+	recEmptyPrev := httptest.NewRecorder()
+	handler.handlePreviewPatch(recEmptyPrev, reqEmptyPrev)
+	if recEmptyPrev.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty items preview, got %d", recEmptyPrev.Code)
+	}
+
+	reqNilPub := httptest.NewRequest(http.MethodPost, "/api/patches/publish", nil)
+	reqNilPub.Body = nil
+	recNilPub := httptest.NewRecorder()
+	handler.handlePublishPatch(recNilPub, reqNilPub)
+	if recNilPub.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for nil body publish, got %d", recNilPub.Code)
+	}
+
+	reqBadPub := httptest.NewRequest(http.MethodPost, "/api/patches/publish", bytes.NewBufferString(`{bad`))
+	recBadPub := httptest.NewRecorder()
+	handler.handlePublishPatch(recBadPub, reqBadPub)
+	if recBadPub.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad JSON publish, got %d", recBadPub.Code)
+	}
+
+	reqNoAuthorPub := httptest.NewRequest(http.MethodPost, "/api/patches/publish", bytes.NewBufferString(`{"description":"d","author":"","items":[{"sku":"S1","name":"N","price":10,"status":"ACTIVE"}]}`))
+	recNoAuthorPub := httptest.NewRecorder()
+	handler.handlePublishPatch(recNoAuthorPub, reqNoAuthorPub)
+	if recNoAuthorPub.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty author publish, got %d", recNoAuthorPub.Code)
+	}
+
+	// 4. handleListVersions pagination validation & handleGetVersionDiff / handleRollbackVersion edge cases
+	for _, p := range []string{"/api/versions?limit=0", "/api/versions?offset=-1"} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		rec := httptest.NewRecorder()
+		handler.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("GET %s expected 400, got %d", p, rec.Code)
+		}
+	}
+
+	reqEmptyDiff := httptest.NewRequest(http.MethodGet, "/api/versions//diff", nil)
+	recEmptyDiff := httptest.NewRecorder()
+	handler.handleGetVersionDiff(recEmptyDiff, reqEmptyDiff)
+	if recEmptyDiff.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty version ID in diff, got %d", recEmptyDiff.Code)
+	}
+
+	reqMissingDiff := httptest.NewRequest(http.MethodGet, "/api/versions/ver-404/diff", nil)
+	reqMissingDiff.SetPathValue("id", "ver-404")
+	recMissingDiff := httptest.NewRecorder()
+	handler.handleGetVersionDiff(recMissingDiff, reqMissingDiff)
+	if recMissingDiff.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing version diff, got %d", recMissingDiff.Code)
+	}
+
+	reqEmptyRoll := httptest.NewRequest(http.MethodPost, "/api/versions//rollback", nil)
+	recEmptyRoll := httptest.NewRecorder()
+	handler.handleRollbackVersion(recEmptyRoll, reqEmptyRoll)
+	if recEmptyRoll.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty version ID in rollback, got %d", recEmptyRoll.Code)
+	}
+
+	reqBadRoll := httptest.NewRequest(http.MethodPost, "/api/versions/v1/rollback", bytes.NewBufferString(`{bad`))
+	reqBadRoll.SetPathValue("id", "v1")
+	recBadRoll := httptest.NewRecorder()
+	handler.handleRollbackVersion(recBadRoll, reqBadRoll)
+	if recBadRoll.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for malformed rollback body, got %d", recBadRoll.Code)
+	}
+
+	// 5. Closed DB error paths on version/patch handlers
+	storeClosed, _ := storage.OpenInMemory()
+	_ = storeClosed.Close()
+	hClosed := NewHandler(storeClosed, eng, broker)
+
+	rPrevC := httptest.NewRequest(http.MethodPost, "/api/patches/preview", bytes.NewBufferString(`{"description":"d","author":"a","items":[{"sku":"S1","name":"N","price":10,"status":"ACTIVE"}]}`))
+	wPrevC := httptest.NewRecorder()
+	hClosed.handlePreviewPatch(wPrevC, rPrevC)
+	if wPrevC.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on closed DB preview, got %d", wPrevC.Code)
+	}
+
+	rPubC := httptest.NewRequest(http.MethodPost, "/api/patches/publish", bytes.NewBufferString(`{"description":"d","author":"a","items":[{"sku":"S1","name":"N","price":10,"status":"ACTIVE"}]}`))
+	wPubC := httptest.NewRecorder()
+	hClosed.handlePublishPatch(wPubC, rPubC)
+	if wPubC.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on closed DB publish, got %d", wPubC.Code)
+	}
+
+	rVerC := httptest.NewRequest(http.MethodGet, "/api/versions", nil)
+	wVerC := httptest.NewRecorder()
+	hClosed.handleListVersions(wVerC, rVerC)
+	if wVerC.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on closed DB list versions, got %d", wVerC.Code)
+	}
+
+	rDiffC := httptest.NewRequest(http.MethodGet, "/api/versions/v1/diff", nil)
+	rDiffC.SetPathValue("id", "v1")
+	wDiffC := httptest.NewRecorder()
+	hClosed.handleGetVersionDiff(wDiffC, rDiffC)
+	if wDiffC.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on closed DB diff, got %d", wDiffC.Code)
+	}
+
+	rRollC := httptest.NewRequest(http.MethodPost, "/api/versions/v1/rollback", nil)
+	rRollC.SetPathValue("id", "v1")
+	wRollC := httptest.NewRecorder()
+	hClosed.handleRollbackVersion(wRollC, rRollC)
+	if wRollC.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on closed DB rollback, got %d", wRollC.Code)
+	}
+
+	// 6. Broker nil safety & PruneStaleTenants orphan file cleanup
+	broker.PublishVersionCreated(nil)
+	broker.PublishVersionRollback(nil)
+
+	// 7. Resume generator job from persisted JobConfig after restart
+	genJob := &domain.SyncJob{
+		JobID:               "job-gen-restart-1",
+		Status:              domain.JobStatusInterrupted,
+		TotalBatches:        2,
+		CommittedBatchIndex: 0,
+		JobConfig:           `{"mode":"generator","generator_config":{"seed":42,"total_batches":2,"batch_size":5,"update_ratio":0.1,"duplicate_ratio":0.05,"out_of_order_ratio":0.05,"withdrawn_ratio":0.05,"invalid_ratio":0.05}}`,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	_ = store.CreateJob(context.Background(), genJob)
+	rGenRes := httptest.NewRequest(http.MethodPost, "/api/jobs/job-gen-restart-1/resume", bytes.NewBufferString(`{"seed":99,"total_batches":2,"batch_size":5}`))
+	rGenRes.SetPathValue("id", "job-gen-restart-1")
+	wGenRes := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(wGenRes, rGenRes)
+	if wGenRes.Code != http.StatusAccepted {
+		t.Errorf("expected 202 on generator resume from persisted config, got %d", wGenRes.Code)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Invalid resume config (negative batch_size)
+	genJobBad := &domain.SyncJob{
+		JobID:               "job-gen-bad-cfg",
+		Status:              domain.JobStatusInterrupted,
+		TotalBatches:        2,
+		CommittedBatchIndex: 0,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	_ = store.CreateJob(context.Background(), genJobBad)
+	rBadRes := httptest.NewRequest(http.MethodPost, "/api/jobs/job-gen-bad-cfg/resume", bytes.NewBufferString(`{"batch_size":-5}`))
+	rBadRes.SetPathValue("id", "job-gen-bad-cfg")
+	wBadRes := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(wBadRes, rBadRes)
+	if wBadRes.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 on negative batch_size in resume, got %d", wBadRes.Code)
+	}
+}
