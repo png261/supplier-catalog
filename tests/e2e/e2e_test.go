@@ -153,7 +153,7 @@ func TestE2E_DeadLetterQuarantineAndResolve(t *testing.T) {
 	res.Body.Close()
 
 	// Wait for processing
-	time.Sleep(100 * time.Millisecond)
+	waitForE2EJobStatus(t, ts.URL, "job-dlq-01", domain.JobStatusCompleted, 10*time.Second)
 
 	// List dead-letter records
 	dlqResp, err := http.Get(ts.URL + "/api/dead-letter")
@@ -216,7 +216,19 @@ func TestE2E_MultiTenantIsolation(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	time.Sleep(100 * time.Millisecond)
+	for i := 0; i < 100; i++ {
+		rJob, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/jobs/job-alpha", nil)
+		rJob.Header.Set("X-Shop-Id", "shop-alpha")
+		if resJ, err := client.Do(rJob); err == nil {
+			var detail api.JobDetailResponse
+			_ = json.NewDecoder(resJ.Body).Decode(&detail)
+			resJ.Body.Close()
+			if detail.Job != nil && detail.Job.Status == domain.JobStatusCompleted {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	// Query shop-alpha
 	reqAlpha, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/products", nil)
@@ -436,4 +448,21 @@ func TestE2E_DeadLetterReasonCodeFilteringAndCORS(t *testing.T) {
 	if job2Detail.Job.Summary.Added+job2Detail.Job.Summary.Updated+job2Detail.Job.Summary.Withdrawn == 0 {
 		t.Errorf("expected gen-basetime-2 to apply changes with advanced base_time, got summary %+v", job2Detail.Job.Summary)
 	}
+}
+
+func waitForE2EJobStatus(t *testing.T, baseURL, jobID string, target domain.JobStatus, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(baseURL + "/api/jobs/" + jobID)
+		if err == nil {
+			var detail api.JobDetailResponse
+			_ = json.NewDecoder(resp.Body).Decode(&detail)
+			resp.Body.Close()
+			if detail.Job != nil && detail.Job.Status == target {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("job %s did not reach status %s within %v", jobID, target, timeout)
 }

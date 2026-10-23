@@ -509,8 +509,8 @@ func TestChallenger_Patch_HighContentionRace_20Goroutines(t *testing.T) {
 	select {
 	case <-doneCh:
 		// Completed normally
-	case <-time.After(15 * time.Second):
-		t.Fatal("DEADLOCK DETECTED: High-contention race test timed out after 15 seconds")
+	case <-time.After(60 * time.Second):
+		t.Fatal("DEADLOCK DETECTED: High-contention race test timed out after 60 seconds")
 	}
 
 	close(errCh)

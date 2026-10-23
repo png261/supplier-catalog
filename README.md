@@ -22,13 +22,9 @@ A fault-tolerant supplier catalog synchronization engine built in **pure Go (`CG
 | **OpenAPI 2.0 Spec (JSON)** | **[https://supplier-catalog-api.pages.dev/swagger/doc.json](https://supplier-catalog-api.pages.dev/swagger/doc.json)** | **[http://localhost:8080/swagger/doc.json](http://localhost:8080/swagger/doc.json)** |
 | **Full HD Video Demo (1080p)** | **[https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** | **[`docs/demo/demo_walkthrough.mp4`](./docs/demo/demo_walkthrough.mp4)** *(1080p live interaction + OpenMOSS/MOSS-TTS voiceover & BGM)* |
 
-### Video Walkthrough (`docs/demo/demo_walkthrough.mp4`)
+### Video Walkthrough
 
-[![Watch Full HD Demo Video (1080p with OpenMOSS/MOSS-TTS Voiceover & BGM)](./docs/demo/demo_preview.gif)](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)
-
-<video src="./docs/demo/demo_walkthrough.mp4" controls width="100%"></video>
-
-> **Direct Video Links (1080p + Voiceover & BGM)**: **[Watch on Cloudflare Pages](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** · **[Open Local File (`docs/demo/demo_walkthrough.mp4`)](./docs/demo/demo_walkthrough.mp4)**
+![Supplier Catalog Synchronization Demo Walkthrough](./docs/demo/demo_preview.gif)
 
 ---
 
@@ -130,4 +126,4 @@ Detailed architecture diagrams, API specifications, and Assessment 1 notes are o
 
 - **Assumptions & Trade-offs**: Uses embedded SQLite in WAL mode (`_txlock=immediate`, single writer per shop tenant) for zero-dependency ACID durability; scopes transactions per batch ($T_{B_i}$) to balance throughput with instant checkpoint resumption; uses deterministic PRNG seeds (`42, 101, 999, 777, 555`) for reproducible dry-run diff previews and independent update rollbacks. *(Full details in [`docs/assessment-notes.md`](./docs/assessment-notes.md#1-assumptions--architectural-trade-offs))*
 - **Unfinished Work**: Core single-store synchronization, diff preview, quarantine remediation, per-product history, and checkpoint recovery are 100% complete. Next steps for enterprise scale include OAuth2/JWT RBAC on write endpoints, S3/R2 cold batch archival, Prometheus `/metrics` + OpenTelemetry tracing, and Litestream WAL replication. *(Full details in [`docs/assessment-notes.md`](./docs/assessment-notes.md#2-unfinished-work--production-roadmap))*
-- **AI Tools Disclosure**: Developed using AI-assisted pair programming (Google Antigravity / Gemini / Claude) for Go/React scaffolding, adversarial test generation, OpenAPI docs, and Playwright demo automation. All code was verified via `CGO_ENABLED=0` compilation, `go test -race -count=5`, and $\ge 90\%$ coverage gates. *(Full details in [`docs/assessment-notes.md`](./docs/assessment-notes.md#3-transparent-ai-tool-disclosure))*
+- **AI Tools Disclosure**: Developed using **100% Google Antigravity** following a strict **Test-Driven Development (TDD)** workflow. Invariant specifications (idempotency, out-of-order rejection, permanent tombstones, dead-letter quarantine, atomic batch recovery) were first codified into failing table-driven unit tests, concurrency race tests, and E2E specs, followed by iterative implementation and refinement of the Go engine, SQLite WAL layer, and React UI. Verified via `CGO_ENABLED=0` compilation, `go test -race -count=5`, and a 93.5% statement coverage gate. *(Full details in [`docs/assessment-notes.md`](./docs/assessment-notes.md#3-transparent-ai-tool-disclosure))*

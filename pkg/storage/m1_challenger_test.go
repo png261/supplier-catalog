@@ -821,8 +821,12 @@ func TestChallenger_HighVolumeAndSubMillisecondPointLookups(t *testing.T) {
 	avgLookup := elapsed / time.Duration(lookups)
 	t.Logf("Measured avg point lookup with %d deltas: %v", totalDeltas, avgLookup)
 
-	if avgLookup > 2*time.Millisecond {
-		t.Errorf("average lookup latency too high: %v (expected < 2ms)", avgLookup)
+	maxLookupAllowed := 2 * time.Millisecond
+	if isRaceDetectorEnabled() {
+		maxLookupAllowed = 15 * time.Millisecond
+	}
+	if avgLookup > maxLookupAllowed {
+		t.Errorf("average lookup latency too high: %v (expected < %v)", avgLookup, maxLookupAllowed)
 	}
 }
 

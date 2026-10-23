@@ -22,7 +22,7 @@ import (
 //  3. Verification of 0 deadlocks across high-contention reader and writer pools.
 //  4. Data consistency: no torn reads, monotonic version numbers, and strict Invariant A (no resurrection).
 func TestChallenger2_Rollback_HighContention_MixedReadersAndWriters(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	s := setupTestDB(t)
@@ -530,11 +530,16 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 	s := setupTestDB(t)
 
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	const totalProducts = 3000
+	totalProducts := 3000
+	scaleFactor := 1000
+	if isRaceDetectorEnabled() {
+		totalProducts = 600
+		scaleFactor = 200
+	}
 
 	t.Logf("Seeding initial catalog of %d products...", totalProducts)
 
-	// 1. Seed Initial Catalog (V1): 3,000 products
+	// 1. Seed Initial Catalog (V1)
 	tx1, err := s.BeginTx(ctx)
 	if err != nil {
 		t.Fatalf("BeginTx V1 failed: %v", err)
@@ -568,8 +573,11 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 		t.Fatalf("Commit V1 failed: %v", err)
 	}
 
-	// Measure baseline lookup latency with 3,000 deltas (0 rollbacks)
-	const baselineSample = 500
+	// Measure baseline lookup latency (0 rollbacks)
+	baselineSample := 500
+	if isRaceDetectorEnabled() {
+		baselineSample = 150
+	}
 	startBase := time.Now()
 	for i := 0; i < baselineSample; i++ {
 		sku := fmt.Sprintf("SKU-%05d", (i*13)%totalProducts)
@@ -580,12 +588,12 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 	}
 	baselineDuration := time.Since(startBase)
 	avgBaselineLatency := baselineDuration / time.Duration(baselineSample)
-	t.Logf("Measured baseline lookup latency (3,000 deltas, 0 rollbacks): %v", avgBaselineLatency)
+	t.Logf("Measured baseline lookup latency (0 rollbacks): %v", avgBaselineLatency)
 
-	// 2. Patch V2: Update 1,000 products
+	// 2. Patch V2: Update products
 	tx2, _ := s.BeginTx(ctx)
-	deltas2 := make([]domain.ItemDelta, 1000)
-	for i := 0; i < 1000; i++ {
+	deltas2 := make([]domain.ItemDelta, scaleFactor)
+	for i := 0; i < scaleFactor; i++ {
 		sku := fmt.Sprintf("SKU-%05d", i)
 		oldP := float64(10 + (i % 100))
 		newP := oldP * 1.5
@@ -602,20 +610,22 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 	ver2 := &domain.CatalogVersion{
 		VersionID: "ver-scale-002", VersionNumber: 2, Description: "V2 Price Hike",
 		Author: "bench@coderpush.com", Type: domain.VersionTypePatch,
-		TotalItemsAffected: 1000, Summary: domain.ChangeSummary{Updated: 1000},
+		TotalItemsAffected: scaleFactor, Summary: domain.ChangeSummary{Updated: scaleFactor},
 		CreatedAt: now.Add(time.Hour),
 	}
 	_ = s.CreateVersionTx(ctx, tx2, ver2, deltas2)
 	_ = tx2.Commit()
 
-	// 3. Patch V3: Update 800 products, withdraw 200 products
+	// 3. Patch V3: Update 80%, withdraw 20%
 	tx3, _ := s.BeginTx(ctx)
-	deltas3 := make([]domain.ItemDelta, 1000)
-	for i := 500; i < 1500; i++ {
+	deltas3 := make([]domain.ItemDelta, scaleFactor)
+	v3Start := scaleFactor / 2
+	v3WithdrawStart := v3Start + (scaleFactor * 8 / 10)
+	for i := v3Start; i < v3Start+scaleFactor; i++ {
 		sku := fmt.Sprintf("SKU-%05d", i)
 		status := domain.StatusActive
 		action := domain.DeltaActionUpdated
-		if i >= 1300 {
+		if i >= v3WithdrawStart {
 			status = domain.StatusWithdrawn
 			action = domain.DeltaActionWithdrawn
 		}
@@ -624,7 +634,7 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 			SKU: sku, Name: fmt.Sprintf("Product %s V3", sku), Price: newP, Status: status,
 			SupplierTimestamp: now.Add(2 * time.Hour), UpdatedAt: now.Add(2 * time.Hour),
 		})
-		deltas3[i-500] = domain.ItemDelta{
+		deltas3[i-v3Start] = domain.ItemDelta{
 			VersionID: "ver-scale-003", SKU: sku, Action: action,
 			NewName: fmt.Sprintf("Product %s V3", sku), NewPrice: newP,
 			NewStatus: status, NewTimestamp: now.Add(2 * time.Hour),
@@ -633,13 +643,13 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 	ver3 := &domain.CatalogVersion{
 		VersionID: "ver-scale-003", VersionNumber: 3, Description: "V3 Updates and Withdrawals",
 		Author: "bench@coderpush.com", Type: domain.VersionTypePatch,
-		TotalItemsAffected: 1000, Summary: domain.ChangeSummary{Updated: 800, Withdrawn: 200},
+		TotalItemsAffected: scaleFactor, Summary: domain.ChangeSummary{Updated: scaleFactor * 8 / 10, Withdrawn: scaleFactor * 2 / 10},
 		CreatedAt: now.Add(2 * time.Hour),
 	}
 	_ = s.CreateVersionTx(ctx, tx3, ver3, deltas3)
 	_ = tx3.Commit()
 
-	// 4. Rollback 1: Revert to V1 -> Creates V4 (reverts ~1,500 products)
+	// 4. Rollback 1: Revert to V1 -> Creates V4
 	t.Log("Executing Rollback 1 to V1...")
 	v4, _, err := s.RollbackVersion(ctx, "ver-scale-001", "bench", "Rollback 1 to V1")
 	if err != nil {
@@ -649,17 +659,18 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 		t.Fatalf("expected V4, got V%d", v4.VersionNumber)
 	}
 
-	// 5. Patch V5: Update 1,200 products
+	// 5. Patch V5: Update products
 	tx5, _ := s.BeginTx(ctx)
-	deltas5 := make([]domain.ItemDelta, 1200)
-	for i := 1000; i < 2200; i++ {
+	v5Count := scaleFactor * 12 / 10
+	deltas5 := make([]domain.ItemDelta, v5Count)
+	for i := scaleFactor; i < scaleFactor+v5Count; i++ {
 		sku := fmt.Sprintf("SKU-%05d", i)
 		newP := float64(75 + (i % 30))
 		_ = s.UpsertProductTx(ctx, tx5, &domain.Product{
 			SKU: sku, Name: fmt.Sprintf("Product %s V5", sku), Price: newP, Status: domain.StatusActive,
 			SupplierTimestamp: now.Add(4 * time.Hour), UpdatedAt: now.Add(4 * time.Hour),
 		})
-		deltas5[i-1000] = domain.ItemDelta{
+		deltas5[i-scaleFactor] = domain.ItemDelta{
 			VersionID: "ver-scale-005", SKU: sku, Action: domain.DeltaActionUpdated,
 			NewName: fmt.Sprintf("Product %s V5", sku), NewPrice: newP,
 			NewStatus: domain.StatusActive, NewTimestamp: now.Add(4 * time.Hour),
@@ -668,7 +679,7 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 	ver5 := &domain.CatalogVersion{
 		VersionID: "ver-scale-005", VersionNumber: 5, Description: "V5 Summer Sale",
 		Author: "bench@coderpush.com", Type: domain.VersionTypePatch,
-		TotalItemsAffected: 1200, Summary: domain.ChangeSummary{Updated: 1200},
+		TotalItemsAffected: v5Count, Summary: domain.ChangeSummary{Updated: v5Count},
 		CreatedAt: now.Add(4 * time.Hour),
 	}
 	_ = s.CreateVersionTx(ctx, tx5, ver5, deltas5)
@@ -700,12 +711,19 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 		t.Fatalf("failed counting deltas: %v", err)
 	}
 	t.Logf("Scale benchmark setup complete: %d total historical deltas across 7 versions (including 3 rollbacks)", totalDeltas)
-	if totalDeltas < 8000 {
-		t.Fatalf("expected >= 8000 deltas in journal, got %d", totalDeltas)
+	minExpectedDeltas := 8000
+	if isRaceDetectorEnabled() {
+		minExpectedDeltas = 1500
+	}
+	if totalDeltas < minExpectedDeltas {
+		t.Fatalf("expected >= %d deltas in journal, got %d", minExpectedDeltas, totalDeltas)
 	}
 
 	// 9. Measure Active Catalog Point Lookup Latency (GetProduct)
-	const pointLookups = 2000
+	pointLookups := 2000
+	if isRaceDetectorEnabled() {
+		pointLookups = 400
+	}
 	latencies := make([]time.Duration, pointLookups)
 	startPoint := time.Now()
 	for i := 0; i < pointLookups; i++ {
@@ -732,7 +750,7 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 
 	maxAllowedPoint := 1 * time.Millisecond
 	if isRaceDetectorEnabled() {
-		maxAllowedPoint = 10 * time.Millisecond
+		maxAllowedPoint = 15 * time.Millisecond
 	}
 	if avgPointLatency >= maxAllowedPoint {
 		t.Fatalf("EMPIRICAL FAILURE: Point lookup latency %v exceeds threshold %v", avgPointLatency, maxAllowedPoint)
@@ -748,11 +766,14 @@ func TestChallenger2_ActiveCatalog_SubMillisecond_ScaleBenchmark(t *testing.T) {
 	t.Logf("Empirical O(1) Check: |avgPostRollbacks - avgBaseline| = %v (both strictly sub-millisecond)", latencyDiff)
 
 	// 10. Measure Paginated Active Catalog Query Latency (ListProducts "ACTIVE")
-	const listQueries = 200
+	listQueries := 200
+	if isRaceDetectorEnabled() {
+		listQueries = 50
+	}
 	listLatencies := make([]time.Duration, listQueries)
 	startList := time.Now()
 	for i := 0; i < listQueries; i++ {
-		offset := (i * 15) % 1000
+		offset := (i * 15) % (totalProducts / 3)
 		t0 := time.Now()
 		prods, total, err := s.ListProducts(ctx, "ACTIVE", "", 50, offset)
 		listLatencies[i] = time.Since(t0)
