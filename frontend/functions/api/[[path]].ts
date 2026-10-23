@@ -1,7 +1,7 @@
 // Cloudflare Pages Function: Reverse proxy for /api/* to Cloudflare Worker
 export const onRequest: PagesFunction = async (context) => {
   const url = new URL(context.request.url);
-  const targetUrl = new URL(`https://catalog-sync-worker.ezcert.workers.dev${url.pathname}${url.search}`);
+  const targetUrl = new URL(`https://supplier-catalog-api.pages.dev${url.pathname}${url.search}`);
   
   // Forward original request with method, headers, and body
   const requestInit: RequestInit = {

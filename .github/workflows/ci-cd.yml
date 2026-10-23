@@ -226,13 +226,20 @@ jobs:
           wranglerVersion: "4.144.0"
           command: d1 migrations apply catalog-db --remote
 
-      - name: Deploy Cloudflare Worker (Backend API)
+      - name: Bundle Backend Worker for Cloudflare Pages
+        run: |
+          npx wrangler deploy --dry-run --outdir worker/dist-pages
+          cp worker/dist-pages/index.js worker/dist-pages/_worker.js
+          rm -f worker/dist-pages/index.js*
+
+      - name: Deploy Cloudflare Backend API (supplier-catalog-api)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
           wranglerVersion: "4.144.0"
-          command: deploy
+          command: pages deploy dist-pages --project-name supplier-catalog-api --branch main
 
       - name: Build Frontend for Cloudflare Pages
         run: |

@@ -20,9 +20,9 @@ Includes an embedded, zero-node real-time staff web dashboard via `//go:embed` w
 |---|---|---|
 | **Frontend Web Dashboard** | **[https://supplier-catalog-frontend.pages.dev](https://supplier-catalog-frontend.pages.dev)** | **[http://localhost:8080](http://localhost:8080)** |
 | **Multi-Tenant Direct Link** | **[https://supplier-catalog-frontend.pages.dev/?shop=store-flagship](https://supplier-catalog-frontend.pages.dev/?shop=store-flagship)** | **[http://localhost:8080/?shop=store-flagship](http://localhost:8080/?shop=store-flagship)** |
-| **Backend REST API** | **[https://catalog-sync-worker.ezcert.workers.dev](https://catalog-sync-worker.ezcert.workers.dev)** | **[http://localhost:8080/api/jobs](http://localhost:8080/api/jobs)** |
-| **API Docs (Swagger UI)** | **[https://catalog-sync-worker.ezcert.workers.dev/swagger/index.html](https://catalog-sync-worker.ezcert.workers.dev/swagger/index.html)** | **[http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)** |
-| **OpenAPI 2.0 Spec (JSON)** | **[https://catalog-sync-worker.ezcert.workers.dev/swagger/doc.json](https://catalog-sync-worker.ezcert.workers.dev/swagger/doc.json)** | **[http://localhost:8080/swagger/doc.json](http://localhost:8080/swagger/doc.json)** |
+| **Backend REST API** | **[https://supplier-catalog-api.pages.dev](https://supplier-catalog-api.pages.dev)** | **[http://localhost:8080/api/jobs](http://localhost:8080/api/jobs)** |
+| **API Docs (Swagger UI)** | **[https://supplier-catalog-api.pages.dev/swagger/index.html](https://supplier-catalog-api.pages.dev/swagger/index.html)** | **[http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)** |
+| **OpenAPI 2.0 Spec (JSON)** | **[https://supplier-catalog-api.pages.dev/swagger/doc.json](https://supplier-catalog-api.pages.dev/swagger/doc.json)** | **[http://localhost:8080/swagger/doc.json](http://localhost:8080/swagger/doc.json)** |
 | **Full HD Video Demo (1080p)** | **[https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4](https://supplier-catalog-frontend.pages.dev/demo_walkthrough.mp4)** | **[`./demo_walkthrough.mp4`](./demo_walkthrough.mp4)** *(1920x1080 Full HD, clear natural-speed voiceover)* |
 | **GitHub Repository** | **[https://github.com/png261/supplier-catalog](https://github.com/png261/supplier-catalog)** | `git clone https://github.com/png261/supplier-catalog.git` |
 
@@ -458,7 +458,7 @@ The repository includes a GitHub Actions pipeline executed on every push and pul
 ## REST API & SSE Event Reference
 
 Interactive Swagger 2.0 / OpenAPI documentation is served directly by both the Go server and Cloudflare Worker:
-- **Cloud Swagger UI**: [https://catalog-sync-worker.ezcert.workers.dev/swagger/index.html](https://catalog-sync-worker.ezcert.workers.dev/swagger/index.html) (or `/docs`)
+- **Cloud Swagger UI**: [https://supplier-catalog-api.pages.dev/swagger/index.html](https://supplier-catalog-api.pages.dev/swagger/index.html) (or `/docs`)
 - **Local / Docker Swagger UI**: [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html) (or `/docs`)
 
 ### Core Endpoints

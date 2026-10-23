@@ -49,25 +49,31 @@ fi
 echo "Applying migrations to remote D1..."
 $WRANGLER_CMD d1 migrations apply catalog-db --remote || true
 
-# Step 2: Deploy Cloudflare Worker (Backend)
+# Step 2: Deploy Cloudflare Backend API (supplier-catalog-api.pages.dev)
 echo ""
-echo "⚡ Step 2/3: Deploying Cloudflare Worker (Backend API)..."
-$WRANGLER_CMD deploy
+echo "⚡ Step 2/3: Deploying Cloudflare Backend API (supplier-catalog-api)..."
+$WRANGLER_CMD deploy --dry-run --outdir worker/dist-pages
+cp worker/dist-pages/index.js worker/dist-pages/_worker.js
+rm -f worker/dist-pages/index.js*
+(cd worker && $WRANGLER_CMD pages deploy dist-pages --project-name supplier-catalog-api --branch main --commit-dirty=true) || true
+rm -rf worker/dist-pages
 
 # Step 3: Build & Deploy Cloudflare Pages (Frontend)
 echo ""
 echo "🌐 Step 3/3: Building and deploying Cloudflare Pages (Frontend SPA)..."
+make build-frontend
 npm --prefix frontend run build:pages
 if [ -f "demo_walkthrough.mp4" ]; then
   cp demo_walkthrough.mp4 web/static/demo_walkthrough.mp4
 fi
-$WRANGLER_CMD pages deploy web/static --project-name supplier-catalog-frontend --branch main || true
+$WRANGLER_CMD pages deploy web/static --project-name supplier-catalog-frontend --branch main --commit-dirty=true || true
 rm -f web/static/demo_walkthrough.mp4
 
 echo ""
 echo "=========================================================="
 echo "✅ Cloudflare Deployment Complete!"
-echo "⚡ Worker API: https://catalog-sync-worker.workers.dev"
+echo "⚡ Backend API: https://supplier-catalog-api.pages.dev"
+echo "📚 Swagger UI:  https://supplier-catalog-api.pages.dev/swagger/index.html"
 echo "🌐 Pages App:   https://supplier-catalog-frontend.pages.dev"
 echo ""
 echo "Test multi-tenancy by visiting:"
