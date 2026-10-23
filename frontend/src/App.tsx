@@ -1021,11 +1021,14 @@ export const AppContent: React.FC = () => {
         const idsToRemove = new Set<string>();
         if (revertedUpdateId) idsToRemove.add(revertedUpdateId);
         for (const u of catalogUpdates) {
-          const matchingVer = versions.find(
-            (v) =>
-              (v.type === 'SYNC' || v.trigger_type === 'SYNC') &&
-              (v.description?.includes(u.version) || v.description?.includes(u.title))
-          );
+          const matchingVers = versions
+            .filter(
+              (v) =>
+                (v.type === 'SYNC' || v.trigger_type === 'SYNC') &&
+                (v.description?.includes(u.version) || v.description?.includes(u.title))
+            )
+            .sort((a, b) => (b.version_number || 0) - (a.version_number || 0));
+          const matchingVer = matchingVers[0];
           if (matchingVer && (matchingVer.version_number || 0) > targetVerNum) {
             idsToRemove.add(u.id);
           }
@@ -1063,22 +1066,37 @@ export const AppContent: React.FC = () => {
   };
 
   const handleRevertUpdate = async (update: CatalogUpdate) => {
-    // Find the SYNC version corresponding to this update
-    const syncVer =
-      versions.find(
+    // Find the latest SYNC version corresponding to this update
+    const matchingSyncVers = versions
+      .filter(
         (v) =>
           (v.type === 'SYNC' || v.trigger_type === 'SYNC') &&
           (v.description?.includes(update.version) || v.description?.includes(update.title))
-      ) || versions.find((v) => v.type === 'SYNC' || v.trigger_type === 'SYNC');
+      )
+      .sort((a, b) => (b.version_number || 0) - (a.version_number || 0));
+    const syncVer =
+      matchingSyncVers[0] ||
+      versions
+        .filter((v) => v.type === 'SYNC' || v.trigger_type === 'SYNC')
+        .sort((a, b) => (b.version_number || 0) - (a.version_number || 0))[0];
 
     let targetVersionId = 'v0';
     if (syncVer && (syncVer.version_number || 0) > 1) {
-      const earlier = versions.filter((v) => (v.version_number || 0) < (syncVer.version_number || 0));
+      const earlier = versions.filter(
+        (v) => (v.version_number || 0) > 0 && (v.version_number || 0) < (syncVer.version_number || 0)
+      );
       if (earlier.length > 0) {
         const bestPrev = earlier.reduce((best, cur) =>
           (cur.version_number || 0) > (best.version_number || 0) ? cur : best
         , earlier[0]);
-        targetVersionId = bestPrev.version_id;
+        if (
+          (bestPrev.type === 'ROLLBACK' || bestPrev.trigger_type === 'ROLLBACK') &&
+          bestPrev.revert_of_version_id
+        ) {
+          targetVersionId = bestPrev.revert_of_version_id;
+        } else {
+          targetVersionId = bestPrev.version_id;
+        }
       }
     }
     await handleRollback(targetVersionId, 'staff-admin', update.id);

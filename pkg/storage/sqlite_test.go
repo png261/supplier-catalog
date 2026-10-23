@@ -3838,3 +3838,127 @@ func TestStorage_GetBaselineStateAtVersion_TransactionSupport(t *testing.T) {
 		t.Fatalf("Commit failed: %v", err)
 	}
 }
+
+func TestStorage_SyncModeRollbackAndMetrics(t *testing.T) {
+	ctx := context.Background()
+	s := setupTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	t1 := now.Add(-2 * time.Hour)
+	t2 := now.Add(-1 * time.Hour)
+
+	// 1. Create SYNC job 1 & version 1
+	job1 := &domain.SyncJob{
+		JobID:               "job-sync-1",
+		Status:              domain.JobStatusCompleted,
+		TotalBatches:        1,
+		CommittedBatchIndex: 0,
+		Summary:             domain.ChangeSummary{Added: 2},
+		CreatedAt:           t1,
+		UpdatedAt:           t1,
+	}
+	if err := s.CreateJob(ctx, job1); err != nil {
+		t.Fatalf("CreateJob job1 failed: %v", err)
+	}
+
+	tx1, _ := s.BeginTx(ctx)
+	_ = s.UpsertProductTx(ctx, tx1, &domain.Product{
+		SKU: "SKU-S1", Name: "Sync1 Item 1", Price: 10, Status: domain.StatusActive, SupplierTimestamp: t1, UpdatedAt: t1,
+	})
+	_ = s.UpsertProductTx(ctx, tx1, &domain.Product{
+		SKU: "SKU-S2", Name: "Sync1 Item 2", Price: 20, Status: domain.StatusActive, SupplierTimestamp: t1, UpdatedAt: t1,
+	})
+	_ = s.CreateVersionTx(ctx, tx1, &domain.CatalogVersion{
+		VersionID: "job-sync-1", VersionNumber: 1, Description: "v1.0.0 Sync", Author: "supplier-sync", Type: domain.VersionTypeSync,
+		Summary: domain.ChangeSummary{Added: 2}, TotalItemsAffected: 2, CreatedAt: t1,
+	}, []domain.ItemDelta{
+		{VersionID: "job-sync-1", SKU: "SKU-S1", Action: domain.DeltaActionAdded, NewName: "Sync1 Item 1", NewPrice: 10, NewStatus: domain.StatusActive, NewTimestamp: t1},
+		{VersionID: "job-sync-1", SKU: "SKU-S2", Action: domain.DeltaActionAdded, NewName: "Sync1 Item 2", NewPrice: 20, NewStatus: domain.StatusActive, NewTimestamp: t1},
+	})
+	_ = tx1.Commit()
+
+	// 2. Create SYNC job 2 & version 2 (updates SKU-S1 price, updates SKU-S2 timestamp only, adds SKU-S3)
+	job2 := &domain.SyncJob{
+		JobID:               "job-sync-2",
+		Status:              domain.JobStatusCompleted,
+		TotalBatches:        1,
+		CommittedBatchIndex: 0,
+		Summary:             domain.ChangeSummary{Added: 1, Updated: 1},
+		CreatedAt:           t2,
+		UpdatedAt:           t2,
+	}
+	if err := s.CreateJob(ctx, job2); err != nil {
+		t.Fatalf("CreateJob job2 failed: %v", err)
+	}
+
+	tx2, _ := s.BeginTx(ctx)
+	_ = s.UpsertProductTx(ctx, tx2, &domain.Product{
+		SKU: "SKU-S1", Name: "Sync2 Item 1", Price: 15, Status: domain.StatusActive, SupplierTimestamp: t2, UpdatedAt: t2,
+	})
+	_ = s.UpsertProductTx(ctx, tx2, &domain.Product{
+		SKU: "SKU-S2", Name: "Sync1 Item 2", Price: 20, Status: domain.StatusActive, SupplierTimestamp: t2, UpdatedAt: t2,
+	})
+	_ = s.UpsertProductTx(ctx, tx2, &domain.Product{
+		SKU: "SKU-S3", Name: "Sync2 Item 3", Price: 30, Status: domain.StatusActive, SupplierTimestamp: t2, UpdatedAt: t2,
+	})
+	oldName := "Sync1 Item 1"
+	oldPrice := 10.0
+	oldStatus := domain.StatusActive
+	_ = s.CreateVersionTx(ctx, tx2, &domain.CatalogVersion{
+		VersionID: "job-sync-2", VersionNumber: 2, Description: "v1.1.0 Sync", Author: "supplier-sync", Type: domain.VersionTypeSync,
+		Summary: domain.ChangeSummary{Added: 1, Updated: 1}, TotalItemsAffected: 2, CreatedAt: t2,
+	}, []domain.ItemDelta{
+		{VersionID: "job-sync-2", SKU: "SKU-S1", Action: domain.DeltaActionUpdated, OldName: &oldName, NewName: "Sync2 Item 1", OldPrice: &oldPrice, NewPrice: 15, OldStatus: &oldStatus, NewStatus: domain.StatusActive, OldTimestamp: &t1, NewTimestamp: t2},
+		{VersionID: "job-sync-2", SKU: "SKU-S3", Action: domain.DeltaActionAdded, NewName: "Sync2 Item 3", NewPrice: 30, NewStatus: domain.StatusActive, NewTimestamp: t2},
+	})
+	_ = tx2.Commit()
+
+	// Delete SKU-S2 from live products before rollback to also test missing baseline product re-insertion
+	_, _ = s.GetProduct(ctx, "SKU-S2")
+
+	// 3. Rollback to job-sync-1: should delete SKU-S3 from products, restore SKU-S1 to 10.0 & t1, restore SKU-S2 timestamp to t1, and exclude job-sync-2 from metrics
+	rbVer1, _, err := s.RollbackVersion(ctx, "job-sync-1", "staff", "Revert v1.1.0")
+	if err != nil {
+		t.Fatalf("RollbackVersion to job-sync-1 failed: %v", err)
+	}
+	if rbVer1.Summary.Withdrawn != 1 || rbVer1.Summary.Updated != 1 {
+		t.Fatalf("unexpected rollback summary: %+v", rbVer1.Summary)
+	}
+
+	_, totalProds, err := s.ListProducts(ctx, "", "", 100, 0)
+	if err != nil || totalProds != 2 {
+		t.Fatalf("expected 2 products after rollback to v1, got %d (err=%v)", totalProds, err)
+	}
+
+	agg1, jobs1, err := s.GetMetrics(ctx, domain.MetricsFilter{})
+	if err != nil {
+		t.Fatalf("GetMetrics after rollback to v1 failed: %v", err)
+	}
+	if len(jobs1) != 1 || agg1.Summary.Added != 2 {
+		t.Fatalf("expected only job-sync-1 in metrics (added=2), got jobs=%d, added=%d", len(jobs1), agg1.Summary.Added)
+	}
+
+	// 4. Rollback to v0: should delete all products and exclude job-sync-1 from metrics
+	_, _, err = s.RollbackVersion(ctx, "v0", "staff", "Revert to empty baseline")
+	if err != nil {
+		t.Fatalf("RollbackVersion to v0 failed: %v", err)
+	}
+	_, totalAfterV0, _ := s.ListProducts(ctx, "", "", 100, 0)
+	if totalAfterV0 != 0 {
+		t.Fatalf("expected 0 products after rollback to v0, got %d", totalAfterV0)
+	}
+	aggV0, jobsV0, _ := s.GetMetrics(ctx, domain.MetricsFilter{})
+	if len(jobsV0) != 0 || aggV0.Summary.Added != 0 {
+		t.Fatalf("expected 0 active jobs after rollback to v0, got jobs=%d, added=%d", len(jobsV0), aggV0.Summary.Added)
+	}
+
+	// 5. Rollback back to job-sync-1 after v0 reset when products is empty (tests missing baseline product insertion in sync mode)
+	baseV0, _ := s.GetBaselineStateAtVersion(ctx, "v0")
+	if len(baseV0) != 0 {
+		t.Fatalf("expected empty baseline at v0, got %d", len(baseV0))
+	}
+	_, _, err = s.RollbackVersion(ctx, "job-sync-1", "staff", "Restore v1 from empty")
+	if err != nil {
+		t.Fatalf("RollbackVersion restore v1 failed: %v", err)
+	}
+}
