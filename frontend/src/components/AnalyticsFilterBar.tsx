@@ -57,7 +57,7 @@ export const AnalyticsFilterBar: React.FC<AnalyticsFilterBarProps> = ({
         {/* Filter Controls Row */}
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Quick Preset Range Pills */}
-          <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
             {RANGES.map((r) => (
               <button
                 key={r.key}
@@ -65,8 +65,8 @@ export const AnalyticsFilterBar: React.FC<AnalyticsFilterBarProps> = ({
                 onClick={() => onRangeChange(r.key)}
                 className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
                   range === r.key
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 {r.label}
@@ -76,11 +76,11 @@ export const AnalyticsFilterBar: React.FC<AnalyticsFilterBarProps> = ({
 
           {/* Sync Job Dropdown Filter */}
           <div className="flex items-center gap-1.5">
-            <Filter className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500 hidden sm:inline" />
+            <Filter className="h-3.5 w-3.5 text-slate-400 hidden sm:inline" />
             <select
               value={selectedJobId}
               onChange={(e) => onJobSelect(e.target.value)}
-              className="h-8 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 text-xs text-slate-800 dark:text-slate-200 font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-slate-400"
             >
               <option value="all">All Sync Runs ({syncJobs.length})</option>
               {syncJobs.slice(0, 15).map((j) => (
@@ -97,10 +97,10 @@ export const AnalyticsFilterBar: React.FC<AnalyticsFilterBarProps> = ({
             size="sm"
             onClick={onRefresh}
             disabled={isRefreshing}
-            className="h-8 px-2.5 text-xs font-semibold border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+            className="h-8 px-2.5 text-xs font-semibold border-slate-200 text-slate-700 hover:bg-slate-50"
             title="Refresh analytics data"
           >
-            <RefreshCw className={`h-3.5 w-3.5 mr-1 text-slate-500 dark:text-slate-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 mr-1 text-slate-500 ${isRefreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         </div>
@@ -108,31 +108,31 @@ export const AnalyticsFilterBar: React.FC<AnalyticsFilterBarProps> = ({
 
       {/* Collapsible Custom Date Range Picker */}
       {range === 'custom' && (
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-3 bg-slate-50/70 dark:bg-slate-800/40 p-3 rounded-lg">
-          <Calendar className="h-4 w-4 text-slate-500 dark:text-slate-400" />
-          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Custom Date Range:</span>
+        <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-3 bg-slate-50/70 p-3 rounded-lg">
+          <Calendar className="h-4 w-4 text-slate-500" />
+          <span className="text-xs font-semibold text-slate-700">Custom Date Range:</span>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400">From:</span>
+            <span className="text-xs text-slate-500">From:</span>
             <Input
               type="date"
               value={customFrom}
               onChange={(e) => setCustomFrom(e.target.value)}
-              className="h-8 w-36 text-xs bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+              className="h-8 w-36 text-xs bg-white border-slate-200 text-slate-900"
             />
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400">To:</span>
+            <span className="text-xs text-slate-500">To:</span>
             <Input
               type="date"
               value={customTo}
               onChange={(e) => setCustomTo(e.target.value)}
-              className="h-8 w-36 text-xs bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+              className="h-8 w-36 text-xs bg-white border-slate-200 text-slate-900"
             />
           </div>
           <Button
             size="sm"
             onClick={() => onCustomDatesApply(customFrom, customTo)}
-            className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+            className="h-8 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white"
           >
             Apply Range
           </Button>

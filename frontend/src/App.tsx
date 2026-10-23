@@ -147,6 +147,13 @@ export const AppContent: React.FC = () => {
     }
   });
   const activeSyncingUpdateIdRef = useRef<string | null>(activeSyncingUpdateId);
+  const [interruptedUpdateId, setInterruptedUpdateId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(`interrupted_sync_update_id_${getActiveShopId()}`);
+    } catch {
+      return null;
+    }
+  });
 
   // Sync update completion tracker
   const markUpdateCompleted = (updateId: string | null) => {
@@ -164,11 +171,13 @@ export const AppContent: React.FC = () => {
     });
     try {
       localStorage.removeItem(`active_sync_update_id_${currentShop}`);
+      localStorage.removeItem(`interrupted_sync_update_id_${currentShop}`);
       localStorage.removeItem(`active_sync_job_id_${currentShop}`);
       localStorage.removeItem(`active_sync_start_time_${currentShop}`);
       localStorage.removeItem(`active_sync_batch_${currentShop}`);
       localStorage.removeItem(`active_sync_total_${currentShop}`);
     } catch (_) {}
+    setInterruptedUpdateId(null);
     if (activeSyncingUpdateIdRef.current === updateId) {
       activeSyncingUpdateIdRef.current = null;
       setActiveSyncingUpdateId(null);
@@ -489,6 +498,15 @@ export const AppContent: React.FC = () => {
             dead_letter: data.summary.dead_letter || 0,
           });
         }
+        if (activeSyncingUpdateIdRef.current) {
+          setInterruptedUpdateId(activeSyncingUpdateIdRef.current);
+          try {
+            localStorage.setItem(
+              `interrupted_sync_update_id_${shopIdRef.current}`,
+              activeSyncingUpdateIdRef.current
+            );
+          } catch (_) {}
+        }
         setActiveJob(null);
         stopRuntimeTimer();
         setSmartStatusText(`Job ${data.job_id} was interrupted. Checkpoint preserved for resumption.`);
@@ -573,6 +591,15 @@ export const AppContent: React.FC = () => {
           loadAllData();
           loadAnalytics();
         } else if (job.status === 'INTERRUPTED') {
+          if (activeSyncingUpdateIdRef.current) {
+            setInterruptedUpdateId(activeSyncingUpdateIdRef.current);
+            try {
+              localStorage.setItem(
+                `interrupted_sync_update_id_${shopIdRef.current}`,
+                activeSyncingUpdateIdRef.current
+              );
+            } catch (_) {}
+          }
           setActiveJob(null);
           stopRuntimeTimer();
           setSmartStatusText(`Job ${job.job_id} was interrupted. Checkpoint preserved for resumption.`);
@@ -622,6 +649,7 @@ export const AppContent: React.FC = () => {
     setInterruptedJob(null);
     setActiveSyncingUpdateId(null);
     activeSyncingUpdateIdRef.current = null;
+    setInterruptedUpdateId(null);
     setCurrentBatch(0);
     setTotalBatches(10);
     setThroughput(0);
@@ -640,6 +668,9 @@ export const AppContent: React.FC = () => {
       setActiveSyncingUpdateId(savedActive);
       activeSyncingUpdateIdRef.current = savedActive;
 
+      const savedInterrupted = localStorage.getItem(`interrupted_sync_update_id_${shopId}`);
+      setInterruptedUpdateId(savedInterrupted);
+
       const savedBatch = localStorage.getItem(`active_sync_batch_${shopId}`);
       if (savedBatch) setCurrentBatch(parseInt(savedBatch, 10));
 
@@ -649,6 +680,7 @@ export const AppContent: React.FC = () => {
       setSyncedUpdateIds([]);
       setActiveSyncingUpdateId(null);
       activeSyncingUpdateIdRef.current = null;
+      setInterruptedUpdateId(null);
     }
 
     loadAllData();
@@ -766,7 +798,12 @@ export const AppContent: React.FC = () => {
     try {
       const res = await fetchInterruptedJobs();
       if (res.jobs && res.jobs.length > 0) {
-        setInterruptedJob(res.jobs[0]);
+        const iJob = res.jobs[0];
+        setInterruptedJob(iJob);
+        setSmartStatusText(
+          `Job ${iJob.job_id} paused at batch ${(iJob.committed_batch_index ?? 0) + 1}/${iJob.total_batches}. Ready to resume.`
+        );
+        setSmartStatusType('warning');
       } else {
         setInterruptedJob(null);
       }
@@ -866,6 +903,12 @@ export const AppContent: React.FC = () => {
         (jobToRestore && (jobToRestore.status === 'INTERRUPTED' || jobToRestore.status === 'FAILED')) ||
         (!jobToRestore && savedJobId)
       ) {
+        if (jobToRestore?.status === 'INTERRUPTED' && savedUpdateId) {
+          setInterruptedUpdateId(savedUpdateId);
+          try {
+            localStorage.setItem(`interrupted_sync_update_id_${targetShop}`, savedUpdateId);
+          } catch (_) {}
+        }
         // Clean up stale active keys if the job is no longer running
         try {
           localStorage.removeItem(`active_sync_update_id_${targetShop}`);
@@ -1098,9 +1141,23 @@ export const AppContent: React.FC = () => {
   };
 
   const handleResumeInterrupted = async (jobId: string) => {
+    const currentShop = shopIdRef.current;
+    const restoredUpdateId =
+      interruptedUpdateId ||
+      activeSyncingUpdateIdRef.current ||
+      localStorage.getItem(`interrupted_sync_update_id_${currentShop}`) ||
+      'update-5-recovery';
+
+    activeSyncingUpdateIdRef.current = restoredUpdateId;
+    setActiveSyncingUpdateId(restoredUpdateId);
+    try {
+      localStorage.setItem(`active_sync_update_id_${currentShop}`, restoredUpdateId);
+      localStorage.setItem(`active_sync_job_id_${currentShop}`, jobId);
+    } catch (_) {}
+
     jobStartTimeRef.current = Date.now();
     startRuntimeTimer();
-    setSmartStatusText(`Resuming interrupted sync ${jobId}...`);
+    setSmartStatusText(`Resuming interrupted sync ${jobId} from committed WAL checkpoint...`);
     setSmartStatusType('running');
     setActiveJob({
       job_id: jobId,
@@ -1110,6 +1167,10 @@ export const AppContent: React.FC = () => {
       await resumeJob(jobId);
       toast.success(`Resumed job ${jobId}`);
       setInterruptedJob(null);
+      setInterruptedUpdateId(null);
+      try {
+        localStorage.removeItem(`interrupted_sync_update_id_${currentShop}`);
+      } catch (_) {}
     } catch (err: any) {
       setActiveJob(null);
       stopRuntimeTimer();
@@ -1120,7 +1181,6 @@ export const AppContent: React.FC = () => {
   };
 
   const handleResetDb = async () => {
-    if (!confirm('Are you sure you want to completely reset the catalog database?')) return;
     setIsResettingDb(true);
 
     const currentShop = shopIdRef.current;
@@ -1159,6 +1219,7 @@ export const AppContent: React.FC = () => {
     // 3. Clear all active sync keys and localStorage
     try {
       localStorage.removeItem(`active_sync_update_id_${currentShop}`);
+      localStorage.removeItem(`interrupted_sync_update_id_${currentShop}`);
       localStorage.removeItem(`active_sync_job_id_${currentShop}`);
       localStorage.removeItem(`active_sync_start_time_${currentShop}`);
       localStorage.removeItem(`active_sync_batch_${currentShop}`);
@@ -1168,6 +1229,7 @@ export const AppContent: React.FC = () => {
 
     setActiveJob(null);
     setInterruptedJob(null);
+    setInterruptedUpdateId(null);
     setActiveSyncingUpdateId(null);
     activeSyncingUpdateIdRef.current = null;
     setSyncedUpdateIds([]);
@@ -1226,7 +1288,7 @@ export const AppContent: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex font-sans text-slate-900 dark:text-slate-100 transition-colors">
+    <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900 transition-colors">
       {/* Toast notifications */}
       <Toaster position="top-right" richColors />
 
@@ -1254,10 +1316,17 @@ export const AppContent: React.FC = () => {
       >
         {/* Top Header */}
         <AppHeader
+          activeTab={activeTab}
+          activeShopId={shopId}
           onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
           onResetDatabase={handleResetDb}
           activeJobId={activeJob ? activeJob.job_id : null}
           isRunning={Boolean(activeJob)}
+          isResettingDb={isResettingDb}
+          sseConnected={sseConnected}
+          currentBatch={currentBatch}
+          totalBatches={totalBatches}
+          onNavigateToOverview={() => navigateToTab('overview')}
         />
 
         {/* Content Body */}
@@ -1276,7 +1345,14 @@ export const AppContent: React.FC = () => {
                 smartStatusType={smartStatusType}
                 isSyncing={isSyncing}
                 isInterrupted={isInterrupted}
+                interruptedJob={interruptedJob}
+                interruptedUpdateId={interruptedUpdateId}
                 onCancelSync={handleCancelSync}
+                onResumeSync={
+                  interruptedJob
+                    ? () => handleResumeInterrupted(interruptedJob.job_id)
+                    : undefined
+                }
                 updates={catalogUpdates}
                 syncedUpdateIds={syncedUpdateIds}
                 activeSyncingUpdateId={activeSyncingUpdateId}
@@ -1288,6 +1364,8 @@ export const AppContent: React.FC = () => {
                 analyticsData={analyticsData}
                 metrics={metrics}
                 deltas={deltas}
+                quarantinedTotal={dlq.total}
+                versionsTotal={versionTotal}
                 isRefreshingAnalytics={isRefreshingAnalytics}
                 onRangeChange={setAnalyticsRange}
                 onCustomDatesApply={(f, t) => {
@@ -1382,7 +1460,7 @@ export const AppContent: React.FC = () => {
         </main>
 
         {/* Footer */}
-        <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-4 text-center text-xs text-slate-500 dark:text-slate-400 transition-colors">
+        <footer className="border-t border-slate-200/80 bg-white py-4 text-center text-xs text-slate-500 transition-colors">
           Supplier Catalog Engine
         </footer>
       </div>
@@ -1396,9 +1474,17 @@ export const AppContent: React.FC = () => {
 
       <MetricDrilldownModal
         category={drilldownCategory}
+        metricCount={drilldownCategory ? metrics[drilldownCategory] : 0}
         onOpenChange={(op) => !op && setDrilldownCategory(null)}
         catalogProducts={catalog.products}
         dlqIssues={dlq.issues}
+        onRemediateIssue={(iss) => setActiveRemediationIssue(iss)}
+        onNavigateToCatalog={(statusFilter) => {
+          setCatalogStatus(statusFilter);
+          setCatalogPage(1);
+          navigateToTab('catalog');
+        }}
+        onNavigateToTab={(tab) => navigateToTab(tab as NavItemKey)}
       />
 
       <ShopModal

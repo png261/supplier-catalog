@@ -15,7 +15,7 @@ import {
   Brush,
 } from 'recharts';
 import { formatNumber } from '../lib/utils';
-import { PieChart as PieIcon, Package, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { PieChart as PieIcon, Package, ZoomIn, ZoomOut, RotateCcw, Activity } from 'lucide-react';
 
 interface ChartsSectionProps {
   totals: {
@@ -81,8 +81,6 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
   totals,
   timeSeries,
 }) => {
-  const isDark = false; // Light mode only
-
   const pieData = [
     { name: 'Active Catalog', value: totals.active_products, color: '#10b981' },
     { name: 'Withdrawn', value: totals.withdrawn_products, color: '#f59e0b' },
@@ -112,62 +110,10 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
     return formatTimeTick(timeStr);
   };
 
-  // Construct chart data points with time labels and fallback baseline
+  // Construct chart data points from real timeSeries telemetry
   const chartData = useMemo(() => {
     if (!timeSeries || timeSeries.length === 0) {
-      const now = Date.now();
-      return [
-        {
-          rawTime: new Date(now - 40000).toISOString(),
-          timeLabel: formatTimeTick(new Date(now - 40000).toISOString()),
-          fullTime: formatFullDateTime(new Date(now - 40000).toISOString()),
-          batchIndex: 0,
-          added: 120,
-          updated: 35,
-          withdrawn: 5,
-          defects: 0,
-        },
-        {
-          rawTime: new Date(now - 30000).toISOString(),
-          timeLabel: formatTimeTick(new Date(now - 30000).toISOString()),
-          fullTime: formatFullDateTime(new Date(now - 30000).toISOString()),
-          batchIndex: 1,
-          added: 280,
-          updated: 85,
-          withdrawn: 15,
-          defects: 2,
-        },
-        {
-          rawTime: new Date(now - 20000).toISOString(),
-          timeLabel: formatTimeTick(new Date(now - 20000).toISOString()),
-          fullTime: formatFullDateTime(new Date(now - 20000).toISOString()),
-          batchIndex: 2,
-          added: 450,
-          updated: 140,
-          withdrawn: 25,
-          defects: 5,
-        },
-        {
-          rawTime: new Date(now - 10000).toISOString(),
-          timeLabel: formatTimeTick(new Date(now - 10000).toISOString()),
-          fullTime: formatFullDateTime(new Date(now - 10000).toISOString()),
-          batchIndex: 3,
-          added: 390,
-          updated: 110,
-          withdrawn: 18,
-          defects: 1,
-        },
-        {
-          rawTime: new Date(now).toISOString(),
-          timeLabel: formatTimeTick(new Date(now).toISOString()),
-          fullTime: formatFullDateTime(new Date(now).toISOString()),
-          batchIndex: 4,
-          added: 520,
-          updated: 165,
-          withdrawn: 30,
-          defects: 3,
-        },
-      ];
+      return [];
     }
 
     const pts = timeSeries.map((p, idx) => {
@@ -186,7 +132,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
       };
     });
 
-    // If only 1 point, prepend a start baseline so a continuous gradient curve is rendered
+    // If only 1 point, prepend a zero baseline so a continuous gradient curve is rendered
     if (pts.length === 1) {
       const single = pts[0];
       const singleDate = new Date(single.rawTime);
@@ -251,20 +197,20 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
   const handleResetZoom = () => {
     setBrushRange({
       startIndex: 0,
-      endIndex: chartData.length - 1,
+      endIndex: Math.max(0, chartData.length - 1),
     });
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
       {/* Donut Chart: Catalog Distribution */}
-      <Card className="lg:col-span-5 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col transition-colors">
+      <Card className="lg:col-span-5 border-slate-200/80 bg-white shadow-xs flex flex-col">
         <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <PieIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+          <CardTitle className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <PieIcon className="h-4 w-4 text-emerald-600" />
             <span>Catalog Distribution</span>
           </CardTitle>
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+          <span className="text-xs text-slate-500 font-medium">
             Active Breakdown
           </span>
         </CardHeader>
@@ -272,8 +218,9 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
         <CardContent className="p-4 pt-1 flex-1 flex flex-col justify-between">
           <div className="h-48 w-full relative flex items-center justify-center">
             {pieData.length === 0 ? (
-              <div className="text-center text-xs text-slate-400 dark:text-slate-500">
-                No catalog items loaded yet.
+              <div className="text-center text-xs text-slate-400 space-y-1">
+                <PieIcon className="h-7 w-7 text-slate-200 mx-auto" />
+                <p>No catalog items loaded yet.</p>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -288,17 +235,17 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                     dataKey="value"
                   >
                     {pieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} stroke={isDark ? '#0f172a' : '#ffffff'} strokeWidth={2} />
+                      <Cell key={`cell-${index}`} fill={entry.color} stroke="#ffffff" strokeWidth={2} />
                     ))}
                   </Pie>
                   <RechartsTooltip
                     formatter={(val: number) => [formatNumber(val), 'Count']}
                     contentStyle={{
-                      backgroundColor: isDark ? '#1e293b' : '#0f172a',
+                      backgroundColor: '#0f172a',
                       borderRadius: '6px',
                       color: '#ffffff',
                       fontSize: '12px',
-                      border: isDark ? '1px solid #334155' : 'none',
+                      border: 'none',
                     }}
                   />
                 </PieChart>
@@ -308,10 +255,10 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
             {/* Total items badge inside Donut hole */}
             {pieData.length > 0 && (
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-lg font-extrabold text-slate-900 dark:text-slate-100 font-mono">
+                <span className="text-lg font-extrabold text-slate-900 font-mono">
                   {formatNumber(totalCatalogItems)}
                 </span>
-                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
                   Total Items
                 </span>
               </div>
@@ -319,31 +266,31 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
           </div>
 
           {/* Custom Legend */}
-          <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-center">
+          <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-slate-100 text-center">
             <div>
-              <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500">
                 <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
                 <span>Active</span>
               </div>
-              <strong className="text-xs font-bold text-slate-800 dark:text-slate-200 font-mono">
+              <strong className="text-xs font-bold text-slate-800 font-mono">
                 {formatNumber(totals.active_products)}
               </strong>
             </div>
             <div>
-              <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500">
                 <span className="h-2 w-2 rounded-full bg-amber-500"></span>
                 <span>Withdrawn</span>
               </div>
-              <strong className="text-xs font-bold text-slate-800 dark:text-slate-200 font-mono">
+              <strong className="text-xs font-bold text-slate-800 font-mono">
                 {formatNumber(totals.withdrawn_products)}
               </strong>
             </div>
             <div>
-              <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500">
                 <span className="h-2 w-2 rounded-full bg-red-500"></span>
                 <span>Quarantined</span>
               </div>
-              <strong className="text-xs font-bold text-slate-800 dark:text-slate-200 font-mono">
+              <strong className="text-xs font-bold text-slate-800 font-mono">
                 {formatNumber(totals.quarantined_issues)}
               </strong>
             </div>
@@ -352,7 +299,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
       </Card>
 
       {/* Area Chart: Product Changes & Synchronization Activity */}
-      <Card className="lg:col-span-7 border-slate-200 bg-white shadow-xs flex flex-col">
+      <Card className="lg:col-span-7 border-slate-200/80 bg-white shadow-xs flex flex-col">
         <CardHeader className="p-4 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 space-y-0">
           <CardTitle className="text-sm font-bold text-slate-900 flex items-center gap-2">
             <Package className="h-4 w-4 text-indigo-600" />
@@ -419,125 +366,135 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
         </CardHeader>
 
         <CardContent className="p-4 pt-1 flex-1 flex flex-col justify-center">
-          <div className="h-[280px] w-full min-h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
-                <defs>
-                  <linearGradient id="addedGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                  </linearGradient>
-                  <linearGradient id="updatedGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
-                  </linearGradient>
-                  <linearGradient id="withdrawnGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  vertical={false}
-                  stroke="#f1f5f9"
-                />
-                <XAxis
-                  dataKey="timeLabel"
-                  tickLine={false}
-                  axisLine={{ stroke: '#cbd5e1' }}
-                  tick={{ fill: '#64748b', fontSize: 11 }}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={{ stroke: '#cbd5e1' }}
-                  tick={{ fill: '#64748b', fontSize: 11 }}
-                  tickFormatter={(v) => `${v}`}
-                />
-                <RechartsTooltip
-                  content={({ active, payload, label }) => {
-                    if (!active || !payload || !payload.length) return null;
-                    const data = payload[0].payload;
-                    return (
-                      <div className="bg-slate-900 text-white rounded-md p-2.5 shadow-lg text-xs space-y-1.5 border border-slate-700 min-w-[170px]">
-                        <div className="font-semibold text-slate-200 border-b border-slate-700 pb-1 flex items-center justify-between gap-2">
-                          <span>{data.fullTime || label}</span>
-                          {typeof data.batchIndex === 'number' && (
-                            <span className="text-[10px] text-slate-400 font-mono">#{data.batchIndex + 1}</span>
-                          )}
-                        </div>
-                        <div className="space-y-1 pt-0.5">
-                          <div className="flex items-center justify-between text-emerald-400">
-                            <span className="flex items-center gap-1.5">
-                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-                              <span>Added</span>
-                            </span>
-                            <span className="font-mono font-bold">{formatNumber(data.added || 0)}</span>
-                          </div>
-                          <div className="flex items-center justify-between text-indigo-400">
-                            <span className="flex items-center gap-1.5">
-                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-400"></span>
-                              <span>Updated</span>
-                            </span>
-                            <span className="font-mono font-bold">{formatNumber(data.updated || 0)}</span>
-                          </div>
-                          <div className="flex items-center justify-between text-amber-400">
-                            <span className="flex items-center gap-1.5">
-                              <span className="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
-                              <span>Withdrawn</span>
-                            </span>
-                            <span className="font-mono font-bold">{formatNumber(data.withdrawn || 0)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="added"
-                  name="Products Added"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#addedGradient)"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="updated"
-                  name="Price / Name Updated"
-                  stroke="#6366f1"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#updatedGradient)"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="withdrawn"
-                  name="Withdrawn Products"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#withdrawnGradient)"
-                />
-                {chartData.length > 2 && (
-                  <Brush
-                    dataKey="timeLabel"
-                    height={24}
-                    stroke="#6366f1"
-                    fill="#f8fafc"
-                    startIndex={brushRange.startIndex}
-                    endIndex={brushRange.endIndex}
-                    onChange={(range: any) => {
-                      if (typeof range.startIndex === 'number' && typeof range.endIndex === 'number') {
-                        setBrushRange({ startIndex: range.startIndex, endIndex: range.endIndex });
-                      }
-                    }}
-                    travellerWidth={8}
+          {chartData.length === 0 ? (
+            <div className="h-[280px] w-full flex flex-col items-center justify-center text-center text-xs text-slate-400 space-y-1.5 border border-dashed border-slate-200/80 rounded-lg bg-slate-50/40 px-4">
+              <Activity className="h-7 w-7 text-slate-300" />
+              <p className="font-medium text-slate-600">No Ingestion Telemetry Recorded</p>
+              <p className="text-slate-400 max-w-xs">
+                Trigger any catalog workload scenario above to stream real-time batch progression and delta curves.
+              </p>
+            </div>
+          ) : (
+            <div className="h-[280px] w-full min-h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+                  <defs>
+                    <linearGradient id="addedGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                    </linearGradient>
+                    <linearGradient id="updatedGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
+                    </linearGradient>
+                    <linearGradient id="withdrawnGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="#f1f5f9"
                   />
-                )}
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+                  <XAxis
+                    dataKey="timeLabel"
+                    tickLine={false}
+                    axisLine={{ stroke: '#cbd5e1' }}
+                    tick={{ fill: '#64748b', fontSize: 11 }}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={{ stroke: '#cbd5e1' }}
+                    tick={{ fill: '#64748b', fontSize: 11 }}
+                    tickFormatter={(v) => `${v}`}
+                  />
+                  <RechartsTooltip
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload || !payload.length) return null;
+                      const data = payload[0].payload;
+                      return (
+                        <div className="bg-slate-900 text-white rounded-md p-2.5 shadow-lg text-xs space-y-1.5 border border-slate-700 min-w-[170px]">
+                          <div className="font-semibold text-slate-200 border-b border-slate-700 pb-1 flex items-center justify-between gap-2">
+                            <span>{data.fullTime || label}</span>
+                            {typeof data.batchIndex === 'number' && (
+                              <span className="text-[10px] text-slate-400 font-mono">Batch #{data.batchIndex + 1}</span>
+                            )}
+                          </div>
+                          <div className="space-y-1 pt-0.5">
+                            <div className="flex items-center justify-between text-emerald-400">
+                              <span className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                                <span>Added</span>
+                              </span>
+                              <span className="font-mono font-bold">{formatNumber(data.added || 0)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-indigo-400">
+                              <span className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-400"></span>
+                                <span>Updated</span>
+                              </span>
+                              <span className="font-mono font-bold">{formatNumber(data.updated || 0)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-amber-400">
+                              <span className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+                                <span>Withdrawn</span>
+                              </span>
+                              <span className="font-mono font-bold">{formatNumber(data.withdrawn || 0)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="added"
+                    name="Products Added"
+                    stroke="#10b981"
+                    strokeWidth={2}
+                    fillOpacity={1}
+                    fill="url(#addedGradient)"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="updated"
+                    name="Price / Name Updated"
+                    stroke="#6366f1"
+                    strokeWidth={2}
+                    fillOpacity={1}
+                    fill="url(#updatedGradient)"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="withdrawn"
+                    name="Withdrawn Products"
+                    stroke="#f59e0b"
+                    strokeWidth={2}
+                    fillOpacity={1}
+                    fill="url(#withdrawnGradient)"
+                  />
+                  {chartData.length > 2 && (
+                    <Brush
+                      dataKey="timeLabel"
+                      height={24}
+                      stroke="#6366f1"
+                      fill="#f8fafc"
+                      startIndex={brushRange.startIndex}
+                      endIndex={brushRange.endIndex}
+                      onChange={(range: any) => {
+                        if (typeof range.startIndex === 'number' && typeof range.endIndex === 'number') {
+                          setBrushRange({ startIndex: range.startIndex, endIndex: range.endIndex });
+                        }
+                      }}
+                      travellerWidth={8}
+                    />
+                  )}
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
